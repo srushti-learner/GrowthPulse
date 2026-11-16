@@ -10,8 +10,14 @@ implemented features.
 
 ## Starting point and scope
 
-The repository currently contains the product specification, with no application
-implementation.
+Checkpoint 1 is implemented: a responsive application shell, Express health API,
+environment validation, and development/build/start commands. Later checkpoints
+remain planned; no database or AI integration is implemented.
+
+**Required application host:** the selected GoDaddy Node.js hosting option.
+Express runs the backend and serves the built React frontend. Architecture and
+dependency choices must fit that environment; do not switch providers without
+explicit approval. Local or CI browser verification does not change this host.
 
 Build the central experience:
 

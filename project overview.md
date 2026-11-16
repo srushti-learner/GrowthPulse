@@ -809,6 +809,7 @@ This demonstrates a complete agentic business workflow rather than just an AI-ge
 
 ### Hosting
 
+- **Required deployment target:** the selected GoDaddy Node.js hosting option. This is a fixed requirement, not an optional recommendation. Do not switch hosting providers without explicit approval.
 - GoDaddy Node.js hosting.
 - Express serves the production frontend build.
 - Listen on `process.env.PORT`.
