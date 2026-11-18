@@ -1,6 +1,8 @@
 import type { SqlDatabase } from "./sql-database.js";
 import { randomUUID } from "node:crypto";
 import { catalogueLimit, decisionsSchema, importDraftSchema, importResultSchema, importRowSchema, normalizedGtin, normalizedSku, productInputSchema, productSchema, type ImportRow, type Product, type ProductInput } from "../shared/products.js";
+import { scanLimits, type ScanResult } from "../shared/website.js";
+import { websiteProducts } from "./product-imports.js";
 
 export class CatalogueError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -13,13 +15,27 @@ function identifierMatch(product: Product, data: ProductInput) {
 function conflictingGtin(product: Product, data: ProductInput) {
   return !!data.gtin && [product, ...product.listings.map((item) => item.data)].some((item) => !!item.gtin && normalizedGtin(item.gtin) !== normalizedGtin(data.gtin));
 }
+function matchProduct(catalogue: Product[], row: ImportRow, source: string, sourceName: string) {
+  const repeat = catalogue.find((product) => product.listings.some((item) => item.source === source && item.sourceName === sourceName && item.sourceKey === row.sourceKey));
+  if (repeat) {
+    const conflict = !!row.data && conflictingGtin(repeat, row.data);
+    return { row: row.row, kind: conflict ? "review" as const : "repeat" as const, productId: conflict ? null : repeat.id, candidates: [repeat.id] };
+  }
+  const data = row.data;
+  const candidates = data ? catalogue.filter((product) => identifierMatch(product, data)) : [];
+  const candidate = candidates.length === 1 ? candidates[0] : undefined;
+  const confident = !!candidate && !!data && !conflictingGtin(candidate, data);
+  const similar = data ? catalogue.some((product) => product.name.toLowerCase() === data.name.toLowerCase()) : false;
+  return { row: row.row, kind: confident ? "identifier" as const : candidates.length || similar ? "review" as const : "new" as const,
+    productId: confident ? candidate.id : null, candidates: candidates.map((product) => product.id) };
+}
 export function catalogueStore(database: SqlDatabase) {
   async function owned(ownerId: string, businessId: string) {
     if (!await database.prepare("SELECT id FROM businesses WHERE id = ? AND owner_id = ?").get(businessId, ownerId)) throw new CatalogueError(404, "Business not found.");
   }
-  async function products(businessId: string) {
+  async function products(businessId: string, productId?: string) {
     const rows = await database.prepare(`SELECT id, business_id AS businessId, name, description, sku, gtin, created_at AS createdAt, updated_at AS updatedAt
-      FROM products WHERE business_id = ? ORDER BY created_at, rowid`).all(businessId);
+      FROM products WHERE business_id = ?${productId ? " AND id = ?" : ""} ORDER BY created_at, rowid`).all(...(productId ? [businessId, productId] : [businessId]));
     const result: Product[] = [];
     for (const row of rows) {
       const base = productSchema.omit({ listings: true }).parse(row);
@@ -72,23 +88,50 @@ export function catalogueStore(database: SqlDatabase) {
   async function preview(draft: DraftRecord) {
     const rows = importRowSchema.array().parse(JSON.parse(draft.rows));
     const catalogue = await products(draft.businessId);
-    const matches = rows.map((row) => {
-      const repeat = catalogue.find((product) => product.listings.some((item) => item.source === draft.source && item.sourceName === draft.sourceName && item.sourceKey === row.sourceKey));
-      if (repeat) {
-        const conflict = !!row.data && conflictingGtin(repeat, row.data);
-        return { row: row.row, kind: conflict ? "review" as const : "repeat" as const, productId: conflict ? null : repeat.id, candidates: [repeat.id] };
-      }
-      const data = row.data;
-      const candidates = data ? catalogue.filter((product) => identifierMatch(product, data)) : [];
-      const candidate = candidates.length === 1 ? candidates[0] : undefined;
-      const conflict = !!candidate && !!data && conflictingGtin(candidate, data);
-      const confident = !!candidate && !conflict;
-      const similar = data ? catalogue.some((product) => product.name.toLowerCase() === data.name.toLowerCase()) : false;
-      return { row: row.row, kind: confident ? "identifier" as const : candidates.length || similar ? "review" as const : "new" as const, productId: confident ? candidate.id : null, candidates: candidates.map((product) => product.id) };
-    });
+    const matches = rows.map((row) => matchProduct(catalogue, row, draft.source, draft.sourceName));
     return importDraftSchema.parse({ ...draft, rows, matches, committed: !!draft.result });
   }
   return {
+    async syncWebsiteProducts(ownerId: string, businessId: string, scan: ScanResult) {
+      return database.transaction(async () => {
+        await owned(ownerId, businessId);
+        if (!scan.pages.some((page) => page.productJson?.length) || scan.status === "failed") return undefined;
+        const rows = websiteProducts(scan, scanLimits.pages * 50);
+        const sourceName = new URL(scan.requestedUrl).hostname.replace(/^www\./, "");
+        const result: NonNullable<ScanResult["catalogue"]> = { created: 0, updated: 0, unchanged: 0, skipped: 0, issues: [] };
+        const now = new Date().toISOString();
+        let catalogue = await products(businessId);
+        for (const row of rows) {
+          const skip = (message: string) => {
+            result.skipped++;
+            result.issues.push({ reference: row.reference, name: row.data?.name ?? row.preview?.name ?? "Unnamed product record", message });
+          };
+          if (!row.data || row.errors.length) { skip(row.errors.join(" ")); continue; }
+          const match = matchProduct(catalogue, row, "website", sourceName);
+          if (match.kind === "review") { skip("Uncertain or conflicting catalogue match. Review this record in Products; no automatic merge was made."); continue; }
+          const existing = catalogue.find((product) => product.id === match.productId);
+          const previous = existing?.listings.find((item) => item.source === "website" && item.sourceName === sourceName && item.sourceKey === row.sourceKey);
+          if (previous && previous.capturedAt > row.capturedAt) { skip("Older website evidence cannot replace a newer listing."); continue; }
+          if (previous?.capturedAt === row.capturedAt) {
+            if (JSON.stringify(previous.data) === JSON.stringify(row.data)) result.unchanged++;
+            else skip("Conflicting records have the same capture time. The existing listing was preserved.");
+            continue;
+          }
+          if (!existing && catalogue.length >= catalogueLimit) { skip(`The catalogue limit of ${catalogueLimit} products was reached.`); continue; }
+          const id = existing?.id ?? await createProduct(businessId, row.data, now);
+          if (!existing) result.created++;
+          await listing(businessId, id, "website", sourceName, row);
+          if (existing) result.updated++;
+          const [saved] = await products(businessId, id);
+          catalogue = [...catalogue.filter((product) => product.id !== id), saved];
+        }
+        if (result.created || result.updated) {
+          await activity(businessId, "products.imported", scan.requestedUrl,
+            `Website scan catalogue: ${result.created} products created, ${result.updated} listings refreshed, ${result.skipped} records skipped. Owner-entered product details were preserved.`, now);
+        }
+        return result;
+      })();
+    },
     async listProducts(ownerId: string, businessId: string) { await owned(ownerId, businessId); return products(businessId); },
     async saveProduct(ownerId: string, businessId: string, input: ProductInput, existingId?: string) {
       const data = productInputSchema.parse(input);

@@ -144,7 +144,7 @@ describe("durable specialist research orchestration", () => {
     expect(report.steps.find((step) => step.key === "pricing")!.findings[0].detail).toContain("share a GTIN");
     expect(result.understanding!.research).toEqual(report);
     expect(await store.getBusiness(user.id, user.business.id)).toEqual(user.business);
-    expect(await store.listProducts(user.id, user.business.id)).toEqual([]);
+    expect((await store.listProducts(user.id, user.business.id)).map((product) => product.name)).toEqual(["Cotton everyday tee"]);
     expect(JSON.stringify(complete.mock.calls)).not.toContain(user.business.description);
     expect(JSON.stringify(searchCall.mock.calls)).not.toContain(user.business.description);
     expect(complete.mock.calls.filter(([input]) => input.tool_choice?.type === "tool" && input.tool_choice.name === "record_findings")

@@ -115,6 +115,7 @@ describe("website workspace", () => {
       if (path.endsWith(`/${originalId}`)) return json({ scan: saved });
       throw new Error(`Unexpected request ${path}`);
     });
+
     vi.stubGlobal("fetch", fetch);
     await render(true);
     expect(container.querySelector<HTMLInputElement>('[name="scanUrl"]')?.value).toBe(business.website);
@@ -143,6 +144,24 @@ describe("website workspace", () => {
     await act(async () => container.querySelector<HTMLButtonElement>('[role=alert] button')!.click());
     expect(container.querySelector(".scan-form")).not.toBeNull();
     expect(container.querySelector('[name="scanBusiness"]')?.textContent).toContain("Preview only");
+  });
+
+  it("shows ready catalogue counts and skipped record reasons with a direct Products link", async () => {
+    const scan: SavedScan = { ...saved, catalogue: { created: 2, updated: 1, unchanged: 0, skipped: 1, issues: [{
+      name: "Needs review tee", reference: business.website, message: "Uncertain catalogue match.",
+    }] } };
+    const fetch = vi.fn(async (path: string, _options?: RequestInit) => {
+      if (path === "/api/businesses") return json({ businesses: [business] });
+      if (path.endsWith("/scans")) return json({ scans: [summary] });
+      return json({ scan });
+    });
+    vi.stubGlobal("fetch", fetch);
+    await render(true);
+    expect(container.querySelector(".scan-catalogue")?.textContent).toContain("2 products added, 1 listings refreshed");
+    expect(container.querySelector(".scan-catalogue")?.textContent).toContain("No import confirmation needed");
+    expect(container.querySelector(".scan-catalogue")?.textContent).toContain("Uncertain catalogue match.");
+    expect(container.querySelector<HTMLAnchorElement>(".scan-catalogue a")?.getAttribute("href")).toBe(`#products?business=${businessId}`);
+    expect(fetch.mock.calls.every(([, options]) => !options?.method)).toBe(true);
   });
 
   it("makes failed saved-result loading retryable without triggering another scan", async () => {

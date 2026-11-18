@@ -135,7 +135,7 @@ export function FirstVisit({ authenticated, startBriefing, onAuthenticated, onSt
       {usable && !authVisible && <div className="onboarding-continue">
         <h3>Turn these findings into a useful next step.</h3>
         <p>{authenticated ? "Continue" : "Sign in or create an account"} to save these findings and a basic business profile, then receive a streamed AI briefing, competitor study and a recommended next action. Your saved website evidence is reused; competitor sites are checked separately.</p>
-        <p className="field-note">By continuing, you agree to this business and competitor analysis. {businessAnalysisDisclosure} Profile suggestions remain optional.</p>
+        <p className="field-note">By continuing, captured products with valid, unambiguous details are saved to your catalogue automatically. You also agree to this business and competitor analysis. {businessAnalysisDisclosure} Profile suggestions remain optional.</p>
         <button className="primary-link" disabled={claiming || loading} type="button" onClick={() => {
           if (authenticated) setRequestBriefing(true);
           else setAuthVisible(true);

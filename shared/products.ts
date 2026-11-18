@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { scannedCatalogueSchema } from "./website.js";
 
 export const catalogueLimit = 200;
 export const importRowLimit = 100;
@@ -48,6 +49,7 @@ export const productSchema = z.object({
 });
 export type Product = z.infer<typeof productSchema>;
 export const productsResponseSchema = z.object({ products: z.array(productSchema) });
+export const scannedProductsResponseSchema = productsResponseSchema.extend({ catalogue: scannedCatalogueSchema.nullable() });
 export const productResponseSchema = z.object({ product: productSchema });
 export const importRowSchema = z.object({
   row: z.number().int().positive(), sourceKey: z.string(), reference: z.string().max(2048),

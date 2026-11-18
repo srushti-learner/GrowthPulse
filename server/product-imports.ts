@@ -88,11 +88,11 @@ function productImage(value: unknown, pageUrl: string, notes: string[]) {
   notes.push("No usable public HTTPS product image was supplied; this record will use an image placeholder.");
   return undefined;
 }
-export function websiteProducts(scan: Pick<SavedScan, "pages">): ImportRow[] {
+export function websiteProducts(scan: Pick<SavedScan, "pages">, limit = importRowLimit): ImportRow[] {
   const rows: ImportRow[] = [];
   for (const page of scan.pages) {
     for (const json of page.productJson ?? []) {
-      if (rows.length >= importRowLimit) throw new CatalogueError(400, `This scan contains more than ${importRowLimit} structured products. Scan a smaller product/category URL.`);
+      if (rows.length >= limit) throw new CatalogueError(400, `This scan contains more than ${limit} structured products. Scan a smaller product/category URL.`);
       const row = rows.length + 1;
       const raw: unknown = JSON.parse(json);
       if (!object(raw)) throw new CatalogueError(400, "The saved product evidence is malformed. Rescan the website.");

@@ -98,7 +98,7 @@ describe("durable local analysis jobs", () => {
     return { release: () => release(), signal: () => signal };
   }
 
-  it("accepts immediately, survives reopening, then atomically saves the worker's result and optional import", async () => {
+  it("accepts immediately, survives reopening, then saves the worker result with website products already available", async () => {
     const user = await owner(), key = randomUUID();
     const accepted = await start(user, key).expect(202);
     const first = analysisJobEventSchema.parse(JSON.parse(accepted.text)).job;
@@ -111,9 +111,10 @@ describe("durable local analysis jobs", () => {
     const saved = await job(user, first.id);
     expect(saved).toMatchObject({ status: "completed", preview: null, error: null, understanding: { briefing: proposal.briefing, reviewedAt: null } });
     expect(saved.scanId).toBe(saved.understanding!.scanId);
-    expect(saved.understanding!.productImportId).not.toBeNull();
+    expect(saved.understanding!.productImportId).toBeNull();
+    expect(saved.understanding!.catalogue).toMatchObject({ created: 1, skipped: 0 });
     expect(await store.getBusiness(user.id, user.business.id)).toEqual(user.business);
-    expect(await store.listProducts(user.id, user.business.id)).toEqual([]);
+    expect(await store.listProducts(user.id, user.business.id)).toHaveLength(1);
     expect(complete).toHaveBeenCalledTimes(2); expect(scanner).toHaveBeenCalledOnce();
     const repeated = await start(user, key).expect(202);
     expect(JSON.parse(repeated.text).job).toEqual(saved);

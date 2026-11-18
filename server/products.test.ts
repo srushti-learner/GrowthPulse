@@ -11,6 +11,7 @@ import { migrations } from "./migrations.js";
 import { csvProducts, websiteProducts } from "./product-imports.js";
 import { emptyProduct, productInputSchema, type ProductInput } from "../shared/products.js";
 import { createWebsiteScanner } from "./website-scanner.js";
+import type { ScanResult } from "../shared/website.js";
 
 const origin = "http://127.0.0.1:5173";
 const product: ProductInput = { ...emptyProduct, name: "Synthetic blue tee", sku: "TEE-1", price: "499.00", currency: "INR", variants: "size: M" };
@@ -153,6 +154,90 @@ describe("owner catalogue API and transactions", () => {
     return (await request(app).post(`/api/businesses/${user.id}/product-imports/csv`).set("Origin", origin).set("Cookie", user.cookie).send({ csv, sourceName }).expect(201)).body.draft;
   }
   const post = (user: { cookie: string; id: string }, suffix: string, body: unknown) => request(app).post(`/api/businesses/${user.id}/${suffix}`).set("Origin", origin).set("Cookie", user.cookie).send(body);
+  function captured(records: unknown[], capturedAt = timestamp): ScanResult {
+    return {
+      requestedUrl: "https://shop.example.com/", status: "complete", startedAt: capturedAt, completedAt: capturedAt, failures: [], notes: [],
+      pages: Array.from({ length: Math.ceil(records.length / 50) }, (_, index) => ({
+        url: `https://shop.example.com/collection-${index}`, capturedAt, title: "", description: "", headings: [], text: "", contacts: [], callsToAction: [], links: [], warnings: [],
+        productJson: records.slice(index * 50, (index + 1) * 50).map((record) => JSON.stringify(record)),
+      })),
+    };
+  }
+
+  it("adds scanned products before any import confirmation and preserves owner edits through fresh, repeated and stale observations", async () => {
+    const user = await owner();
+    const record = { "@type": "Product", name: "Website tee", sku: "TEE-1", offers: { price: "499", priceCurrency: "INR" }, image: "/tee.jpg" };
+    const first = (await store.saveScan(user.userId, user.id, { ...captured([record]), catalogue: { created: 999, updated: 0, unchanged: 0, skipped: 0, issues: [] } }))!;
+    expect(first.catalogue).toEqual({ created: 1, updated: 0, unchanged: 0, skipped: 0, issues: [] });
+    const [saved] = (await request(app).get(`/api/businesses/${user.id}/products`).set("Cookie", user.cookie).expect(200)).body.products;
+    expect(saved.listings[0].data).toMatchObject({ price: "499", imageUrl: "https://shop.example.com/tee.jpg" });
+    await store.saveProduct(user.userId, user.id, { ...product, name: "Owner title", price: "600" }, saved.id);
+    const fresh = captured([{ ...record, name: "New website title", offers: { price: "550", priceCurrency: "INR" } }], "2026-11-17T12:00:00.000Z");
+    expect((await store.saveScan(user.userId, user.id, fresh))?.catalogue).toMatchObject({ created: 0, updated: 1 });
+    expect((await store.saveScan(user.userId, user.id, fresh))?.catalogue).toMatchObject({ unchanged: 1 });
+    expect((await store.saveScan(user.userId, user.id, captured([record])))?.catalogue).toMatchObject({ skipped: 1 });
+    const sameTimeConflict = (await store.saveScan(user.userId, user.id, { ...fresh, pages: [{ ...fresh.pages[0], productJson: [JSON.stringify(record)] }] }))!;
+    expect(sameTimeConflict.catalogue?.issues[0].message).toContain("same capture time");
+    const products = await store.listProducts(user.userId, user.id);
+    expect(products).toHaveLength(1);
+    expect(products[0].name).toBe("Owner title");
+    expect(products[0].listings.find((listing) => listing.source === "manual")?.data.price).toBe("600");
+    expect(products[0].listings.find((listing) => listing.source === "website")?.data.price).toBe("550");
+  });
+
+  it("reports invalid identities, uncertain names and conflicting identifiers without dropping other scanned products", async () => {
+    const user = await owner();
+    await store.saveProduct(user.userId, user.id, { ...product, name: "Existing", gtin: "4006381333931" });
+    const result = await store.saveScan(user.userId, user.id, captured([
+      { "@type": "Product", name: "Ready", sku: "READY" },
+      { "@type": "Product", name: "Existing", url: "/other" },
+      { "@type": "Product", name: "Conflicting GTIN", sku: "TEE-1", gtin: "9780140328721" },
+      { "@type": "Product", name: "No identity" },
+      { "@type": "Product", name: "Invalid price", sku: "BAD", offers: { price: "-1", priceCurrency: "INR" } },
+      { "@type": "Product", name: "Duplicate one", sku: "DUP" },
+      { "@type": "Product", name: "Duplicate two", sku: "DUP" },
+    ]));
+    expect(result?.catalogue).toMatchObject({ created: 1, skipped: 6 });
+    expect(result?.catalogue?.issues).toHaveLength(6);
+    expect(result?.catalogue?.issues.every((issue) => issue.message.length > 0)).toBe(true);
+    expect((await store.listProducts(user.userId, user.id)).map((item) => item.name)).toEqual(["Existing", "Ready"]);
+  });
+
+  it("considers more than 100 captured records and reports the exact catalogue cap without losing the scan", async () => {
+    const user = await owner();
+    const result = await store.saveScan(user.userId, user.id, captured(Array.from({ length: 203 }, (_, index) => ({
+      "@type": "Product", name: `Item ${index}`, sku: `SKU-${index}`,
+    }))));
+    expect(result?.catalogue).toMatchObject({ created: 200, skipped: 3 });
+    expect(result?.catalogue?.issues.every((issue) => issue.message.includes("limit of 200"))).toBe(true);
+    expect(await store.listProducts(user.userId, user.id)).toHaveLength(200);
+    expect(await store.listScans(user.userId, user.id)).toHaveLength(1);
+  });
+
+  it("synchronizes retained legacy scans idempotently with ownership and origin checks and no network calls", async () => {
+    const alice = await owner(), bob = await owner("bob@example.test");
+    const evidence = captured([{ "@type": "Product", name: "Legacy tee", sku: "LEGACY" }]), scanId = randomUUID();
+    const database = new Database(path);
+    try {
+      database.prepare("INSERT INTO website_scans (id,business_id,requested_url,status,started_at,completed_at,page_count,result_json) VALUES (?,?,?,?,?,?,?,?)")
+        .run(scanId, alice.id, evidence.requestedUrl, evidence.status, timestamp, timestamp, evidence.pages.length, JSON.stringify(evidence));
+    } finally { database.close(); }
+    const scanner = vi.fn(async () => { throw new Error("Synchronization must not scan."); });
+    app = createApp({ store, origin, scanner });
+    const suffix = `scans/${scanId}/catalogue`;
+    await request(app).post(`/api/businesses/${alice.id}/${suffix}`).set("Origin", origin).send({}).expect(401);
+    await request(app).post(`/api/businesses/${alice.id}/${suffix}`).set("Origin", origin).set("Cookie", bob.cookie).send({}).expect(404);
+    await request(app).post(`/api/businesses/${alice.id}/${suffix}`).set("Cookie", alice.cookie).send({}).expect(403);
+    await post(bob, suffix, {}).expect(404);
+    await post(alice, suffix, { products: [] }).expect(400);
+    const first = (await post(alice, suffix, {}).expect(200)).body;
+    expect(first.catalogue.created).toBe(1);
+    const repeat = (await post(alice, suffix, {}).expect(200)).body;
+    expect(repeat.catalogue).toMatchObject({ created: 0, updated: 0, unchanged: 1 });
+    expect(repeat.products).toEqual(first.products);
+    expect(await store.listProducts(bob.userId, bob.id)).toHaveLength(0);
+    expect(scanner).not.toHaveBeenCalled();
+  });
 
   it("creates and edits manual products with evidence, without erasing imported listings", async () => {
     const user = await owner();
@@ -222,8 +307,10 @@ describe("owner catalogue API and transactions", () => {
     const multiple = (await store.saveScan(user.userId, user.id, { ...scan, pages: [...scan.pages, secondPage] }))!;
     const draft = (await post(user, "product-imports/website", { scanId: multiple.id }).expect(201)).body.draft;
     expect(draft.rows[0].data.imageUrl).toBe("https://shop.example.com/images/tee.jpg?v=1");
-    const result = await post(user, `product-imports/${draft.id}/commit`, { decisions: [{ row: 1, action: "new" }, { row: 2, action: "new" }] }).expect(200);
-    expect(result.body.result).toMatchObject({ imported: 2, created: 1 });
+    expect(scan.catalogue).toMatchObject({ created: 1, skipped: 0 });
+    expect(multiple.catalogue).toMatchObject({ created: 0, updated: 1, unchanged: 1 });
+    const result = await post(user, `product-imports/${draft.id}/commit`, { decisions: draft.matches.map((match: { row: number; productId: string }) => ({ row: match.row, action: "link", productId: match.productId })) }).expect(200);
+    expect(result.body.result).toMatchObject({ imported: 2, created: 0 });
     expect((await store.listProducts(user.userId, user.id))[0].listings).toHaveLength(2);
     const listing = (await store.listProducts(user.userId, user.id))[0].listings[0];
     expect(listing).toMatchObject({ source: "website", sourceName: "shop.example.com", reference: "https://shop.example.com/product", capturedAt: timestamp });
@@ -255,11 +342,13 @@ describe("owner catalogue API and transactions", () => {
     expect(refreshed.rows[0].data).toMatchObject({ name: "Recoverable tee", price: "2899.00", imageUrl: "https://shop.example.com/tee.jpg" });
     expect(refreshed.rows[1]).toMatchObject({ data: null, preview: { name: "Still needs review", imageUrl: "https://shop.example.com/bad.jpg" } });
     expect((await store.getProductImport(user.userId, user.id, legacy.id)).rows.every((row) => row.data === null && !row.preview)).toBe(true);
-    expect(await store.listProducts(user.userId, user.id)).toEqual([]);
-    await post(user, `product-imports/${refreshed.id}/commit`, { decisions: [{ row: 1, action: "new" }, { row: 2, action: "new" }] }).expect(400);
-    expect(await store.listProducts(user.userId, user.id)).toEqual([]);
-    const imported = (await post(user, `product-imports/${refreshed.id}/commit`, { decisions: [{ row: 1, action: "new" }, { row: 2, action: "skip" }] }).expect(200)).body;
-    expect(imported.result).toMatchObject({ imported: 1, skipped: 1, created: 1 });
+    const automaticallySaved = await store.listProducts(user.userId, user.id);
+    expect(automaticallySaved).toHaveLength(1);
+    expect(scan.catalogue).toMatchObject({ created: 1, skipped: 1 });
+    await post(user, `product-imports/${refreshed.id}/commit`, { decisions: [{ row: 1, action: "link", productId: automaticallySaved[0].id }, { row: 2, action: "new" }] }).expect(400);
+    expect(await store.listProducts(user.userId, user.id)).toEqual(automaticallySaved);
+    const imported = (await post(user, `product-imports/${refreshed.id}/commit`, { decisions: [{ row: 1, action: "link", productId: automaticallySaved[0].id }, { row: 2, action: "skip" }] }).expect(200)).body;
+    expect(imported.result).toMatchObject({ imported: 1, skipped: 1, created: 0 });
     expect((await store.listProducts(user.userId, user.id))[0].listings[0].data).toMatchObject({ price: "2899.00", imageUrl: "https://shop.example.com/tee.jpg" });
     expect(scanner).not.toHaveBeenCalled();
     const csv = await preview(user, "name,sku\nCSV tee,CSV-1");
@@ -300,7 +389,7 @@ describe("owner catalogue API and transactions", () => {
     await store.saveScan(alice.userId, alice.id, evidence);
     await store.saveScan(alice.userId, alice.id, evidence);
     await post(alice, `product-imports/${draft.id}/refresh`, {}).expect(409);
-    expect(await store.listProducts(alice.userId, alice.id)).toEqual([]);
+    expect(await store.listProducts(alice.userId, alice.id)).toHaveLength(1);
   });
 
   it("uses newly learned batch identifiers, but requires review for contradictory GTINs", async () => {

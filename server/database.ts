@@ -166,9 +166,11 @@ export function createStore(database: SqlDatabase, checkpointer: BaseCheckpointS
       })();
     },
     async saveScan(ownerId: string, businessId: string, input: ScanResult) {
-      const result = scanResultSchema.parse(input);
+      const { catalogue: _catalogue, ...captured } = scanResultSchema.parse(input);
       return database.transaction(async () => {
         if (!await database.prepare("SELECT id FROM businesses WHERE id = ? AND owner_id = ?").get(businessId, ownerId)) return undefined;
+        const synced = await catalogue.syncWebsiteProducts(ownerId, businessId, captured);
+        const result = { ...captured, ...(synced ? { catalogue: synced } : {}) };
         const id = randomUUID();
         await database.prepare("INSERT INTO website_scans (id, business_id, requested_url, status, started_at, completed_at, page_count, result_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
           .run(id, businessId, result.requestedUrl, result.status, result.startedAt, result.completedAt, result.pages.length, JSON.stringify(result));

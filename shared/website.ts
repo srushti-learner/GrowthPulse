@@ -31,6 +31,13 @@ export const scannedPageSchema = z.object({
   warnings: z.array(z.string()).max(10),
   productJson: z.array(z.string().max(20_000)).max(50).optional(),
 });
+export const scannedCatalogueSchema = z.object({
+  created: z.number().int().nonnegative(),
+  updated: z.number().int().nonnegative(),
+  unchanged: z.number().int().nonnegative(),
+  skipped: z.number().int().nonnegative(),
+  issues: z.array(z.object({ reference: z.string(), name: z.string(), message: z.string() })).max(scanLimits.pages * 50),
+});
 export const scanResultSchema = z.object({
   requestedUrl: z.url().max(2048),
   status: z.enum(["complete", "partial", "failed"]),
@@ -40,6 +47,7 @@ export const scanResultSchema = z.object({
   failures: z.array(z.object({ url: z.string().max(2048), message: z.string() })).max(scanLimits.pages),
   notes: z.array(z.string()).max(10),
   coverage: scanCoverageSchema.optional(),
+  catalogue: scannedCatalogueSchema.optional(),
 });
 export const savedScanSchema = scanResultSchema.extend({ id: z.uuid(), businessId: z.uuid() });
 export const scanSummarySchema = savedScanSchema.pick({

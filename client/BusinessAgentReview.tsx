@@ -178,7 +178,8 @@ export function BusinessAgentReview({ business, autoStart, scanId, scanCapturedA
     version: 1, status: "partial", enabled: false, steps: [],
     usage: { searches: 0, modelCalls: 0, competitorScans: 0 },
   } satisfies SavedResearch : undefined);
-  const hasFindings = !!draft && (!!draft.briefing || !!draft.suggestions.length || !!draft.productImportId
+  const catalogueProducts = draft?.catalogue ? draft.catalogue.created + draft.catalogue.updated + draft.catalogue.unchanged : 0;
+  const hasFindings = !!draft && (!!draft.briefing || !!draft.suggestions.length || !!draft.productImportId || catalogueProducts > 0
     || !!draft.research?.steps.some((step) => step.findings.length));
   const failed = draft?.scanStatus === "failed";
   const partial = draft?.scanStatus === "partial";
@@ -202,7 +203,7 @@ export function BusinessAgentReview({ business, autoStart, scanId, scanCapturedA
     : draft && !hasFindings ? "No supported findings yet."
     : draft?.briefing ? partial ? "Your business briefing, from a partial scan." : "Your business, explained."
     : draft?.suggestions.length ? partial ? "Profile suggestions from a partial scan." : "Saved profile suggestions."
-    : draft?.productImportId ? "Product listings are ready for review."
+    : draft?.productImportId || catalogueProducts > 0 ? "Your website products are ready."
     : research?.steps.some((step) => step.findings.length) ? "Research findings are saved."
     : "Let's understand your business.";
   function renderResearchOptions(forMarketComparison: boolean) {
@@ -289,7 +290,7 @@ export function BusinessAgentReview({ business, autoStart, scanId, scanCapturedA
           <button className="primary-link" type="submit">{state === "saving" ? "Saving..." : "Save to business profile"}<Icon name="check" /></button>
         </fieldset>
       </form></details>}
-      {mode === "full" && draft.productImportId && <details className="agent-product-review"><summary>Discovered products (optional)</summary><article className="agent-suggestion"><h3>Review product listings when you're ready</h3><p>You can keep reading the intelligence without importing products. Your catalogue changes only after you review and confirm an import.</p><a className="secondary-button" href={`#products?business=${business.id}&import=${draft.productImportId}`}>Review discovered products <Icon name="arrow" /></a></article></details>}
+      {mode === "full" && (!!draft.productImportId || catalogueProducts > 0) && <details className="agent-product-review"><summary>Your website products</summary><article className="agent-suggestion"><h3>Open your product catalogue</h3><p>Usable website products are saved automatically, with source details and their own workspace. You can add missing products manually. Uncertain matches are never merged automatically.</p><a className="secondary-button" href={`#products?business=${business.id}`}>View products <Icon name="arrow" /></a></article></details>}
       </>}
     </div>}
     {(!displayedResearch || managementOnly) && renderResearchOptions(false)}

@@ -412,8 +412,8 @@ describe("agent-led profile onboarding", () => {
     expect(container.querySelector(".research-agent-heading h4")).toBe(heading);
     expect(container.querySelector(".research-agent-nav [aria-pressed=true]")?.textContent).toContain("Growth strategy");
     expect(container.querySelector<HTMLDetailsElement>(".agent-product-review")?.open).toBe(false);
-    expect(container.querySelector(".agent-product-review summary")?.textContent).toBe("Discovered products (optional)");
-    expect(container.querySelector(".agent-product-review")?.textContent).toContain("keep reading the intelligence without importing products");
+    expect(container.querySelector(".agent-product-review summary")?.textContent).toBe("Your website products");
+    expect(container.querySelector(".agent-product-review")?.textContent).toContain("Usable website products are saved automatically");
     await act(async () => container.querySelector<HTMLButtonElement>(".research-navigation .secondary-button")!.click());
     expect(container.querySelector(".research-agent-heading h4")?.textContent).toBe("Product opportunities");
     expect(window.location.hash).toBe(hash);
@@ -1194,7 +1194,7 @@ describe("agent-led profile onboarding", () => {
     expect(container.querySelector(".agent-findings")).not.toBeNull();
     expect(fetch.mock.calls.some(([, options]) => options?.method === "POST")).toBe(false);
     expect(container.querySelector<HTMLDetailsElement>(".agent-product-review")?.open).toBe(false);
-    expect(container.querySelector<HTMLAnchorElement>('.agent-findings a[href^="#products"]')?.getAttribute("href")).toBe(`#products?business=${business.id}&import=${draft.productImportId}`);
+    expect(container.querySelector<HTMLAnchorElement>('.agent-findings a[href^="#products"]')?.getAttribute("href")).toBe(`#products?business=${business.id}`);
   });
 
   it("shows a restored failed scan as an analysis failure with its reason and an explicit retry", async () => {
@@ -1237,9 +1237,9 @@ describe("agent-led profile onboarding", () => {
   });
 
   it("keeps product-only findings reviewable rather than labeling them an empty analysis", async () => {
-    fetcher({ existing: true, review: { ...draft, briefing: null, suggestions: [] } });
+    fetcher({ existing: true, review: { ...draft, briefing: null, suggestions: [], productImportId: null, catalogue: { created: 1, updated: 0, unchanged: 0, skipped: 0, issues: [] } } });
     await render();
-    expect(container.querySelector("#agent-heading")?.textContent).toContain("Product listings are ready for review");
+    expect(container.querySelector("#agent-heading")?.textContent).toContain("Your website products are ready");
     expect(container.querySelector<HTMLAnchorElement>('.agent-findings a[href^="#products"]')).not.toBeNull();
     expect(container.textContent).not.toContain("No supported findings");
   });

@@ -57,7 +57,7 @@ function extract(html: string, url: URL, headerRobots: string): { page: ScannedP
     }
     if (queue.length) warnings.push("Product JSON-LD inspection reached its safety limit; some products may be missing.");
   });
-  if (productJson.length) warnings.push(`${productJson.length} structured product records captured. Review them in Products; nothing has been imported automatically.`);
+  if (productJson.length) warnings.push(`${productJson.length} structured product records captured. Valid, unambiguous records are added to Products when this scan is saved to a business.`);
   if (/\b(?:noindex|none)\b/i.test(directives)) warnings.push("The publisher requests no search indexing. GrowthPulse does not publish these results as a search index.");
   const links = new Set<string>();
   const contacts = new Set<string>();

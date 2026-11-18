@@ -116,14 +116,16 @@ describe("scan API, persistence and ownership", () => {
 
   it("rolls back scan and page evidence if activity recording fails", async () => {
     const user = await owner();
+    scanner.mockResolvedValueOnce({ ...complete, pages: [{ ...complete.pages[0], productJson: [JSON.stringify({ "@type": "Product", name: "Rollback tee", sku: "ROLLBACK" })] }] });
     const database = new Database(path);
     try {
-      database.exec("CREATE TRIGGER fail_scan_activity BEFORE INSERT ON activities BEGIN SELECT RAISE(ABORT, 'Activity write failed'); END;");
+      database.exec("CREATE TRIGGER fail_scan_activity BEFORE INSERT ON activities WHEN NEW.action='website.scanned' BEGIN SELECT RAISE(ABORT, 'Activity write failed'); END;");
       const log = vi.spyOn(console, "error").mockImplementation(() => {});
       await request(app).post(`/api/businesses/${user.id}/scans`).set("Origin", origin).set("Cookie", user.cookie).send(input).expect(500);
       expect(log).toHaveBeenCalled();
       expect(await store.listScans(user.userId, user.id)).toEqual([]);
       expect(await store.listEvidence(user.userId, user.id)).toHaveLength(1);
+      expect(await store.listProducts(user.userId, user.id)).toEqual([]);
     } finally { database.close(); }
   });
 

@@ -75,6 +75,7 @@ export const understandingSchema = proposalSchema.extend({
   reviewedAt: z.iso.datetime().nullable(),
   warnings: z.array(z.string()).max(30),
   productImportId: z.uuid().nullable(),
+  catalogue: scanResultSchema.shape.catalogue,
   evidenceCoverage: evidenceCoverageSchema.optional(),
   research: researchReportSchema.optional(),
 });

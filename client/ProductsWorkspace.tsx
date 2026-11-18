@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { businessesSchema, type Business } from "../shared/contracts";
-import { emptyProduct, importResponseSchema, importResultSchema, productInputSchema, productResponseSchema, productsResponseSchema, type ImportDecision, type ImportDraft, type Product, type ProductInput } from "../shared/products";
-import { scansResponseSchema, type ScanSummary } from "../shared/website";
+import { emptyProduct, importResponseSchema, importResultSchema, productInputSchema, productResponseSchema, productsResponseSchema, scannedProductsResponseSchema, type ImportDecision, type ImportDraft, type Product, type ProductInput } from "../shared/products";
+import { scansResponseSchema, type ScanSummary, type ScanResult } from "../shared/website";
 import { understandingResponseSchema } from "../shared/understanding";
 import { api, ApiFailure, errorMessage } from "./api";
 import { Icon } from "./Icon";
@@ -45,6 +45,7 @@ export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusi
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [catalogueResult, setCatalogueResult] = useState<ScanResult["catalogue"]>();
   const [revision, setRevision] = useState(0);
   const [reload, setReload] = useState(0);
   const requestedSelection = useRef({ id: selectedBusinessId, onSelected: onBusinessSelected });
@@ -90,7 +91,7 @@ export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusi
     setSelectedProductId(businessId === context.get("business") ? context.get("product") ?? "" : "");
     setSearch(""); setFilter("all");
     if (tools.current) tools.current.open = false;
-    setForm(emptyProduct); setEditingId(""); setError(""); setNotice("");
+    setForm(emptyProduct); setEditingId(""); setError(""); setNotice(""); setCatalogueResult(undefined);
     if (!businessId) { setReading(false); return; }
     setReading(true);
     void Promise.all([
@@ -99,14 +100,25 @@ export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusi
     ]).then(async ([catalogue, history]) => {
       if (controller.signal.aborted) return;
       setProducts(catalogue.products); setScans(history.scans); setScanId(history.scans[0]?.id ?? "");
-      const savedAnalyses = await api(`/api/businesses/${businessId}/product-intelligence`, productAnalysisSummariesSchema, { signal: controller.signal });
-      if (controller.signal.aborted) return;
-      setAnalyses(savedAnalyses.analyses);
-      let importId = businessId === context.get("business") ? context.get("import") : null;
+      const importId = businessId === context.get("business") ? context.get("import") : null;
       if (!importId) {
         const saved = await api(`/api/businesses/${businessId}/understanding`, understandingResponseSchema, { signal: controller.signal });
         if (controller.signal.aborted) return;
-        importId = saved.understanding?.productImportId ?? saved.lastSuccessfulUnderstanding?.productImportId ?? null;
+        setCatalogueResult(saved.understanding?.catalogue ?? saved.lastSuccessfulUnderstanding?.catalogue);
+        const legacy = saved.understanding?.productImportId ? saved.understanding
+          : saved.lastSuccessfulUnderstanding?.productImportId ? saved.lastSuccessfulUnderstanding : null;
+        if (legacy) {
+          const synced = await api(`/api/businesses/${businessId}/scans/${legacy.scanId}/catalogue`, scannedProductsResponseSchema, {
+            method: "POST", body: "{}", signal: controller.signal,
+          });
+          if (controller.signal.aborted) return;
+          setProducts(synced.products);
+          setCatalogueResult(synced.catalogue ?? undefined);
+          setNotice(synced.catalogue?.skipped
+            ? `Your website catalogue is ready. ${synced.catalogue.skipped} source records need attention; review saved website records below or add a missing product manually.`
+            : synced.catalogue ? "Your website catalogue is ready. No import confirmation is needed."
+              : "No supported product records were found in the saved scan. Add a missing product manually.");
+        }
       }
       if (importId) {
         const { draft } = await api(`/api/businesses/${businessId}/product-imports/${encodeURIComponent(importId)}`, importResponseSchema, { signal: controller.signal });
@@ -115,6 +127,8 @@ export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusi
           else review(draft);
         }
       }
+      const savedAnalyses = await api(`/api/businesses/${businessId}/product-intelligence`, productAnalysisSummariesSchema, { signal: controller.signal });
+      if (!controller.signal.aborted) setAnalyses(savedAnalyses.analyses);
     }).catch((error: unknown) => { if (!controller.signal.aborted) report(error); })
       .finally(() => { if (!controller.signal.aborted) setReading(false); });
     return () => controller.abort();
@@ -210,14 +224,22 @@ export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusi
     {!businessId ? <p>Create a <a href="#business" className="text-button">business profile</a> before adding products.</p> : <>
       {reading && <p className="loading-message">Loading catalogue and saved scans...</p>}
       {!selectedProduct && <BlurFade className="product-catalogue-intro"><p className="section-eyebrow">PRODUCT INTELLIGENCE</p>
-        <h2>Make every listing clearer.</h2><p>Your own products, their evidence and the next improvements to review. Choose a product to analyse or optimize it.</p>
+        <h2>Make every listing clearer.</h2><p>Products found in saved website scans appear here automatically, with their own product workspace. Add anything the scan missed manually.</p>
         <dl className="product-catalogue-metrics" aria-label="Saved product overview" aria-busy={reading}>
           <div><dt>Saved products</dt><dd>{reading ? "..." : products.length}</dd></div>
           <div><dt>Current analyses</dt><dd>{reading ? "..." : new Set(analyses.map((item) => item.productId)).size}</dd></div>
           <div><dt>Information to review</dt><dd>{reading ? "..." : products.filter(needsAttention).length}</dd></div>
         </dl><p className="field-note">Counts cover saved catalogue products, not your complete website inventory. Review flags describe recorded fields, not product quality or sales.</p>
       </BlurFade>}
-      {!selectedProduct && <details className="agent-sources product-tools" ref={tools}><summary>Add or import products</summary><div className="business-columns">
+      {!selectedProduct && <Button variant="outline" disabled={disabled} onClick={() => {
+        setEditingId(""); setForm(emptyProduct); setDraft(null);
+        if (tools.current) tools.current.open = true;
+        tools.current?.querySelector<HTMLInputElement>('input[name="name"]')?.focus();
+      }}>Add a product manually<Icon name="plus" /></Button>}
+      {!!catalogueResult?.issues.length && <details className="agent-sources"><summary>Website products needing attention ({catalogueResult.skipped})</summary>
+        <ul>{catalogueResult.issues.map((issue, index) => <li key={index}><strong>{issue.name}</strong>: {issue.message}</li>)}</ul>
+      </details>}
+      {!selectedProduct && <details className="agent-sources product-tools" ref={tools}><summary>Manual entry and optional bulk tools</summary><div className="business-columns">
         <form className="workspace-form profile-card" onSubmit={(event) => void save(event)}>
           <div className="card-heading"><p className="section-eyebrow">YOUR CATALOGUE</p><h2>{editingId ? "Edit product" : "Add a product"}</h2><p>Manage your own product details. Imported listings stay separate.</p></div>
           <fieldset disabled={disabled}><legend className="sr-only">Manual product</legend>
@@ -227,7 +249,7 @@ export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusi
             <div className="profile-actions"><button className="primary-link" type="submit">{busy ? "Working..." : editingId ? "Save product" : "Add product"}</button>{editingId && <button className="secondary-button" type="button" onClick={() => { setEditingId(""); setForm(emptyProduct); }}>Cancel edit</button>}</div>
           </fieldset>
         </form>
-        <aside className="profile-card workspace-form"><div className="card-heading"><h2>Import source listings</h2><p>Preview first. Select or confirm catalogue matches before saving. Similar names never cause an automatic merge.</p></div>
+        <aside className="profile-card workspace-form"><div className="card-heading"><h2>Optional CSV upload</h2><p>Add many products from a spreadsheet. Website products are added automatically when you save a scan; CSV uploads still use a review step.</p></div>
           <fieldset disabled={disabled}><legend className="sr-only">CSV and website imports</legend>
             <label>CSV source name<input name="sourceName" value={sourceName} maxLength={80} onChange={(event) => { setSourceName(event.target.value); setDraft(null); }} /></label>
             <p className="field-note">Keep the same source name and listing_id (or SKU/GTIN) to refresh an existing listing. Each variant should have its own stable listing ID.</p>
@@ -247,7 +269,7 @@ export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusi
             <button type="button" className="primary-link" disabled={!csv.trim() || !sourceName.trim()} onClick={() => void preview("csv")}>Preview CSV</button>
             <hr />
             <label>Saved website scan<select name="productScan" value={scanId} onChange={(event) => { setScanId(event.target.value); setDraft(null); }}><option value="">Choose a saved scan</option>{scans.map((scan) => <option key={scan.id} value={scan.id}>{new Date(scan.completedAt).toLocaleString()} · {scan.pageCount} pages · {scan.requestedUrl}</option>)}</select></label>
-            <p className="field-note">Review products found in a saved website scan before importing them.</p>
+            <p className="field-note">Only needed to resolve uncertain matches or inspect older records. Usable products from new scans are already in your catalogue.</p>
             <button className="primary-link" type="button" disabled={!scanId} onClick={() => void preview("website")}>Preview website products</button><a href="#website" className="text-button">Open website scanner</a>
           </fieldset>
         </aside>
@@ -317,7 +339,7 @@ export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusi
           ] as const).map(([key, label]) => <Button key={key} variant={filter === key ? "secondary" : "outline"} aria-pressed={filter === key} onClick={() => setFilter(key)}>{label}</Button>)}</div></div>}
         {!reading && !error && !products.length && <p className="field-note">{draft?.source === "website"
         ? "Website discoveries are awaiting review above. Confirm an import to add them to your catalogue."
-        : "No saved catalogue products yet. Open Add or import products to use a saved website scan, CSV or manual entry."}</p>}
+        : "No saved catalogue products yet. Scan your website to add supported products automatically, or choose Add a product manually."}</p>}
         {!!products.length && !visibleProducts.length && <p className="field-note">No products match this search and filter.</p>}
         <div className="product-catalogue-grid">{visibleProducts.map((product) => {
           const imageUrl = productImage(product);

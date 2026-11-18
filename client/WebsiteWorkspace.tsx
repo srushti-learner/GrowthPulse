@@ -123,7 +123,7 @@ export function WebsiteWorkspace({ authenticated, onSessionExpired }: { authenti
           }}><option value="">Preview only (not saved)</option>{businesses.map((business) => <option key={business.id} value={business.id}>{business.name}</option>)}</select></label>}
           <label>Public website URL<input type="url" name="scanUrl" required maxLength={2048} value={url} placeholder="https://your-public-website.com" onChange={(event) => { setUrl(event.target.value); setPermission(false); }} /><span className="field-note">HTTP(S) only. No login, custom ports, signed links, or query parameters.</span></label>
           <label className="permission-check"><input type="checkbox" name="scanPermission" required checked={permission} onChange={(event) => setPermission(event.target.checked)} /><span>I own this website or have permission to scan its public pages.</span></label>
-          <p className="field-note">{businessId ? "This run, its page evidence, and activity will be saved locally to the selected business. Your profile will not be overwritten." : "Preview only: this result will not be saved to a business."}</p>
+          <p className="field-note">{businessId ? "This run and its evidence will be saved to the selected business. Valid, unambiguous website products are added to your catalogue automatically. Your profile and manual product edits will not be overwritten." : "Preview only: this result will not be saved to a business."}</p>
           <button type="submit" className="primary-link">{busy ? "Scanning public pages..." : result ? "Rescan website" : "Scan website"}<Icon name="arrow" /></button>
         </fieldset>
         {busy && <p role="status" className="loading-message">Reading allowed pages and checking robots rules. This may take up to {scanLimits.milliseconds / 1000} seconds.</p>}
@@ -145,6 +145,15 @@ export function WebsiteWorkspace({ authenticated, onSessionExpired }: { authenti
       <h2 ref={resultHeading} tabIndex={-1} id="scan-result-heading">{statusLabels[result.status]}</h2>
       <p className="scan-meta" role={result.status === "failed" ? "alert" : "status"}>{result.pages.length} HTML pages captured. {"id" in result ? "Saved locally to this business." : "Preview only, not saved."}</p>
       <p className="scan-meta">{result.requestedUrl}<br /><time dateTime={result.completedAt}>{new Date(result.completedAt).toLocaleString()}</time></p>
+      {result.catalogue && <div className="scan-catalogue">
+        <p role="status">{result.catalogue.created} products added, {result.catalogue.updated} listings refreshed, {result.catalogue.unchanged} unchanged, {result.catalogue.skipped} source records needing attention. No import confirmation needed.</p>
+        {"businessId" in result && <a className="primary-link" href={`#products?business=${result.businessId}`}>Open your products<Icon name="arrow" /></a>}
+        {!!result.catalogue.issues.length && <details className="agent-sources"><summary>Product records needing attention ({result.catalogue.skipped})</summary>
+          <ul>{result.catalogue.issues.map((issue, index) => <li key={index}><strong>{issue.name}</strong> · {issue.reference}<br />{issue.message}</li>)}</ul>
+          <p className="field-note">Usable products are already available. Resolve uncertain records with the optional saved-scan tools in Products, or add a missed product manually.</p>
+        </details>}
+      </div>}
+      {"businessId" in result && !result.catalogue && <p className="field-note">No products were added automatically by this run. If no supported product data was captured, add missing products manually in <a href={`#products?business=${result.businessId}`}>Products</a>.</p>}
       {result.failures.length > 0 && <div className="form-error"><h3>Pages we could not read</h3><ul>{result.failures.map((failure) => <li key={failure.url}><strong>{failure.url}</strong><br />{failure.message}</li>)}</ul></div>}
       {!!result.notes.length && <details className="agent-sources scan-details"><summary>Scan details</summary><ul className="scan-notes">{result.notes.map((note) => <li key={note}>{note}</li>)}</ul></details>}
       <div className="scan-pages">{result.pages.map((page) => <article key={page.url} className="scan-page">

@@ -675,6 +675,14 @@ export function createApi(store: Store, origin: string, production: boolean, sca
     const { user, business } = await ownedBusiness(request);
     response.status(201).json({ product: await store.saveProduct(user.id, business.id, productInputSchema.parse(request.body)) });
   });
+  api.post("/businesses/:id/scans/:scanId/catalogue", async (request, response) => {
+    const { user, business } = await ownedBusiness(request);
+    z.object({}).strict().parse(request.body);
+    const scan = await store.getScan(user.id, business.id, z.uuid().parse(request.params.scanId));
+    if (!scan) throw new ApiError(404, "Saved scan not found in this business.");
+    const catalogue = await store.syncWebsiteProducts(user.id, business.id, scan);
+    response.json({ catalogue: catalogue ?? null, products: await store.listProducts(user.id, business.id) });
+  });
   api.put("/businesses/:id/products/:productId", async (request, response) => {
     const { user, business } = await ownedBusiness(request);
     response.json({ product: await store.saveProduct(user.id, business.id, productInputSchema.parse(request.body), z.uuid().parse(request.params.productId)) });

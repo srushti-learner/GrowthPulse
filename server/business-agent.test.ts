@@ -746,7 +746,7 @@ describe("business understanding API", () => {
     }
     expect((await store.getBusiness(user.userId, user.business.id))?.description).toBe("Private profile notes");
     expect(await store.listScans(user.userId, user.business.id)).toHaveLength(1);
-    expect(await store.listProducts(user.userId, user.business.id)).toEqual([]);
+    expect(await store.listProducts(user.userId, user.business.id)).toHaveLength(1);
     expect(complete).toHaveBeenCalledTimes(2);
   });
 
@@ -793,7 +793,7 @@ describe("business understanding API", () => {
     }
   });
 
-  it("persists the review and product draft without changing owner fields or importing products", async () => {
+  it("persists the review and ready website products without changing owner profile fields", async () => {
     const user = await owner();
     expect(scanner).not.toHaveBeenCalled();
     const response = await start(user).expect(201);
@@ -801,11 +801,11 @@ describe("business understanding API", () => {
     expect(result.scanStatus).toBe("complete");
     expect(result.suggestions).toEqual(proposal.suggestions);
     expect(result.briefing).toEqual(briefing);
-    expect(result.productImportId).toBeTypeOf("string");
+    expect(result.productImportId).toBeNull();
+    expect(result.catalogue).toMatchObject({ created: 1, skipped: 0 });
     expect(scanner).toHaveBeenCalledWith(url, expect.any(AbortSignal));
     expect((await store.getBusiness(user.userId, user.business.id))?.description).toBe("Private profile notes");
-    expect(await store.listProducts(user.userId, user.business.id)).toEqual([]);
-    expect((await store.getProductImport(user.userId, user.business.id, result.productImportId)).committed).toBe(false);
+    expect((await store.listProducts(user.userId, user.business.id))[0]).toMatchObject({ name: "Fixture tee", sku: "TEE-1" });
     const sent = JSON.stringify(complete.mock.calls);
     expect(sent).not.toContain("Private profile notes");
     expect(sent).not.toContain("Private owner name");
@@ -906,7 +906,7 @@ describe("business understanding API", () => {
     expect(await store.listActivity(user.userId, user.business.id)).toHaveLength(activityCount);
     expect(complete).toHaveBeenCalledTimes(2);
     expect(scanner).toHaveBeenCalledOnce();
-    expect(await store.listProducts(user.userId, user.business.id)).toEqual([]);
+    expect(await store.listProducts(user.userId, user.business.id)).toHaveLength(1);
     await store.close(); store = openStore(path); app = createApp({ store });
     const restored = await request(app).get(`/api/businesses/${user.business.id}/understanding`).set("Cookie", user.cookie).expect(200);
     expect(restored.body.understanding.reviewedAt).toBe(saved.body.understanding.reviewedAt);
@@ -988,7 +988,7 @@ describe("business understanding API", () => {
       expect(JSON.stringify(log.mock.calls)).not.toContain("private-provider-error-body");
       expect(await store.latestUnderstanding(user.userId, user.business.id)).toBeNull();
       expect(await store.listScans(user.userId, user.business.id)).toHaveLength(1);
-      expect(await store.listProducts(user.userId, user.business.id)).toEqual([]);
+      expect(await store.listProducts(user.userId, user.business.id)).toHaveLength(1);
       expect((await store.getBusiness(user.userId, user.business.id))?.description).toBe("Private profile notes");
     } finally { log.mockRestore(); }
   });

@@ -264,8 +264,8 @@ unsafe destinations and redirects are rejected; manual onboarding still works.
 **Depends on:** checkpoint 2; website extraction additionally depends on checkpoint 4.
 
 **Implemented locally:** the owner-only Products screen supports manual editing,
-UTF-8 CSV preview with row errors, and Product JSON-LD imports from owned saved
-scans. Migration 3 preserves earlier workspace and scan data. No scheduler,
+UTF-8 CSV preview with row errors, and automatic Product JSON-LD catalogue population
+when scans are saved to an owned business. Migration 3 preserves earlier workspace and scan data. No scheduler,
 external inventory sync, or website writes are involved.
 
 ### Build
@@ -285,9 +285,15 @@ Exact normalized identifiers suggest matches; ambiguous matches require an owner
 decision. Stable source identities refresh the same listing, older snapshots
 cannot overwrite newer observations, and committed imports can be retried
 without duplicate writes. The local limits are 200 products/business, 100
-rows/import, and 48 KiB/CSV. Website imports require explicit static Product
-JSON-LD; older saved scans need rescanning. Names/prices are never guessed from
-page text. See README for the CSV format, source identities, and retained drafts.
+rows/optional import preview, and 48 KiB/CSV. Automatic scan saving considers up to
+1,000 captured static Product JSON-LD records and reports invalid, ambiguous,
+conflicting, stale or over-limit records without blocking the remaining products.
+Owner-edited product fields are preserved; only website source listings refresh.
+Public preview claims and agent scans use the same transactional path, independently
+of AI success. Legacy agent drafts synchronize from retained saved evidence without
+network or AI calls. A prominent manual-add option covers missed products; CSV
+and saved-scan review are optional bulk/repair tools. Names/prices are never guessed
+from page text. See README for the CSV format, source identities, and retained drafts.
 
 **Learn:** parsing, normalization, relational modelling, deduplication.
 
@@ -332,9 +338,10 @@ saved results remain available after failures. Technical scan notes are removed
 from the briefing; saved scan diagnostics remain in Website.
 Explicit provider/scan consent and a single-step
 editable profile approval with durable completion (migration 5), plus the existing
-reviewed product imports. Previously applied suggestions do not become pending
+reviewed CSV imports and automatic scanned-product catalogues. Previously applied suggestions do not become pending
 again after reload or a later manual edit. Profiles save before AI starts;
-AI never silently overwrites owner fields or imports products. Missing keys,
+AI never silently overwrites owner fields or invents catalogue products; deterministic
+scan saving adds valid website records without an import confirmation. Missing keys,
 invalid outputs and blocked pages are reported honestly. At most two provider
 calls (256 output tokens for the scanner request and 4,096 for the briefing),
 no retries, 30-second provider timeouts and a
@@ -349,8 +356,9 @@ Local briefings now use a durable SQLite queue (migration 8) and a single worker
 inside the API process. Permissioned POST returns a job ID immediately; separate
 authenticated GET streams restore actual phases and provisional cards after
 navigation or refresh. Disconnecting a viewer does not cancel background work.
-Cancellation is explicit. Final briefing, optional import draft and job completion
+Cancellation is explicit. Final briefing and job completion
 commit atomically; failed/cancelled work cannot replace a prior saved briefing.
+Products are already persisted atomically with the permissioned website scan.
 Request UUIDs bind retries to the original URL and input scan. One active job per
 business and one running worker job across SQLite connections prevent overlap;
 the worker shares the local process's two-operation foreground scan budget.

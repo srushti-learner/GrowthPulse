@@ -54,7 +54,8 @@ discoveries automatically if they have not been imported. Names, available image
 without another scan or AI call. They are separate from the confirmed catalogue;
 only **Confirm import** saves them. Manual entry and CSV remain under
 **Add or import products**.
-Browsing does not start another analysis or change the profile or catalogue.
+Browsing does not start another analysis or change the profile. Products also
+upgrades legacy website discoveries from their saved scan into the catalogue.
 The confirmed catalogue now opens a **product intelligence workspace**: search
 and field-review filters, a selected-product diagnosis, reviewed listing drafts,
 SEO readiness and product-specific recommendations that can join the Growth plan.
@@ -335,7 +336,8 @@ Without a key, the profile still saves, but the agent shows a setup error and
 does not start an AI-driven scan or pretend AI ran. The public-first scan already
 happened before sign-in and remains available. Manual profiles, products, CSV, and advanced
 website scanning continue working without AI. Provider errors and invalid
-citations leave the owner profile and catalogue unchanged.
+citations leave the owner profile unchanged. Valid captured website products
+are saved with the scan even if later AI analysis fails.
 
 The Store Intelligence specialist (also used by the legacy direct endpoint)
 normally makes two provider calls: up to 256 output tokens
@@ -468,7 +470,8 @@ Migration 7 expands saved-scan storage to 20 pages while preserving prior scans
 and both claimed and pending onboarding previews.
 
 Analysis drafts persist privately in migration 4 and reference their saved
-scan and optional product-import draft. Migration 5 records profile-review
+scan and catalogue synchronization summary (older records may retain a product-import
+draft reference). Migration 5 records profile-review
 completion independently of the immutable evidence. Saving reviewed details and
 marking the review complete is one transaction; stale profile edits are rejected.
 The briefing is stored in the existing analysis JSON and remains readable after
@@ -526,9 +529,10 @@ after a provider call was charged, so this is not an exactly-once billing guaran
 Only nonfailed scans with captured pages are reusable checkpoints. Blocked or
 empty attempts remain in Website history without replacing a previous briefing.
 Captured/current website URLs are checked before work and before committing.
-Saving the final briefing, optional product-import draft and completed job is
+Saving the final briefing and completed job is
 one transaction; cancellation and stale leases fence late writes. Previous
 completed briefings remain available after failures.
+Valid website products are persisted earlier, atomically with the saved scan.
 
 Progress snapshots are coalesced every 250 ms and read by viewers every 500 ms.
 Viewer connections rotate after 20 seconds; the browser reconnects using GET,
@@ -915,17 +919,36 @@ explicit and may incur another provider charge.
    product, create a separate product, or skip each uncertain row, then
    **Confirm import**. Invalid rows are skipped; fix the source and preview again
    to include them. Cancelling leaves the catalogue unchanged.
-3. **Website:** in **Website**, run a new permitted scan with your business
-   selected. Return to **Products**, choose that saved scan, and **Preview website
-   products**. Review and confirm just like CSV. This reads existing private
-   evidence; it does not fetch another page or automatically import anything.
+3. **Website:** save a permitted scan to a business and open **Products**.
+   Valid, unambiguous Product JSON-LD records are added to the catalogue immediately,
+   with source listings, images, offers and individual product workspaces. There
+   is no website import/confirmation step. This also applies when public-first
+   findings are claimed after sign-in and when the business agent saves a scan,
+   even if the later AI analysis fails. Account-free previews remain temporary
+   until claimed. Product AI analysis still requires an explicit paid action.
+
+**Add a product manually** is always available on the catalogue page for products
+the scan missed. CSV upload and saved-scan record review remain optional bulk/
+repair tools under **Manual entry and optional bulk tools**. Existing agent
+discovery drafts are synchronized from their retained scan when Products opens;
+this makes no scanner or AI calls and requires no import confirmation.
+
+Website synchronization is transactional with scan saving and works with local
+SQLite and production MySQL. Rescans refresh only source listings, not owner-edited
+product metadata or manual/CSV offers, and never delete unseen products. Stable
+listing identities and unique, non-conflicting SKU/GTIN matches prevent duplicates.
+Ambiguous names, conflicting identifiers, invalid records, older observations
+and records beyond the 200-product catalogue limit are left unchanged with reasons
+in the saved scan's **Product records needing attention** section. All captured
+records are considered, including scans with more than 100 records; the 100-row
+limit still applies to optional import previews.
 
 Import previews separate usable records from a collapsed **Skipped records**
 section, with counts and source-validation reasons. Rejected source records do
 not block valid ones or appear as repeated red application errors. An entirely
-invalid draft cannot be confirmed. This is presentation only: missing stable
+invalid draft cannot be confirmed. For these optional import previews, missing stable
 identities and invalid prices are still rejected, uncertain matches still need
-an explicit decision, and nothing is imported before confirmation.
+an explicit decision, and no preview decisions are applied before confirmation.
 Skipped website records do not necessarily represent missing products: a page
 can publish an incomplete template alongside a usable Product record. Each
 skipped entry identifies usable records from the same page and capture time,
@@ -1128,6 +1151,7 @@ Real `.env` files are ignored. Never place secrets in `VITE_*` variables.
 | POST | `/api/website/scan` | Public, unsaved scan preview |
 | GET / POST | `/api/businesses/:id/scans` | Latest 20 saved runs / scan and save for the owner |
 | GET | `/api/businesses/:id/scans/:scanId` | Owner-only full saved result |
+| POST | `/api/businesses/:id/scans/:scanId/catalogue` | Idempotently sync an owned saved scan with `{}`; no scanner or AI calls |
 | GET / POST | `/api/businesses/:id/products` | List catalogue / create a manual product |
 | PUT | `/api/businesses/:id/products/:productId` | Edit catalogue metadata and owner listing |
 | GET | `/api/businesses/:id/product-intelligence` | Current saved analysis summaries for the owned catalogue |

@@ -72,6 +72,11 @@ describe("product workspace", () => {
     });
 
     await render();
+    expect(container.querySelector<HTMLDetailsElement>(".product-tools")?.open).toBe(false);
+    await click("Add a product manually");
+    expect(container.querySelector<HTMLDetailsElement>(".product-tools")?.open).toBe(true);
+    expect(document.activeElement).toBe(container.querySelector('[name="name"]'));
+    expect(container.textContent).toContain("Optional CSV upload");
     const listing = container.querySelector<HTMLDetailsElement>(".catalogue-listings details")!;
     expect(listing.open).toBe(false);
     expect(listing.querySelector("summary")?.textContent).toContain("499.00 INR");
@@ -323,46 +328,47 @@ describe("product workspace", () => {
     expect(fetch.mock.calls.some(([, options]) => options?.method === "POST")).toBe(false);
   });
 
-  it("shows saved website discoveries automatically without a deep link, scan, AI call or import", async () => {
-    const fetch = fetcher((path) => path.endsWith(`/product-imports/${importId}`)
-      ? json({ draft: { ...draft, source: "website", rows: [{ ...draft.rows[0], data: { ...data, imageUrl: "https://cdn.example.com/tee.jpg" } }, draft.rows[1]] } })
+  it("makes legacy website discoveries ready without an import review, scan or AI call", async () => {
+    const fetch = fetcher((path) => path.endsWith(`/scans/${scanId}/catalogue`)
+      ? json({ catalogue: { created: 1, updated: 0, unchanged: 0, skipped: 0, issues: [] }, products: [{ ...product, listings: [{ ...product.listings[0], source: "website", data: { ...data, imageUrl: "https://cdn.example.com/tee.jpg" } }] }] })
       : json({ products: [] }), understanding);
     await render();
-    expect(container.querySelector(".import-review h2")?.textContent).toBe("Products found on your website");
-    expect(container.querySelector(".import-rows h3")?.textContent).toBe(data.name);
-    expect(container.querySelector(".import-rows")?.textContent).toContain("499.00 INR");
-    expect(container.querySelector(".import-rows img")?.getAttribute("src")).toBe("https://cdn.example.com/tee.jpg");
+    expect(container.querySelector(".import-review")).toBeNull();
+    expect(container.querySelector(".catalogue-product h3")?.textContent).toBe(data.name);
+    expect(container.querySelector(".catalogue-product")?.textContent).toContain("499.00 INR");
+    expect(container.querySelector(".catalogue-product img")?.getAttribute("src")).toBe("https://cdn.example.com/tee.jpg");
     expect(container.querySelector<HTMLDetailsElement>(".product-tools")?.open).toBe(false);
-    expect(container.querySelector(".import-review")?.closest("details")).toBeNull();
-    expect(container.querySelector(".catalogue-list")?.textContent).toContain("Website discoveries are awaiting review above");
-    expect(fetch).toHaveBeenCalledWith(`/api/businesses/${businessId}/product-imports/${importId}`, expect.objectContaining({ signal: expect.any(AbortSignal) }));
-    expect(fetch.mock.calls.some(([, options]) => options?.method)).toBe(false);
+    expect(container.textContent).toContain("No import confirmation is needed");
+    expect(fetch).toHaveBeenCalledWith(`/api/businesses/${businessId}/scans/${scanId}/catalogue`, expect.objectContaining({ method: "POST", body: "{}" }));
+    expect(fetch.mock.calls.filter(([, options]) => options?.method).map(([path]) => path)).toEqual([`/api/businesses/${businessId}/scans/${scanId}/catalogue`]);
   });
 
   it("does not reopen an already imported discovery as an unconfirmed product review", async () => {
-    const fetch = fetcher((path) => path.endsWith(`/product-imports/${importId}`)
-      ? json({ draft: { ...draft, source: "website", committed: true } })
+    const fetch = fetcher((path) => path.endsWith(`/scans/${scanId}/catalogue`)
+      ? json({ catalogue: { created: 0, updated: 0, unchanged: 1, skipped: 0, issues: [] }, products: [product] })
       : json({ products: [product] }), understanding);
     await render();
     expect(container.querySelector(".import-review")).toBeNull();
     expect(container.querySelector(".catalogue-product h3")?.textContent).toBe(data.name);
-    expect(container.textContent).toContain("already imported");
-    expect(fetch.mock.calls.some(([, options]) => options?.method)).toBe(false);
+    expect(container.textContent).toContain("No import confirmation is needed");
+    expect(fetch.mock.calls.some(([path]) => path.includes("/product-imports/"))).toBe(false);
   });
 
-  it("keeps the saved catalogue visible if automatic discovery loading fails and retries without mutations", async () => {
+  it("keeps the catalogue visible if saved-scan synchronization fails and retries without paid calls", async () => {
     let failed = true;
-    const fetch = fetcher((path) => path.endsWith(`/product-imports/${importId}`)
-      ? failed ? json({ error: "Saved discovery temporarily unavailable" }, 503) : json({ draft: { ...draft, source: "website" } })
+    const fetch = fetcher((path) => path.endsWith(`/scans/${scanId}/catalogue`)
+      ? failed ? json({ error: "Saved discovery temporarily unavailable" }, 503) : json({ catalogue: { created: 0, updated: 0, unchanged: 1, skipped: 1, issues: [{ reference: "https://shop.example.com/invalid", name: "Skipped tee", message: "Invalid price." }] }, products: [product] })
       : json({ products: [product] }), understanding);
     await render();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("Saved discovery temporarily unavailable");
     expect(container.querySelector(".catalogue-product h3")?.textContent).toBe(data.name);
     failed = false;
     await click("Reload catalogue");
-    expect(container.querySelector(".import-review")).not.toBeNull();
+    expect(container.querySelector(".import-review")).toBeNull();
+    expect(container.textContent).toContain("Skipped tee");
+    expect(container.textContent).toContain("Invalid price.");
     expect(container.querySelector('[role="alert"]')).toBeNull();
-    expect(fetch.mock.calls.some(([, options]) => options?.method)).toBe(false);
+    expect(fetch.mock.calls.filter(([, options]) => options?.method).every(([path]) => path.endsWith(`/scans/${scanId}/catalogue`))).toBe(true);
   });
 
   it("loads discoveries for the active business and never follows another business's import link", async () => {

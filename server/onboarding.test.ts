@@ -114,6 +114,25 @@ describe("public-first onboarding", () => {
     expect(await store.listBusinesses(other.id)).toEqual([]);
   });
 
+  it("adds public-preview products only when claimed, without AI or a second scan, and persists them across restarts", async () => {
+    scanner.mockResolvedValueOnce({ ...scan, pages: [{ ...scan.pages[0], productJson: [JSON.stringify({
+      "@type": "Product", name: "Claimed tee", sku: "CLAIM-1", image: "/tee.jpg",
+    })] }] });
+    const publicResult = await preview();
+    expect(publicResult.response.body.preview.scan.catalogue).toBeUndefined();
+    const user = await account();
+    expect(await store.listBusinesses(user.id)).toEqual([]);
+    const cookies = `${publicResult.cookie}; ${user.cookie}`;
+    const saved = await claim(cookies).expect(200);
+    expect(saved.body.scan.catalogue).toMatchObject({ created: 1, skipped: 0 });
+    expect((await store.listProducts(user.id, saved.body.business.id))[0]).toMatchObject({ name: "Claimed tee", sku: "CLAIM-1" });
+    expect((await claim(cookies).expect(200)).body).toEqual(saved.body);
+    await store.close(); store = openStore(path); app = buildApp();
+    expect(await store.listProducts(user.id, saved.body.business.id)).toHaveLength(1);
+    expect(scanner).toHaveBeenCalledOnce();
+    expect(complete).not.toHaveBeenCalled();
+  });
+
   it("saves a twenty-page preview and creates its briefing without rescanning, including after reopening", async () => {
     const captured = { ...scan, pages: Array.from({ length: 20 }, (_, index) => ({
       ...scan.pages[0], url: index ? `${url}products/item-${index}` : url,
