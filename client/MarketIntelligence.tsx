@@ -90,7 +90,7 @@ export function MarketIntelligence({ report, businessName, renderComparison }: {
             : "No verified brand profiles are available in this saved sample. This does not mean your business has no competitors."}</p>}
           {!takeaway && report.status !== "running" && (brands.length
             ? <Button variant="outline" onClick={() => navigate("competitors")}>Explore captured brands<ArrowRight /></Button>
-            : <Button variant="outline" asChild><a href="#business">Manage website analysis<ArrowRight /></a></Button>)}
+            : <Button variant="outline" asChild><a href="#overview?view=business">Manage website analysis<ArrowRight /></a></Button>)}
           <p className="field-note">A captured sample, not the whole market or a measure of demand.</p>
         </CardContent>
       </Card>

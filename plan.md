@@ -28,14 +28,24 @@ complete.
 The existing React/Express workspaces now form a five-stage saved-data journey:
 Understand the business, Discover the market, Decide on an action, Act on the
 plan, and Review progress. Returning owners start at a journey dashboard, with
-one shared business selector and contextual next-step links. Public onboarding,
-website-less profiles, manual products and direct tool navigation remain.
+one shared business selector and contextual next-step links. The public entry
+is a four-frame animated welcome with Back/Next, dots, skip and immediate login;
+reduced motion is respected. Account creation/login comes before website entry.
+No website form or workspace sidebar appears before authentication. My growth
+journey nests both website setup and manual profile management; there is no
+separate My business tab, and old `#business` links remain aliases. Website-less
+profiles, manual products and direct authenticated tool navigation remain.
 
 Act opens **My actions**, not the product catalogue. Chosen plan actions expose
 saved suggested steps and evidence, with revision-checked owner status updates
 and filters for active, completed and dismissed work. Decide keeps opportunity
 selection and priority assessment. Products remains a separate tool, offered
 within an action only when relevant; no execution or product match is inferred.
+The action view separates the proposed test, distinct saved steps and suggested
+measurement, omitting duplicate titles and paragraphs without rewriting saved
+data. Evidence and caveats are collapsed. Marketplace research similarly keeps
+scope, provider disclosures and manual inputs under Research options and details;
+the research button remains an explicit action and errors stay visible.
 
 Products can carry an exact growth recommendation and its cited evidence into
 and out of a chosen product workspace; the app does not infer a product match.
@@ -331,11 +341,15 @@ URLs and exact supplied excerpts, and a briefing-first result
 with a sourced business summary, supported observations and their significance,
 explicit unknowns, and recommended next checks. The result separates marketing
 claims from verified facts and does not invent performance or checkout findings.
-The Overview first-visit journey is website URL plus scan permission, readable
-public-site findings without an account or AI, then a separate save/provider
-consent CTA and authentication. A bounded 30-minute server-side preview
+The first-visit journey is animated welcome, account creation/login, then website
+URL and one **Start AI analysis** action that also confirms website permission.
+There is no separate checkbox; collapsed **Analysis details** cover scope,
+providers, possible charges, saving and combined business/competitor analysis. The
+agent continues from scanning directly into the briefing without an intermediate
+public-findings review step. Failed/empty scans block AI with an explicit error.
+A matching usable setup scan is reused until expiry. A bounded 30-minute server-side preview
 (migration 6; opaque HttpOnly cookie, 50 previews maximum, 2 MiB each) carries
-the exact captured scan across sign-in without accepting browser-submitted evidence.
+the exact captured scan through setup without accepting browser-submitted evidence.
 Authenticated, account-bound idempotent claiming creates or reuses the owner's
 profile without overwriting existing details. The agent reuses that saved scan:
 there is no second network scan. The briefing presents one card at a time:

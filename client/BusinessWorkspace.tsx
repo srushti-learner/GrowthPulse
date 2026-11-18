@@ -149,7 +149,7 @@ export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView
         <label>Business<select value={selectedId} disabled={saving} onChange={(event) => select(event.target.value)}><option value="">{growthOnly ? "Choose a business" : "New business"}</option>{businesses.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
         {!growthOnly && !activityOnly && <button className="secondary-button new-business-button" type="button" aria-label="New business" disabled={saving} onClick={() => select("")}><Icon name="plus" /><span>New business</span></button>}
       </div>}
-      {growthOnly && !selectedBusiness && <section className="profile-card"><h2>Choose a business to build its growth plan.</h2><a className="text-button" href="#business">Manage business profiles</a></section>}
+      {growthOnly && !selectedBusiness && <section className="profile-card"><h2>Choose a business to build its growth plan.</h2><a className="text-button" href="#overview?view=business">Manage business profiles</a></section>}
       {growthOnly && selectedBusiness && <GrowthIntelligence key={selectedBusiness.id} business={selectedBusiness} onSessionExpired={onSessionExpired} onPlanSaved={onPlanSaved} actionOnly={actionOnly} />}
       <MarketplaceResearchProvider businessId={researchOnly && researchView === "intelligence" ? selectedBusiness?.id ?? "" : ""} onSessionExpired={onSessionExpired}>
       {researchOnly && researchView === "intelligence" && selectedBusiness && <MarketplaceInsights key={`marketplace:${selectedBusiness.id}`} businessId={selectedBusiness.id} />}
@@ -166,7 +166,7 @@ export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView
       {!growthOnly && researchOnly && selectedBusiness && !selectedBusiness.website && <section className="profile-card">
         <h2>No website analysis for this profile yet.</h2>
         <p>You can manage this business and its products without starting an analysis.</p>
-        <a className="text-button" href="#business">Manage business profile <Icon name="arrow" /></a>
+        <a className="text-button" href={`#overview?view=business&business=${selectedBusiness.id}`}>Manage business profile <Icon name="arrow" /></a>
         {researchView === "intelligence" && <MarketplaceCustomerVoice />}
       </section>}
       </MarketplaceResearchProvider>
@@ -196,6 +196,7 @@ export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView
                 {analysisVisible ? "Hide website analysis" : "Manage website analysis"}
               </button>}
               {profileOnly && <div className="journey-actions">
+                <a className="text-button" href={`#overview?business=${selectedBusiness.id}`}>Back to my growth journey<Icon name="arrow" /></a>
                 <a className="primary-link" href={`#intelligence?business=${selectedBusiness.id}`}>Next: understand my market<Icon name="arrow" /></a>
                 <a className="text-button" href={`#products?business=${selectedBusiness.id}`}>Review what I sell<Icon name="arrow" /></a>
               </div>}
@@ -223,7 +224,7 @@ export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView
           <aside className="ownership-card"><Icon name="shield" /><h2>The start of your story.</h2><p>This profile gives your workspaces a shared business context. Review suggestions before saving them, then explore your market or work on your products.</p><p className="field-note">Only your signed-in account can manage this profile. A website is optional.</p></aside>
         </div></details>
       )}
-      {activityOnly && !selectedId && <div className="profile-card"><h2>Select a saved business to see its history.</h2><a href="#business" className="text-button">Create a business profile <Icon name="arrow" /></a></div>}
+      {activityOnly && !selectedId && <div className="profile-card"><h2>Select a saved business to see its history.</h2><a href="#overview?view=setup&new=1" className="text-button">Create a business profile <Icon name="arrow" /></a></div>}
       {activityOnly && selectedId && <section className="activity-card" aria-labelledby="history-heading"><div className="card-heading"><p className="section-eyebrow">A RECORD, NOT A GUESS.</p><h2 id="history-heading">Activity history</h2><p>Latest 100 recorded profile changes and scans for this business. No fabricated results.</p></div>
         {detailsLoading ? <p className="loading-message">Loading history...</p> : detailsError ? <p role="alert" className="form-error">{detailsError} <button className="text-button" onClick={() => setRevision((value) => value + 1)}>Retry history</button></p> : activities.length === 0 ? <p>No activity recorded yet.</p> : <ol className="activity-list">{activities.map((activity) => {
           const source = evidence.find((item) => item.id === activity.evidenceId);

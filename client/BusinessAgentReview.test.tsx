@@ -165,7 +165,7 @@ describe("agent-led profile onboarding", () => {
     const panel = container.querySelector('[role="tabpanel"]:not([hidden])')!;
     expect(panel.textContent).toContain("Not enough external evidence for a market conclusion yet.");
     expect(panel.textContent).toContain("No market research saved");
-    expect(panel.querySelector('a[href="#business"]')?.textContent).toBe("Manage website analysis");
+    expect(panel.querySelector('a[href="#overview?view=business"]')?.textContent).toBe("Manage website analysis");
     expect(panel.querySelector(".agent-briefing")).toBeNull();
     expect(panel.textContent).not.toContain(draft.briefing.summary.text);
     expect(fetch.mock.calls.some(([, options]) => options?.method === "POST")).toBe(false);

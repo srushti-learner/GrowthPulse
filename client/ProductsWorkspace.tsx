@@ -231,7 +231,7 @@ export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusi
       window.history.replaceState(null, "", `#products?${next}`); setContext(next);
       setBusinessId(id); onBusinessSelected?.(id); setCsv("");
     }}><option value="" disabled>Choose a business</option>{businesses.map((business) => <option key={business.id} value={business.id}>{business.name}</option>)}</select></label></div>}
-    {!businessId ? <p>Create a <a href="#business" className="text-button">business profile</a> before adding products.</p> : <>
+    {!businessId ? <p>Create a <a href="#overview?view=setup&new=1" className="text-button">business profile</a> before adding products.</p> : <>
       {reading && <p className="loading-message">Loading catalogue and saved scans...</p>}
       <GrowthTaskContext key={businessId} businessId={businessId}
         actionId={context.get("business") === businessId ? context.get("action") : null} onSessionExpired={onSessionExpired} />
