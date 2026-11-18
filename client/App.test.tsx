@@ -73,8 +73,8 @@ describe("workspace foundation", () => {
       : path === "/api/onboarding/preview" ? Promise.resolve(json({ preview: null })) : checkHealth());
   }
 
-  it("omits the healthy connection footer instead of exposing technical status controls", async () => {
-    const fetch = publicFetch();
+  it.each(["sqlite", "mysql"])("accepts a healthy %s connection without exposing technical status controls", async (engine) => {
+    const fetch = publicFetch(async () => json({ ...health, database: { engine, status: "ok" } }));
     vi.stubGlobal("fetch", fetch);
     await renderApp();
     expect(fetch).toHaveBeenCalledWith("/api/health", expect.objectContaining({ signal: expect.any(AbortSignal) }));

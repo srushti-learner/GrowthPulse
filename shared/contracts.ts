@@ -54,5 +54,5 @@ export type Activity = z.infer<typeof activitySchema>;
 export const healthSchema = z.object({
   status: z.literal("ok"),
   service: z.literal("growthpulse-api"),
-  database: z.object({ engine: z.literal("sqlite"), status: z.literal("ok") }),
+  database: z.object({ engine: z.enum(["sqlite", "mysql"]), status: z.literal("ok") }),
 });
