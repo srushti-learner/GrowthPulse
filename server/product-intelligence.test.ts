@@ -40,28 +40,28 @@ describe("product-specific saved intelligence", () => {
     });
     app = createApp({ store, scanner, agent: businessAgent, productAnalyst: createProductAnalyst({ complete }) });
   });
-  afterEach(() => { vi.restoreAllMocks(); store.close(); rmSync(directory, { recursive: true, force: true }); });
-  function owner() {
+  afterEach(async () => { vi.restoreAllMocks(); await store.close(); rmSync(directory, { recursive: true, force: true }); });
+  async function owner() {
     const user = { id: randomUUID(), name: "Fixture", email: `${randomUUID()}@example.test` }, session = newSession();
-    store.createAccount(user, "test fixture hash", session.tokenHash, session.expiresAt);
-    const business = store.saveBusiness(user.id, { name: "Fixture", website: "https://shop.example.com/", category: "", description: "" })!;
-    const draft = store.createProductImport(user.id, business.id, "csv", "fixture", [{
+    await store.createAccount(user, "test fixture hash", session.tokenHash, session.expiresAt);
+    const business = (await store.saveBusiness(user.id, { name: "Fixture", website: "https://shop.example.com/", category: "", description: "" }))!;
+    const draft = await store.createProductImport(user.id, business.id, "csv", "fixture", [{
       row: 1, sourceKey: "tee", capturedAt: new Date().toISOString(), reference: "CSV row 1",
       data: { ...emptyProduct, name: "Original cotton tee", description: "A cotton tee.", price: "499", currency: "INR", sku: "TEE-1" }, notes: [], errors: [],
     }]);
-    store.commitProductImport(user.id, business.id, draft.id, { decisions: [{ row: 1, action: "new" }] });
-    const product = store.listProducts(user.id, business.id)[0];
+    await store.commitProductImport(user.id, business.id, draft.id, { decisions: [{ row: 1, action: "new" }] });
+    const product = (await store.listProducts(user.id, business.id))[0];
     return { id: user.id, businessId: business.id, product, cookie: `gp_session=${session.token}`,
       endpoint: `/api/businesses/${business.id}/products/${product.id}` };
   }
-  function get(user: ReturnType<typeof owner>) { return request(app).get(`${user.endpoint}/intelligence`).set("Cookie", user.cookie); }
-  function analyse(user: ReturnType<typeof owner>) { return request(app).post(`${user.endpoint}/intelligence`).set("Cookie", user.cookie).set("Origin", origin).send({ consent: true }); }
-  function post(user: ReturnType<typeof owner>, action: string, input: object) {
+  function get(user: Awaited<ReturnType<typeof owner>>) { return request(app).get(`${user.endpoint}/intelligence`).set("Cookie", user.cookie); }
+  function analyse(user: Awaited<ReturnType<typeof owner>>) { return request(app).post(`${user.endpoint}/intelligence`).set("Cookie", user.cookie).set("Origin", origin).send({ consent: true }); }
+  function post(user: Awaited<ReturnType<typeof owner>>, action: string, input: object) {
     return request(app).post(`${user.endpoint}/${action}`).set("Cookie", user.cookie).set("Origin", origin).send(input);
   }
 
   it("uses only selected-product evidence, saves cited results and reopens them without paid work across restart", async () => {
-    const user = owner();
+    const user = await owner();
     expect(productIntelligenceResponseSchema.parse((await get(user).expect(200)).body)).toMatchObject({ analysis: null, running: false, stale: false });
     expect(complete).not.toHaveBeenCalled();
     const first = productIntelligenceResponseSchema.parse((await analyse(user).expect(200)).body);
@@ -73,7 +73,7 @@ describe("product-specific saved intelligence", () => {
     expect(complete).toHaveBeenCalledOnce();
     for (let index = 0; index < 5; index++) expect((await analyse(user).expect(200)).body.analysis.id).toBe(first.analysis!.id);
     expect(complete).toHaveBeenCalledOnce();
-    store.close(); store = openStore(path);
+    await store.close(); store = openStore(path);
     app = createApp({ store, scanner, agent: businessAgent, productAnalyst: createProductAnalyst() });
     const reopened = productIntelligenceResponseSchema.parse((await get(user).expect(200)).body);
     expect(reopened).toMatchObject({ configured: false, analysis: first.analysis, stale: false });
@@ -82,7 +82,7 @@ describe("product-specific saved intelligence", () => {
   });
 
   it("hands a server-selected recommendation to Growth once, then saves only owner-approved local copy", async () => {
-    const user = owner();
+    const user = await owner();
     const analysis = (await analyse(user).expect(200)).body.analysis;
     const input = { analysisId: analysis.id, index: 0 };
     const planned = (await post(user, "growth-plan", input).expect(201)).body.item;
@@ -105,7 +105,7 @@ describe("product-specific saved intelligence", () => {
   });
 
   it("checks account ownership, business scope, origin and explicit paid consent", async () => {
-    const alice = owner(), bob = owner();
+    const alice = await owner(), bob = await owner();
     await request(app).get(`${alice.endpoint}/intelligence`).expect(401);
     await request(app).get(`${alice.endpoint}/intelligence`).set("Cookie", bob.cookie).expect(404);
     await request(app).get(`/api/businesses/${bob.businessId}/products/${alice.product.id}/intelligence`).set("Cookie", bob.cookie).expect(404);
@@ -118,7 +118,7 @@ describe("product-specific saved intelligence", () => {
   });
 
   it("reconnects duplicate in-flight requests and persists failures without automatic retries", async () => {
-    const user = owner();
+    const user = await owner();
     let resolve!: () => void;
     const gate = new Promise<void>((done) => { resolve = done; });
     const implementation = complete.getMockImplementation()!;
@@ -134,7 +134,7 @@ describe("product-specific saved intelligence", () => {
     expect(responses.map((response) => response.status)).toEqual([200, 200]);
     expect(responses[0].body.analysis.id).toBe(responses[1].body.analysis.id);
     expect(complete).toHaveBeenCalledOnce();
-    store.saveProduct(user.id, user.businessId, { ...emptyProduct, name: "Changed input", sku: "TEE-1" }, user.product.id);
+    await store.saveProduct(user.id, user.businessId, { ...emptyProduct, name: "Changed input", sku: "TEE-1" }, user.product.id);
     complete.mockRejectedValue(new AgentError(502, "Provider could not complete this request. No automatic retry was made."));
     await analyse(user).expect(502);
     const failed = (await get(user).expect(200)).body;
@@ -144,21 +144,21 @@ describe("product-specific saved intelligence", () => {
   });
 
   it("shares the account allowance for new paid analyses while preserving free saved reads", async () => {
-    const user = owner();
+    const user = await owner();
     await analyse(user).expect(200);
     for (let index = 0; index < 2; index++) {
-      store.saveProduct(user.id, user.businessId, { ...emptyProduct, name: `Revision ${index}`, sku: "TEE-1" }, user.product.id);
+      await store.saveProduct(user.id, user.businessId, { ...emptyProduct, name: `Revision ${index}`, sku: "TEE-1" }, user.product.id);
       await analyse(user).expect(200);
     }
-    store.saveProduct(user.id, user.businessId, { ...emptyProduct, name: "One more change", sku: "TEE-1" }, user.product.id);
+    await store.saveProduct(user.id, user.businessId, { ...emptyProduct, name: "One more change", sku: "TEE-1" }, user.product.id);
     expect((await analyse(user).expect(429)).body.error).toContain("for your account");
     await get(user).expect(200);
     expect(complete).toHaveBeenCalledTimes(3);
-    const bob = owner(); await analyse(bob).expect(200);
+    const bob = await owner(); await analyse(bob).expect(200);
   });
 
   it("counts admitted paid failures, but not saved reads or refused consent, against the new-analysis allowance", async () => {
-    const user = owner();
+    const user = await owner();
     complete.mockRejectedValue(new AgentError(502, "Provider could not complete this request."));
     for (let index = 0; index < 3; index++) {
       await post(user, "intelligence", { consent: false }).expect(400);
@@ -169,30 +169,30 @@ describe("product-specific saved intelligence", () => {
     expect(complete).toHaveBeenCalledTimes(3);
   });
 
-  it("fences late results and failures after a lease expires and a new explicit attempt starts", () => {
-    const user = owner(), fingerprint = productFingerprint(user.product);
-    const firstLease = store.beginProductAnalysis(user.id, user.businessId, user.product.id, fingerprint);
+  it("fences late results and failures after a lease expires and a new explicit attempt starts", async () => {
+    const user = await owner(), fingerprint = productFingerprint(user.product);
+    const firstLease = await store.beginProductAnalysis(user.id, user.businessId, user.product.id, fingerprint);
     vi.spyOn(Date, "now").mockReturnValue(firstLease + 1);
-    expect(store.productAnalysisState(user.id, user.businessId, user.product.id, fingerprint)).toMatchObject({ running: false, error: expect.stringContaining("interrupted") });
-    const nextLease = store.beginProductAnalysis(user.id, user.businessId, user.product.id, fingerprint);
-    store.failProductAnalysis(user.id, user.businessId, user.product.id, fingerprint, "Late old failure", firstLease);
+    expect(await store.productAnalysisState(user.id, user.businessId, user.product.id, fingerprint)).toMatchObject({ running: false, error: expect.stringContaining("interrupted") });
+    const nextLease = await store.beginProductAnalysis(user.id, user.businessId, user.product.id, fingerprint);
+    await store.failProductAnalysis(user.id, user.businessId, user.product.id, fingerprint, "Late old failure", firstLease);
     const evidence = productEvidence(user.product);
     const analysis = { id: randomUUID(), productId: user.product.id, fingerprint, createdAt: new Date().toISOString(), evidence, result: output(evidence[0].id) };
-    expect(() => store.finishProductAnalysis(user.id, user.businessId, analysis, firstLease)).toThrow("lease expired");
-    expect(store.productAnalysisState(user.id, user.businessId, user.product.id, fingerprint)).toMatchObject({ running: true, analysis: null, error: null });
-    store.finishProductAnalysis(user.id, user.businessId, analysis, nextLease);
-    expect(store.productAnalysisState(user.id, user.businessId, user.product.id, fingerprint).analysis?.id).toBe(analysis.id);
+    await expect(store.finishProductAnalysis(user.id, user.businessId, analysis, firstLease)).rejects.toThrow("lease expired");
+    expect(await store.productAnalysisState(user.id, user.businessId, user.product.id, fingerprint)).toMatchObject({ running: true, analysis: null, error: null });
+    await store.finishProductAnalysis(user.id, user.businessId, analysis, nextLease);
+    expect((await store.productAnalysisState(user.id, user.businessId, user.product.id, fingerprint)).analysis?.id).toBe(analysis.id);
   });
 
   it("honors aborts without another model request", async () => {
-    const user = owner(), controller = new AbortController();
+    const user = await owner(), controller = new AbortController();
     controller.abort();
     await expect(createProductAnalyst({ complete }).run(user.product, controller.signal)).rejects.toMatchObject({ status: 504 });
     expect(complete).not.toHaveBeenCalled();
   });
 
   it.each(["invented-reference", "duplicate-dimension", "invented-visual-audit"] as const)("rejects %s and keeps catalogue data unchanged", async (failure) => {
-    const user = owner();
+    const user = await owner();
     complete.mockImplementation(async (input) => {
       const { evidence } = JSON.parse(String(input.messages[0].content)) as { evidence: { id: string }[] };
       const result = output(evidence[0].id);
@@ -203,7 +203,7 @@ describe("product-specific saved intelligence", () => {
     });
     await analyse(user).expect(502);
     expect((await get(user).expect(200)).body.analysis).toBeNull();
-    expect(store.listProducts(user.id, user.businessId)[0]).toEqual(user.product);
+    expect((await store.listProducts(user.id, user.businessId))[0]).toEqual(user.product);
   });
 
   it.each([
@@ -215,7 +215,7 @@ describe("product-specific saved intelligence", () => {
     { failure: "overlong-seo-copy", expected: "required text lengths or section counts", build: (result: ProductAnalysisOutput) => ({ stop_reason: "tool_use" as const, content: [{ type: "tool_use" as const, id: "fixture-tool", name: "submit_product_analysis", input: { ...result, rewrite: { ...result.rewrite, seoTitle: "x".repeat(71) } } }] }) },
     { failure: "missing-summary", expected: "did not match the required structure", build: (result: ProductAnalysisOutput) => ({ stop_reason: "tool_use" as const, content: [{ type: "tool_use" as const, id: "fixture-tool", name: "submit_product_analysis", input: { ...result, summary: undefined } }] }) },
   ] as const)("distinguishes $failure from other incomplete-response causes and keeps catalogue data unchanged", async ({ expected, build }) => {
-    const user = owner();
+    const user = await owner();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     complete.mockImplementation(async (input) => {
       const { evidence } = JSON.parse(String(input.messages[0].content)) as { evidence: { id: string }[] };
@@ -225,7 +225,7 @@ describe("product-specific saved intelligence", () => {
     expect(response.body.error).toContain(expected);
     expect(response.body.error).toContain("No automatic retry was made");
     expect((await get(user).expect(200)).body.analysis).toBeNull();
-    expect(store.listProducts(user.id, user.businessId)[0]).toEqual(user.product);
+    expect((await store.listProducts(user.id, user.businessId))[0]).toEqual(user.product);
     const logged = JSON.stringify(warn.mock.calls);
     expect(logged).not.toContain(user.product.name);
     expect(logged).not.toContain(user.product.description);
@@ -234,7 +234,7 @@ describe("product-specific saved intelligence", () => {
   });
 
   it("keeps unexpected provider field names and values out of diagnostics", async () => {
-    const user = owner();
+    const user = await owner();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     complete.mockResolvedValue({
       stop_reason: "tool_use",
@@ -249,8 +249,8 @@ describe("product-specific saved intelligence", () => {
     expect(JSON.stringify(warn.mock.calls)).not.toContain(user.product.description);
   });
 
-  it("bounds untrusted evidence, marks changed inputs stale and treats a real zero price as recorded", () => {
-    const user = owner();
+  it("bounds untrusted evidence, marks changed inputs stale and treats a real zero price as recorded", async () => {
+    const user = await owner();
     const escaped = { ...user.product, name: "\u0001".repeat(300), description: "x".repeat(2000) };
     const evidence = productEvidence(escaped);
     expect(evidence.length).toBeLessThanOrEqual(64);

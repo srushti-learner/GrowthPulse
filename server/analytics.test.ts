@@ -72,34 +72,34 @@ describe("sales CSV and Excel normalization", () => {
 });
 describe("owner-scoped analytics persistence", () => {
   const stores: ReturnType<typeof openStore>[] = [];
-  afterEach(() => { for (const store of stores.splice(0)) store.close(); });
+  afterEach(async () => { for (const store of stores.splice(0)) await store.close(); });
   async function setup() {
     const store = openStore(":memory:"); stores.push(store);
     const user = { id: randomUUID(), name: "Owner", email: `${randomUUID()}@example.test` };
-    store.createAccount(user, "unused", "token", Date.now() + 100000);
-    const business = store.saveBusiness(user.id, { name: "Test business", category: "", description: "", website: "" })!;
+    await store.createAccount(user, "unused", "token", Date.now() + 100000);
+    const business = (await store.saveBusiness(user.id, { name: "Test business", category: "", description: "", website: "" }))!;
     const snapshot = await readSalesFile(csv, "csv", "GBP");
     return { store, user, business, snapshot };
   }
   it("previews without changing actuals, commits idempotently and protects snapshots from scenario edits", async () => {
     const { store, user, business, snapshot } = await setup();
-    const baseline = store.salesData(user.id, business.id);
-    const draft = store.previewSales(user.id, business.id, "fixture.csv", salesFileHash(csv), snapshot);
-    expect(store.previewSales(user.id, business.id, "same-data.csv", salesFileHash(csv), snapshot).id).toBe(draft.id);
-    expect(store.salesData(user.id, business.id).days).toEqual([]);
-    expect(() => store.commitSales(user.id, business.id, draft.id, baseline.version, false)).toThrow("acknowledge");
-    const actual = store.commitSales(user.id, business.id, draft.id, baseline.version, true);
+    const baseline = await store.salesData(user.id, business.id);
+    const draft = await store.previewSales(user.id, business.id, "fixture.csv", salesFileHash(csv), snapshot);
+    expect((await store.previewSales(user.id, business.id, "same-data.csv", salesFileHash(csv), snapshot)).id).toBe(draft.id);
+    expect((await store.salesData(user.id, business.id)).days).toEqual([]);
+    await expect(store.commitSales(user.id, business.id, draft.id, baseline.version, false)).rejects.toThrow("acknowledge");
+    const actual = await store.commitSales(user.id, business.id, draft.id, baseline.version, true);
     expect(actual.days).toHaveLength(2);
-    expect(store.commitSales(user.id, business.id, draft.id, baseline.version, true).version).toBe(actual.version);
-    expect(() => store.salesData(randomUUID(), business.id)).toThrow("Business not found");
-    const scenario = store.saveSalesScenario(user.id, business.id, { name: "Alternative", start: "2025-01-01", end: "2025-01-02", ordersPct: 10, aovPct: 5, costPct: 0 }, actual.version);
+    expect((await store.commitSales(user.id, business.id, draft.id, baseline.version, true)).version).toBe(actual.version);
+    await expect(store.salesData(randomUUID(), business.id)).rejects.toThrow("Business not found");
+    const scenario = await store.saveSalesScenario(user.id, business.id, { name: "Alternative", start: "2025-01-01", end: "2025-01-02", ordersPct: 10, aovPct: 5, costPct: 0 }, actual.version);
     expect(scenario.days).toEqual(actual.days);
     expect(scenario.scenarios[0].days[0].gross).not.toBe(actual.days[0].gross);
-    expect(() => store.saveManualSales(user.id, business.id, { currency: "GBP", day: day("2025-01-01"), evidence: "Owner log", estimated: false }, actual.version)).toThrow("already has data");
-    const updated = store.saveManualSales(user.id, business.id, { currency: "GBP", day: day("2025-01-03"), evidence: "Owner log", estimated: true }, actual.version);
+    await expect(store.saveManualSales(user.id, business.id, { currency: "GBP", day: day("2025-01-01"), evidence: "Owner log", estimated: false }, actual.version)).rejects.toThrow("already has data");
+    const updated = await store.saveManualSales(user.id, business.id, { currency: "GBP", day: day("2025-01-03"), evidence: "Owner log", estimated: true }, actual.version);
     expect(updated.days).toHaveLength(3);
     expect(updated.sources.at(-1)?.kind).toBe("estimate");
-    expect(() => store.saveSalesScenario(user.id, business.id, { name: "Stale", start: "2025-01-01", end: "2025-01-02", ordersPct: 0, aovPct: 0, costPct: 0 }, actual.version)).toThrow("History changed");
+    await expect(store.saveSalesScenario(user.id, business.id, { name: "Stale", start: "2025-01-01", end: "2025-01-02", ordersPct: 0, aovPct: 0, costPct: 0 }, actual.version)).rejects.toThrow("History changed");
   });
   it("checks session/ownership before reading large files and preserves exact-origin mutation protection", async () => {
     const { store, business } = await setup();
@@ -110,15 +110,15 @@ describe("owner-scoped analytics persistence", () => {
   });
   it.each(["", "https://shop.example.test/"])("imports sales and saves isolated scenarios over HTTP with website %j without scanning or paid analysis", async (website) => {
     const { store, user, business: initialBusiness } = await setup();
-    const business = store.saveBusiness(user.id, { ...initialBusiness, website }, initialBusiness.id)!;
-    const session = newSession(); store.createSession(user.id, session.tokenHash, session.expiresAt);
+    const business = (await store.saveBusiness(user.id, { ...initialBusiness, website }, initialBusiness.id))!;
+    const session = newSession(); await store.createSession(user.id, session.tokenHash, session.expiresAt);
     const cookie = `gp_session=${session.token}`, origin = "http://127.0.0.1:5174";
     const app = createApp({ store, origin });
     const prefix = `/api/businesses/${business.id}`;
     const empty = await request(app).get(`${prefix}/analytics`).set("Cookie", cookie).expect(200).expect("Cache-Control", "no-store");
     const preview = await request(app).post(`${prefix}/sales-imports?currency=GBP&filename=orders.csv`)
       .set("Cookie", cookie).set("Origin", origin).set("Content-Type", "text/csv").send(csv.toString()).expect(201);
-    expect(store.salesData(user.id, business.id).days).toEqual([]);
+    expect((await store.salesData(user.id, business.id)).days).toEqual([]);
     const actual = await request(app).post(`${prefix}/sales-imports/${preview.body.draft.id}/commit`)
       .set("Cookie", cookie).set("Origin", origin).send({ expectedVersion: empty.body.analytics.version, confirmRejected: true }).expect(200);
     const scenario = await request(app).post(`${prefix}/analytics/scenarios`).set("Cookie", cookie).set("Origin", origin)
@@ -127,18 +127,18 @@ describe("owner-scoped analytics persistence", () => {
       } }).expect(201);
     expect(scenario.body.analytics.days).toEqual(actual.body.analytics.days);
     expect(scenario.body.analytics.scenarios[0].days[0].orders).toBe(2);
-    expect(store.listScans(user.id, business.id)).toEqual([]);
-    expect(store.latestAnalysisJob(user.id, business.id)).toBeNull();
+    expect(await store.listScans(user.id, business.id)).toEqual([]);
+    expect(await store.latestAnalysisJob(user.id, business.id)).toBeNull();
     await request(app).get(`${prefix}/analytics`).expect(401);
   });
   it("limits uploads per account across its businesses while leaving other accounts and saved reads available", async () => {
     const { store, user, business } = await setup();
     const origin = "http://127.0.0.1:5174", app = createApp({ store, origin });
-    const first = newSession(); store.createSession(user.id, first.tokenHash, first.expiresAt);
-    const secondBusiness = store.saveBusiness(user.id, { name: "Other channel", category: "", description: "", website: "" })!;
+    const first = newSession(); await store.createSession(user.id, first.tokenHash, first.expiresAt);
+    const secondBusiness = (await store.saveBusiness(user.id, { name: "Other channel", category: "", description: "", website: "" }))!;
     const other = { id: randomUUID(), name: "Other owner", email: `${randomUUID()}@example.test` };
-    const second = newSession(); store.createAccount(other, "unused", second.tokenHash, second.expiresAt);
-    const otherBusiness = store.saveBusiness(other.id, { name: "Separate account", category: "", description: "", website: "" })!;
+    const second = newSession(); await store.createAccount(other, "unused", second.tokenHash, second.expiresAt);
+    const otherBusiness = (await store.saveBusiness(other.id, { name: "Separate account", category: "", description: "", website: "" }))!;
     const upload = (businessId: string, token: string) => request(app).post(`/api/businesses/${businessId}/sales-imports?currency=GBP&filename=orders.csv`)
       .set("Cookie", `gp_session=${token}`).set("Origin", origin).set("Content-Type", "text/csv").send(csv.toString());
     for (let index = 0; index < 12; index++) await upload(index % 2 ? business.id : secondBusiness.id, first.token).expect(201);

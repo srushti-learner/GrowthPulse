@@ -80,7 +80,7 @@ Strategies contain the saved AI recommendation plus a clearly labeled planning
 scaffold, a suggested metric and an experiment proposal to refine before acting.
 No new model/research call occurs when opening this tab, adding an action or
 saving an assessment. Completed status is owner-reported work, not measured uplift.
-The existing LangGraph research workflow and SQLite checkpointer still run inside
+The existing LangGraph research workflow and durable SQL checkpointer still run inside
 the analysis worker; the saved-result Market and Growth views do not replace them.
 Live analytics connectors, experiment execution and automatic recommendation-outcome
 tracking are not implemented. Earlier plans retain their evidence snapshots when research
@@ -203,8 +203,8 @@ message access.
 The analytics engine is selectively adapted from
 `users/shekhar-byte-/repository-analysis` at `9fa85c5`, without merging its older
 application or conflicting migrations. Migration 13 adds sales/traffic tables
-after the current agent migrations. SQLite remains local-only; the existing
-GoDaddy/MySQL production startup block is unchanged.
+after the current agent migrations. SQLite remains the local default; production
+uses the shared asynchronous repositories through a MySQL connection pool.
 
 The interface uses the sidebar/inset layout and components from
 [shadcn/ui Dashboard 01](https://ui.shadcn.com/blocks#dashboard-01), with
@@ -304,7 +304,7 @@ It never silently imports products or applies suggestions.
 Without a website, use **No website? Sign in to add information manually** or
 **Business Profile**. Profiles without a website remain manual.
 
-The public-first preview is a temporary SQLite record, not browser-supplied AI
+The public-first preview is a temporary database record, not browser-supplied AI
 evidence. Migration 6 stores at most 50 previews of at most 2 MiB each, with a
 30-minute lifetime. An opaque HttpOnly, SameSite=Lax cookie carries only its lookup
 token; the database retains the token hash. Expired previews are inaccessible and
@@ -407,7 +407,7 @@ This validates provenance, not semantic or factual correctness:
 the owner should evaluate AI interpretations, and profile suggestions still need
 explicit approval. Website content is untrusted data, never tool authority.
 
-The browser queues a durable SQLite job and follows live NDJSON snapshots over
+The browser queues a durable SQL job and follows live NDJSON snapshots over
 separate, reconnectable GET requests. The second provider call uses the
 SDK's real message stream with eager tool-input streaming; a bounded incremental
 JSON parser exposes unfinished text strings without displaying raw tool JSON,
@@ -484,7 +484,7 @@ normal API process starts one worker automatically; there is no Redis or
 separate worker command. Keep the local API running:
 closing a browser tab is safe, but stopping the API stops its in-process worker.
 
-One job may be queued/running per business, and SQLite transactions, a unique
+One job may be queued/running per business, and database transactions, a unique
 running-job index and lease tokens permit only one running worker job across
 connections. Foreground scans and the worker share the existing two-operation
 budget in the local process. The queue holds at most 50 waiting jobs; the worker
@@ -529,10 +529,10 @@ text is cleared on terminal outcomes. Ordinary refresh restores the job or
 saved result without starting a new analysis. This improves recovery, not model
 speed: queueing and provider processing still take time.
 
-This is the local SQLite implementation only. GoDaddy Node.js Hosting + MySQL
-remains the production target. A transactional MySQL queue and a verified
-persistent-worker hosting arrangement are deferred until that infrastructure is
-available; production SQLite startup remains deliberately blocked.
+The queue, leases, research journal and graph checkpoints support both local
+SQLite and production MySQL. GoDaddy must still provide a persistent Node.js
+process; host-specific worker lifetime and restart behavior require verification.
+Production SQLite startup remains deliberately blocked.
 
 ### Research orchestration and Tavily MCP
 
@@ -541,7 +541,7 @@ The existing worker runs a LangGraph workflow, not an unrestricted agent loop:
 ```mermaid
 flowchart TD
     Browser["Browser: explicit analysis request"] --> API["Express: validate and enqueue"]
-    API --> Queue["SQLite job + renewable lease"]
+    API --> Queue["SQL job + renewable lease"]
     Queue --> Worker["In-process worker"]
     Worker --> Scan["Existing safe merchant scanner"]
     Scan --> Coordinate["Research Orchestrator"]
@@ -660,7 +660,7 @@ from a completed verification that found no qualifying brands; it is not evidenc
 that a business has no competitors.
 
 Migration 9 saves each specialist's accepted findings, usage and private
-artifacts independently. LangGraph uses its official SQLite checkpointer on the
+artifacts independently. LangGraph uses a durable SQL checkpointer on the
 same private database; checkpoints contain execution state, not an extra copy
 of page text. Browser reload and cancellation preserve already accepted work.
 **Retry failed research steps** creates an explicit new job and reuses matching
@@ -730,8 +730,8 @@ margins. Public gaps may warrant a targeted permitted scan; owner-only facts nee
 owner input, and performance questions need authorised business data. Reading a
 card does not trigger research, collect an answer or mark it resolved. Competitor
 research can inform a next check but does not automatically resolve these cards.
-Production also needs a MySQL-compatible research journal/checkpointer and a
-verified persistent worker; the GoDaddy/MySQL deployment remains blocked.
+The research journal/checkpointer now supports MySQL. Production still requires
+verification of GoDaddy's persistent-worker behavior and deployment configuration.
 
 The overview's first-visit form is a real public scan-to-briefing flow.
 Its collapsed Fleet-inspired interactive workflow uses explicitly illustrative data:
@@ -754,7 +754,7 @@ those controls do not scan, call AI, save business data, or apply changes.
 HTTP(S)/DNS APIs validate and pin the destination before connecting.
 `robots-parser` checks publisher rules, `ipaddr.js` classifies addresses, and
 Cheerio parses the returned HTML. Shared Zod schemas validate results; the
-existing SQLite store atomically records saved runs, evidence, and activity.
+configured SQL store atomically records saved runs, evidence, and activity.
 No AI key, external database, browser engine, or GoDaddy credentials are needed.
 
 Boundaries are deliberate:
@@ -881,7 +881,7 @@ the saved evidence and citation validation unchanged; incomplete excerpts are
 identified rather than displayed as broken JSON.
 
 Opening saved results and reusing an unchanged analysis never start paid work or
-consume an allowance. Equivalent in-process requests reuse one analysis; SQLite
+consume an allowance. Equivalent in-process requests reuse one analysis; database
 also rejects overlapping analyses of a product. New admitted product attempts
 share the account's three-new-AI-analyses/ten-minute allowance and two-operation
 local capacity budget, without using the fresh-scan allowance. Admitted product
@@ -891,7 +891,7 @@ consent/capacity requests do not. Rate limits remain in-process, not billing quo
 Results and their exact evidence survive restart. Changing the product or its
 source snapshots marks older results stale and disables their application and
 Growth handoff. Closing the browser does not cancel an admitted API request.
-Product analysis has a 45-second timeout and a fenced, expiring SQLite lease;
+Product analysis has a 45-second timeout and a fenced, expiring database lease;
 unlike the business-analysis queue, unfinished product work is not resumed after
 server shutdown. An expired request is shown as interrupted; retries are always
 explicit and may incur another provider charge.
@@ -992,11 +992,11 @@ manual entry. Scans saved before this checkpoint need a new scan. Authentication
 robots, retention directives, and every Checkpoint 4 restriction still apply.
 
 Import drafts and their validated source snapshots are retained privately in
-SQLite, even when cancelled in the UI. Listings show their newest accepted
+the configured database, even when cancelled in the UI. Listings show their newest accepted
 observation; committed drafts retain prior source snapshots. There is no
 automatic synchronisation, stock monitoring, or retention/deletion UI yet.
 
-## Local database and migrations
+## Database and migrations
 
 - Default database: `data/growthpulse.sqlite`, excluded from Git along with its
   WAL/SHM files. Never commit or publish database files.
@@ -1030,6 +1030,26 @@ automatic synchronisation, stock monitoring, or retention/deletion UI yet.
   browser-submitted website evidence is never accepted for AI.
 - Migration 12 adds private, product-fingerprinted analysis results, evidence
   snapshots and expiring run leases without rewriting existing catalogue data.
+- Migration 15 adds shared graph checkpoint/write tables; migration 16 records
+  legacy checkpoint imports. On first graph access,
+  existing official SQLite saver checkpoints and pending writes are copied
+  transactionally, including older writes without task paths. Original tables
+  are retained; a recorded import marker prevents deleted threads reappearing.
+  Stop the old application before upgrading; do not run old and new savers together.
+- Production uses `server/mysql-store.ts`, `mysql2`, and the shared asynchronous
+  repositories. `server/mysql-migrations.ts` maintains a separate, checksummed
+  MySQL schema. Startup validates MySQL 8.0.16+ (not MariaDB), acquires a named
+  migration lock, and applies pending migrations. JSON checks, generated unique
+  keys and row locks preserve the SQLite contracts. `npm run db:migrate` uses
+  the configured engine, as does normal startup.
+- MySQL DDL is not transactional. A failed/interrupted migration is recorded and
+  blocks startup; newer or altered migration versions are also rejected. Back up
+  before migration. An operator must inspect/repair the schema or restore the
+  backup before deliberately repairing migration metadata. Do not delete tables
+  or blindly mark an interrupted migration complete.
+- Multi-step MySQL mutations use a shared transaction-lock row, including across
+  instances. This favors correct ownership, admission, imports and lease fencing
+  over write throughput. It is not a high-throughput multi-tenant scaling design.
 - Website/category/description are optional owner input, not verified findings.
   Evidence references identify source, business record, summary, and capture time;
   they are not historical snapshots of every profile field.
@@ -1043,8 +1063,8 @@ automatic synchronisation, stock monitoring, or retention/deletion UI yet.
 - Passwords use salted scrypt; session cookies contain random opaque tokens.
   Only token hashes are stored server-side. Sessions expire after seven days,
   persist across restarts, rotate on login, and are invalidated on logout.
-- Cookies are HttpOnly and SameSite=Lax. Production serving supports Secure
-  cookies, but the local SQLite entry point deliberately refuses production startup.
+- Cookies are HttpOnly and SameSite=Lax; production cookies are Secure.
+  Production requires MySQL and an explicit HTTPS application origin.
 - Mutating API requests must have an `Origin` matching `APP_ORIGIN` (including
   registration/login/logout). CLI clients must supply that header explicitly.
 - Authentication attempts are limited to 10 per IP per 15 minutes using an
@@ -1059,10 +1079,16 @@ automatic synchronisation, stock monitoring, or retention/deletion UI yet.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `NODE_ENV` | `development` | `development`, `test`, or `production`; production startup is blocked until MySQL integration |
+| `NODE_ENV` | `development` | `development`, `test`, or `production`; production requires MySQL and HTTPS |
 | `PORT` | `3001` | Express listening port, integer from 1 to 65535 |
 | `APP_ORIGIN` | `http://127.0.0.1:5173` | Exact browser origin allowed to make changes; no trailing slash/path |
 | `SQLITE_PATH` | `./data/growthpulse.sqlite` | Local database file; `:memory:` is for isolated tests only |
+| `DATABASE_CLIENT` | `sqlite` locally, `mysql` in production | Explicit `sqlite` or `mysql`; production never falls back to SQLite |
+| `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | unset | Required with MySQL; GoDaddy injects these from its attached Hosted Database |
+| `DB_PORT` | `3306` | MySQL port; use the hosting-injected value |
+| `DB_SSL_MODE` | `required` | Verified TLS; `disabled` only with an explicitly verified trusted/private network requirement |
+| `DB_SSL_CA` | unset | Optional PEM certificate from the database provider; certificate verification stays enabled |
+| `TRUST_PROXY_HOPS` | `0` | Integer 0-5; set only after verifying the hosting proxy topology |
 | `ANTHROPIC_API_KEY` | unset | Optional server-only Anthropic key; required for live business-agent reviews |
 | `ANTHROPIC_MODEL` | `claude-haiku-4-5` | Tool-capable Claude model available to your Anthropic account |
 
@@ -1074,7 +1100,7 @@ Real `.env` files are ignored. Never place secrets in `VITE_*` variables.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/health` | Query SQLite and report application/database health; no AI claim |
+| GET | `/api/health` | Query the configured database and report its engine/health; no AI claim |
 | POST | `/api/auth/register` | Create a local account and session |
 | POST | `/api/auth/login` | Verify credentials and issue a new session |
 | GET | `/api/auth/me` | Retrieve the current user, or 401 |
@@ -1212,37 +1238,66 @@ Catalogue checks cover CSV validation, structured product evidence, preserved
 source offers, matching/review, repeated and stale imports, cross-owner IDs,
 rollback, persistence, v2 upgrades, and manual/import-review UI flows.
 
-## GoDaddy deployment remains a separate step
+Real MySQL tests are opt-in and use only a separately provisioned disposable
+database: set `GP_TEST_MYSQL=1`, `DATABASE_CLIENT=mysql`, the appropriate `DB_*`
+settings and run `npm test -- server/mysql.test.ts`. `DB_NAME` must start with
+`gp_test_` or equal `gp_verification`. Tests create synthetic accounts, schema
+and data; they never drop tables but temporarily modify migration metadata.
+**Never run these tests against the hosted preview/live database.**
 
-**The required production target remains GoDaddy Node.js Hosting with MySQL.**
-The local SQLite choice is deliberate and temporary; it is not a switch to
-another hosting provider. Nothing has been deployed.
+## GoDaddy Node.js Hosting and MySQL
 
-Before deploying:
+The MySQL integration is implemented; deployment and host-specific verification
+remain separate. Local SQLite data is unchanged. The selected initial hosted
+database is **fresh**: there is no automatic upload/import of local accounts,
+sessions, products or research. Any later transfer needs an explicit backed-up
+migration and ownership/count verification.
 
-1. Confirm the selected GoDaddy plan's managed MySQL access, version, TLS,
-   connection limits, backups, and credential-management facilities.
-2. Implement the MySQL storage layer and MySQL-specific versioned migrations.
-   SQLite and MySQL SQL/locking/types differ; changing a URL is not sufficient.
-3. If local data must be retained, perform an explicit, backed-up export/import,
-   verify relationships and counts, and decide whether to revoke local sessions.
-4. Run the persistence, transaction, and owner-isolation checks against real
-   MySQL, and complete the authentication/deployment hardening above.
-5. Re-enable the production entry point with the verified MySQL connection pool.
-   Express will serve `dist/client` and listen on the hosting-provided `PORT`.
-   Set an HTTPS `APP_ORIGIN`, ensure build tools are available during the host's
-   install/build steps, and use `npm start`, not Vite, at runtime.
+1. Attach the GoDaddy **Hosted Database**. GoDaddy supplies `DB_HOST`, `DB_PORT`,
+   `DB_NAME`, `DB_USER` and `DB_PASSWORD` at runtime. Their locked secret rows
+   are expected: do not manually replace them. Confirm MySQL 8.0.16+, schema
+   creation/alteration privileges, connection limits and provider backups.
+2. Set `NODE_ENV=production` and `APP_ORIGIN` to the exact HTTPS browser origin
+   (no trailing slash/path). `DATABASE_CLIENT=mysql` is optional but explicit.
+   The host supplies `PORT`; Express listens on that port, not Vite's 5173.
+3. Keep `DB_SSL_MODE=required`. Confirm GoDaddy's TLS support and supply
+   `DB_SSL_CA` if it provides a private CA. Only use `disabled` if the provider
+   explicitly requires and guarantees a trusted private network. Do not disable
+   verification or guess the host's TLS configuration. Keep proxy trust at zero
+   until the real forwarding topology is known.
+4. Install build tools with `npm ci --include=dev`, build with `npm run build`,
+   and run with `npm start`. Express serves `dist/client` and starts the analysis
+   worker. Do not run `npm run dev`, `vite` or `vite preview` as the hosted
+   application. Frontend builds do not need database credentials or AI keys.
+5. Keep provider keys server-side in the hosting secret store only when
+   explicitly authorized. Local keys are not copied. Without provider keys,
+   saved-data/manual flows remain usable and paid AI/research requests fail
+   explicitly rather than pretending to succeed.
+6. Confirm a hosting plan is assigned and the Node process remains running for
+   bounded background research. This implementation targets **one application
+   process**: durable leases prevent duplicate worker claims, but work slots
+   and request-rate allowances are in memory, not shared billing limits.
 
-`npm run build` still checks types and compiles the frontend/backend.
-`NODE_ENV=production npm start` **intentionally fails with a clear message**
-until that storage migration is implemented; it does not silently deploy SQLite
-to potentially ephemeral hosting storage.
+Startup applies the schema and `/api/health` reports
+`database: { engine: "mysql", status: "ok" }` only after a real query.
+Missing settings, inaccessible MySQL, invalid TLS, incompatible schema or an
+insecure production origin stop startup; there is no SQLite fallback.
+Before publishing, verify health, HTTPS cookies/login, origin enforcement,
+reload persistence, a permitted research job and recovery after process restart.
+Complete the authentication/retention hardening described above before allowing
+unrestricted public signup.
+
+**GoDaddy preview and published app share the same hosted database.** Preview
+migrations and account/data changes affect that database too. Back up before
+deploying schema changes, coordinate versions, and never treat preview as a
+disposable test database. Neither a live TLS connection nor worker lifetime on
+the selected GoDaddy plan is established by local integration checks.
 
 ## Layout
 
 ```text
 client/           React UI, authentication and business forms
-server/           Express, SQLite persistence, migrations, authentication, tests
+server/           Express, SQLite/MySQL persistence, migrations, authentication, tests
 shared/           Zod request/response and evidence/activity contracts
 data/             Ignored local SQLite database
 dist/             Generated client/server/shared builds (not committed)

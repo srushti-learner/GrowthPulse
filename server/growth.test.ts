@@ -36,26 +36,26 @@ describe("saved growth intelligence", () => {
     directory = mkdtempSync(join(tmpdir(), "gp-growth-")); path = join(directory, "test.sqlite");
     store = openStore(path); app = createApp({ store, scanner, agent }); scanner.mockClear(); agent.run.mockClear();
   });
-  afterEach(() => { store.close(); rmSync(directory, { recursive: true, force: true }); });
-  function owner() {
+  afterEach(async () => { await store.close(); rmSync(directory, { recursive: true, force: true }); });
+  async function owner() {
     const user = { id: randomUUID(), name: "Fixture owner", email: `${randomUUID()}@example.test` }, session = newSession();
-    store.createAccount(user, "test-only fixture hash", session.tokenHash, session.expiresAt);
-    const business = store.saveBusiness(user.id, { name: "Fixture", website: url, category: "", description: "" })!;
+    await store.createAccount(user, "test-only fixture hash", session.tokenHash, session.expiresAt);
+    const business = (await store.saveBusiness(user.id, { name: "Fixture", website: url, category: "", description: "" }))!;
     return { id: user.id, business, cookie: `gp_session=${session.token}`, endpoint: `/api/businesses/${business.id}/growth` };
   }
-  function saveResearch(user: ReturnType<typeof owner>, research = report) {
-    const savedScan = store.saveScan(user.id, user.business.id, scan)!;
-    return store.saveUnderstanding(user.id, {
+  async function saveResearch(user: Awaited<ReturnType<typeof owner>>, research = report) {
+    const savedScan = (await store.saveScan(user.id, user.business.id, scan))!;
+    return (await store.saveUnderstanding(user.id, {
       id: randomUUID(), businessId: user.business.id, scanId: savedScan.id, scanStatus: "complete", reviewedAt: null, createdAt: timestamp,
       warnings: [], suggestions: [], productImportId: null, research,
       briefing: { summary: { text: source.quote, sources: [{ url, quote: source.quote }] }, insights: [], unknowns: [], nextSteps: [] },
-    })!;
+    }))!;
   }
-  function get(user: ReturnType<typeof owner>) { return request(app).get(user.endpoint).set("Cookie", user.cookie); }
-  function add(user: ReturnType<typeof owner>, id: string) {
+  function get(user: Awaited<ReturnType<typeof owner>>) { return request(app).get(user.endpoint).set("Cookie", user.cookie); }
+  function add(user: Awaited<ReturnType<typeof owner>>, id: string) {
     return request(app).post(`${user.endpoint}/${id}/plan`).set("Origin", origin).set("Cookie", user.cookie).send({});
   }
-  function update(user: ReturnType<typeof owner>, id: string, input: object) {
+  function update(user: Awaited<ReturnType<typeof owner>>, id: string, input: object) {
     return request(app).patch(`${user.endpoint}/${id}/plan`).set("Origin", origin).set("Cookie", user.cookie).send(input);
   }
 
@@ -81,7 +81,7 @@ describe("saved growth intelligence", () => {
   });
 
   it("opens source-backed strategies without paid work and persists owner assessments across reopening", async () => {
-    const user = owner(); saveResearch(user);
+    const user = await owner(); await saveResearch(user);
     const saved = growthResponseSchema.parse((await get(user).expect(200)).body);
     expect(saved.opportunities).toHaveLength(1); expect(saved.plan).toEqual([]);
     const opportunity = saved.opportunities[0];
@@ -95,7 +95,7 @@ describe("saved growth intelligence", () => {
     expect(updated).toMatchObject({ ...input, revision: 1 });
     await update(user, opportunity.id, input).expect(409);
     await update(user, opportunity.id, { ...input, revision: 1, status: "deployed" }).expect(400);
-    store.close(); store = openStore(path); app = createApp({ store, agent, scanner });
+    await store.close(); store = openStore(path); app = createApp({ store, agent, scanner });
     expect((await get(user).expect(200)).body.plan).toEqual([updated]);
     await update(user, opportunity.id, { ...input, revision: 1, status: "completed" }).expect(200);
     expect((await get(user).expect(200)).body.plan[0].status).toBe("completed");
@@ -103,7 +103,7 @@ describe("saved growth intelligence", () => {
   });
 
   it("enforces owner, business, origin and server-selected evidence for every plan mutation", async () => {
-    const alice = owner(), bob = owner(); saveResearch(alice);
+    const alice = await owner(), bob = await owner(); await saveResearch(alice);
     const opportunity = (await get(alice).expect(200)).body.opportunities[0];
     await request(app).get(alice.endpoint).expect(401);
     await request(app).get(alice.endpoint).set("Cookie", bob.cookie).expect(404);
@@ -120,18 +120,18 @@ describe("saved growth intelligence", () => {
   });
 
   it("keeps an earlier plan and partial accepted findings after a later empty failure, without crossing website scopes", async () => {
-    const user = owner();
-    const first = store.enqueueAnalysis(user.id, user.business.id, randomUUID(), url, undefined, true);
-    const claimed = store.claimAnalysis()!;
-    store.researchJournal(first.id, claimed.lease).write(step);
-    store.failAnalysis(first.id, claimed.lease, "An unrelated research step failed.");
+    const user = await owner();
+    const first = await store.enqueueAnalysis(user.id, user.business.id, randomUUID(), url, undefined, true);
+    const claimed = (await store.claimAnalysis())!;
+    await store.researchJournal(first.id, claimed.lease).write(step);
+    await store.failAnalysis(first.id, claimed.lease, "An unrelated research step failed.");
     const opportunity = (await get(user).expect(200)).body.opportunities[0];
     await add(user, opportunity.id).expect(201);
-    const second = store.enqueueAnalysis(user.id, user.business.id, randomUUID(), url, undefined, true);
-    const next = store.claimAnalysis()!;
-    store.failAnalysis(second.id, next.lease, "No new findings.");
+    const second = await store.enqueueAnalysis(user.id, user.business.id, randomUUID(), url, undefined, true);
+    const next = (await store.claimAnalysis())!;
+    await store.failAnalysis(second.id, next.lease, "No new findings.");
     expect((await get(user).expect(200)).body.opportunities[0].id).toBe(opportunity.id);
-    store.saveBusiness(user.id, { ...user.business, website: "https://new.example.com/" }, user.business.id);
+    await store.saveBusiness(user.id, { ...user.business, website: "https://new.example.com/" }, user.business.id);
     const changed = (await get(user).expect(200)).body;
     expect(changed.opportunities).toEqual([]);
     expect(changed.plan[0].opportunity.id).toBe(opportunity.id);

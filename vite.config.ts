@@ -4,8 +4,8 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { loadConfig } from "./server/config";
 
-export default defineConfig(() => {
-  const config = loadConfig();
+export default defineConfig(({ command }) => {
+  const config = command === "serve" ? loadConfig({ ...process.env, NODE_ENV: "development", DATABASE_CLIENT: "sqlite" }) : undefined;
 
   return {
     plugins: [react(), tailwindcss()],
@@ -16,7 +16,7 @@ export default defineConfig(() => {
       port: 5173,
       strictPort: true,
       proxy: {
-        "/api": `http://127.0.0.1:${config.PORT}`,
+        "/api": `http://127.0.0.1:${config?.PORT ?? 3001}`,
       },
     },
   };

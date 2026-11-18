@@ -35,7 +35,7 @@ describe("scan API, persistence and ownership", () => {
     scanner.mockReset().mockImplementation(async () => structuredClone(complete));
     app = createApp({ store, origin, scanner });
   });
-  afterEach(() => { store.close(); rmSync(directory, { recursive: true, force: true }); vi.restoreAllMocks(); });
+  afterEach(async () => { await store.close(); rmSync(directory, { recursive: true, force: true }); vi.restoreAllMocks(); });
   async function owner(email = "owner@example.test") {
     const account = await request(app).post("/api/auth/register").set("Origin", origin).send({ name: "Fixture Owner", email, password: "a test-only long passphrase" }).expect(201);
     const cookie = String(account.headers["set-cookie"][0]).split(";")[0];
@@ -50,8 +50,8 @@ describe("scan API, persistence and ownership", () => {
     expect(response.body.scan).toEqual(complete);
     expect(response.body.scan.id).toBeUndefined();
     expect(scanner).toHaveBeenCalledWith(input.url, expect.any(AbortSignal));
-    expect(store.listScans(user.userId, user.id)).toEqual([]);
-    expect(store.listEvidence(user.userId, user.id)).toHaveLength(1);
+    expect(await store.listScans(user.userId, user.id)).toEqual([]);
+    expect(await store.listEvidence(user.userId, user.id)).toHaveLength(1);
   });
 
   it("persists immutable scan results, page evidence and activity across reopening", async () => {
@@ -59,11 +59,11 @@ describe("scan API, persistence and ownership", () => {
     const saved = await request(app).post(`/api/businesses/${user.id}/scans`).set("Origin", origin).set("Cookie", user.cookie).send(input).expect(201);
     const id = saved.body.scan.id;
     expect(saved.body.scan).toEqual({ ...complete, id, businessId: user.id });
-    const evidence = store.listEvidence(user.userId, user.id).find((item) => item.source === "website")!;
+    const evidence = (await store.listEvidence(user.userId, user.id)).find((item) => item.source === "website")!;
     expect(evidence).toMatchObject({ reference: input.url, capturedAt });
     expect(evidence.summary).toContain(complete.pages[0].text);
-    expect(store.listActivity(user.userId, user.id).find((item) => item.action === "website.scanned")?.evidenceId).toBe(evidence.id);
-    store.close();
+    expect((await store.listActivity(user.userId, user.id)).find((item) => item.action === "website.scanned")?.evidenceId).toBe(evidence.id);
+    await store.close();
     store = openStore(path);
     app = createApp({ store, origin, scanner });
     const history = await request(app).get(`/api/businesses/${user.id}/scans`).set("Cookie", user.cookie).expect(200);
@@ -73,15 +73,15 @@ describe("scan API, persistence and ownership", () => {
     expect(restored.body).toEqual(saved.body);
     scanner.mockResolvedValueOnce({ ...complete, pages: [{ ...complete.pages[0], title: "Updated observed title" }] });
     await request(app).post(`/api/businesses/${user.id}/scans`).set("Origin", origin).set("Cookie", user.cookie).send(input).expect(201);
-    expect(store.listScans(user.userId, user.id)).toHaveLength(2);
-    expect(store.getScan(user.userId, user.id, id)?.pages[0].title).toBe("Synthetic shop");
-    expect(store.getBusiness(user.userId, user.id)?.name).toBe("Fixture business");
+    expect(await store.listScans(user.userId, user.id)).toHaveLength(2);
+    expect((await store.getScan(user.userId, user.id, id))?.pages[0].title).toBe("Synthetic shop");
+    expect((await store.getBusiness(user.userId, user.id))?.name).toBe("Fixture business");
   });
 
   it("checks authentication and ownership before scanning or returning another business's results", async () => {
     const alice = await owner();
     const bob = await owner("bob@example.test");
-    const saved = store.saveScan(alice.userId, alice.id, complete)!;
+    const saved = (await store.saveScan(alice.userId, alice.id, complete))!;
     for (const suffix of ["", `/${saved.id}`]) {
       await request(app).get(`/api/businesses/${alice.id}/scans${suffix}`).set("Cookie", bob.cookie).expect(404);
       await request(app).get(`/api/businesses/${alice.id}/scans${suffix}`).expect(401);
@@ -89,7 +89,7 @@ describe("scan API, persistence and ownership", () => {
     await request(app).get(`/api/businesses/${bob.id}/scans/${saved.id}`).set("Cookie", bob.cookie).expect(404);
     await request(app).post(`/api/businesses/${alice.id}/scans`).set("Origin", origin).set("Cookie", bob.cookie).send(input).expect(404);
     await request(app).post(`/api/businesses/${alice.id}/scans`).set("Origin", origin).send(input).expect(401);
-    expect(store.saveScan(bob.userId, alice.id, complete)).toBeUndefined();
+    expect(await store.saveScan(bob.userId, alice.id, complete)).toBeUndefined();
     expect(scanner).not.toHaveBeenCalled();
   });
 
@@ -109,7 +109,7 @@ describe("scan API, persistence and ownership", () => {
     const response = await request(app).post(`/api/businesses/${user.id}/scans`).set("Origin", origin).set("Cookie", user.cookie).send(input).expect(201);
     expect(response.body.scan.status).toBe("failed");
     expect(response.body.scan.pages).toEqual([]);
-    const evidence = store.listEvidence(user.userId, user.id).find((item) => item.source === "website")!;
+    const evidence = (await store.listEvidence(user.userId, user.id)).find((item) => item.source === "website")!;
     expect(evidence.summary).toContain("No website content captured");
     expect(evidence.summary).toContain("robots.txt");
   });
@@ -122,8 +122,8 @@ describe("scan API, persistence and ownership", () => {
       const log = vi.spyOn(console, "error").mockImplementation(() => {});
       await request(app).post(`/api/businesses/${user.id}/scans`).set("Origin", origin).set("Cookie", user.cookie).send(input).expect(500);
       expect(log).toHaveBeenCalled();
-      expect(store.listScans(user.userId, user.id)).toEqual([]);
-      expect(store.listEvidence(user.userId, user.id)).toHaveLength(1);
+      expect(await store.listScans(user.userId, user.id)).toEqual([]);
+      expect(await store.listEvidence(user.userId, user.id)).toHaveLength(1);
     } finally { database.close(); }
   });
 
@@ -151,7 +151,7 @@ describe("scan API, persistence and ownership", () => {
     expect(scanner).toHaveBeenCalledTimes(6);
   });
 
-  it("upgrades the existing v1 schema without losing profiles, evidence or activity", () => {
+  it("upgrades the existing v1 schema without losing profiles, evidence or activity", async () => {
     const legacyPath = join(directory, "legacy.sqlite");
     const database = new Database(legacyPath);
     const userId = randomUUID(), businessId = randomUUID(), evidenceId = randomUUID(), activityId = randomUUID();
@@ -164,11 +164,11 @@ describe("scan API, persistence and ownership", () => {
     database.close();
     const upgraded = openStore(legacyPath);
     try {
-      expect(upgraded.getBusiness(userId, businessId)?.name).toBe("Legacy business");
-      expect(upgraded.listActivity(userId, businessId)[0].id).toBe(activityId);
-      expect(upgraded.listEvidence(userId, businessId)[0].id).toBe(evidenceId);
-      expect(upgraded.saveScan(userId, businessId, complete)?.pages).toEqual(complete.pages);
-      expect(upgraded.listActivity(userId, businessId)).toHaveLength(2);
-    } finally { upgraded.close(); }
+      expect((await upgraded.getBusiness(userId, businessId))?.name).toBe("Legacy business");
+      expect((await upgraded.listActivity(userId, businessId))[0].id).toBe(activityId);
+      expect((await upgraded.listEvidence(userId, businessId))[0].id).toBe(evidenceId);
+      expect((await upgraded.saveScan(userId, businessId, complete))?.pages).toEqual(complete.pages);
+      expect(await upgraded.listActivity(userId, businessId)).toHaveLength(2);
+    } finally { await upgraded.close(); }
   });
 });

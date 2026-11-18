@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import type { SqlDatabase } from "./sql-database.js";
 import { createHash } from "node:crypto";
 import { growthPlanItemSchema, type GrowthOpportunity, type GrowthPlanInput, type GrowthPlanItem } from "../shared/growth.js";
 import { researchAgentLabels, type ResearchReport, type ResearchAgent } from "../shared/research.js";
@@ -60,9 +60,9 @@ type PlanRow = {
   opportunity_json: string; status: GrowthPlanItem["status"]; impact: GrowthPlanItem["impact"];
   effort: GrowthPlanItem["effort"]; time_to_value: GrowthPlanItem["timeToValue"]; revision: number; created_at: string; updated_at: string;
 };
-export function growthStore(database: Database.Database) {
-  function authorize(ownerId: string, businessId: string) {
-    if (!database.prepare("SELECT id FROM businesses WHERE id = ? AND owner_id = ?").get(businessId, ownerId)) {
+export function growthStore(database: SqlDatabase) {
+  async function authorize(ownerId: string, businessId: string) {
+    if (!await database.prepare("SELECT id FROM businesses WHERE id = ? AND owner_id = ?").get(businessId, ownerId)) {
       throw new GrowthError(404, "Business not found.");
     }
   }
@@ -73,28 +73,34 @@ export function growthStore(database: Database.Database) {
     });
   }
   return {
-    listGrowthPlan(ownerId: string, businessId: string) {
-      authorize(ownerId, businessId);
-      return database.prepare<[string], PlanRow>("SELECT * FROM growth_plan WHERE business_id = ? ORDER BY created_at, opportunity_id")
-        .all(businessId).map(view);
+    async listGrowthPlan(ownerId: string, businessId: string) {
+      await authorize(ownerId, businessId);
+      return (await database.prepare<[string], PlanRow>("SELECT * FROM growth_plan WHERE business_id = ? ORDER BY created_at, opportunity_id")
+        .all(businessId)).map(view);
     },
-    addGrowthPlan(ownerId: string, businessId: string, opportunity: GrowthOpportunity) {
-      authorize(ownerId, businessId);
-      const now = new Date().toISOString();
-      database.prepare(`INSERT INTO growth_plan (business_id, opportunity_id, opportunity_json, status, impact, effort, time_to_value, created_at, updated_at)
-        VALUES (?, ?, ?, 'planned', 'unknown', 'unknown', 'unknown', ?, ?) ON CONFLICT (business_id, opportunity_id) DO NOTHING`)
-        .run(businessId, opportunity.id, JSON.stringify(opportunity), now, now);
-      return this.listGrowthPlan(ownerId, businessId).find((item) => item.opportunity.id === opportunity.id)!;
+    async addGrowthPlan(ownerId: string, businessId: string, opportunity: GrowthOpportunity) {
+      return database.transaction(async () => {
+        await authorize(ownerId, businessId);
+        const now = new Date().toISOString();
+        await database.prepare(`INSERT INTO growth_plan (business_id, opportunity_id, opportunity_json, status, impact, effort, time_to_value, created_at, updated_at)
+          VALUES (?, ?, ?, 'planned', 'unknown', 'unknown', 'unknown', ?, ?) ${database.dialect === "mysql"
+            ? "ON DUPLICATE KEY UPDATE opportunity_id=VALUES(opportunity_id)"
+            : "ON CONFLICT (business_id, opportunity_id) DO NOTHING"}`)
+          .run(businessId, opportunity.id, JSON.stringify(opportunity), now, now);
+        return (await this.listGrowthPlan(ownerId, businessId)).find((item) => item.opportunity.id === opportunity.id)!;
+      })();
     },
-    updateGrowthPlan(ownerId: string, businessId: string, id: string, input: GrowthPlanInput) {
-      authorize(ownerId, businessId);
-      const saved = database.prepare(`UPDATE growth_plan SET status = ?, impact = ?, effort = ?, time_to_value = ?,
-        revision = revision + 1, updated_at = ? WHERE business_id = ? AND opportunity_id = ? AND revision = ?`)
-        .run(input.status, input.impact, input.effort, input.timeToValue, new Date().toISOString(), businessId, id, input.revision);
-      const item = this.listGrowthPlan(ownerId, businessId).find((item) => item.opportunity.id === id);
-      if (!item) throw new GrowthError(404, "Saved growth action not found.");
-      if (!saved.changes) throw new GrowthError(409, "This growth action changed in another view. Reload before updating it.");
-      return item;
+    async updateGrowthPlan(ownerId: string, businessId: string, id: string, input: GrowthPlanInput) {
+      return database.transaction(async () => {
+        await authorize(ownerId, businessId);
+        const saved = await database.prepare(`UPDATE growth_plan SET status = ?, impact = ?, effort = ?, time_to_value = ?,
+          revision = revision + 1, updated_at = ? WHERE business_id = ? AND opportunity_id = ? AND revision = ?`)
+          .run(input.status, input.impact, input.effort, input.timeToValue, new Date().toISOString(), businessId, id, input.revision);
+        const item = (await this.listGrowthPlan(ownerId, businessId)).find((item) => item.opportunity.id === id);
+        if (!item) throw new GrowthError(404, "Saved growth action not found.");
+        if (!saved.changes) throw new GrowthError(409, "This growth action changed in another view. Reload before updating it.");
+        return item;
+      })();
     },
   };
 }

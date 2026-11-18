@@ -16,7 +16,8 @@ activity/evidence references, plus manual public website scans with saved
 results, plus a manual catalogue and reviewed CSV/saved-website product imports.
 The full demo storefront (checkpoint 3) is deferred by owner choice; small
 isolated scanner fixtures remain. Later feature checkpoints and GoDaddy
-integration remain planned. A bounded agent-led onboarding layer now uses the
+hosting verification remain planned. MySQL persistence is now implemented.
+A bounded agent-led onboarding layer now uses the
 official Anthropic SDK and scanner tool; live use requires a server-side key.
 The local research foundation now adds LangGraph orchestration and hosted,
 search-only Tavily MCP. This does not mark the remaining feature checkpoints
@@ -24,11 +25,11 @@ complete.
 
 ### Implemented local research foundation
 
-The existing SQLite queue and in-process worker now coordinate Store,
+The durable SQL queue and in-process worker now coordinate Store,
 Competitor, Customer, Pricing, Product Opportunity and Growth Strategy roles.
 Independent branches overlap; dependent analyses wait for their evidence.
 Specialist findings and usage are saved independently under the worker's lease,
-with official SQLite graph checkpoints and explicit retry/reuse of matching
+with SQL graph checkpoints and explicit retry/reuse of matching
 artifacts. Changed inputs invalidate downstream analyses. The interface exposes
 one specialist panel at a time and preserves findings across reload/cancellation.
 Suggestions never automatically modify the owner profile or catalogue.
@@ -50,14 +51,16 @@ individual-review connector exists. Pricing is a deterministic GTIN/dated-offer
 observation, not a fully qualified price-advantage calculation. Opportunity and
 Growth propose experiments, not verified demand or performance. Remaining work
 includes live provider verification, review-source permissions/integration and
-production MySQL queue/journal/checkpoint compatibility on the selected GoDaddy
-host. See README for the implemented request flow and local configuration.
+production TLS connectivity and persistent-worker behavior on the selected
+GoDaddy host. The MySQL queue/journal/checkpointer is implemented and checked
+against disposable real MySQL. See README for configuration and deployment limits.
 
 **Approved local database adjustment:** use file-based SQLite now, without
 Docker or a database server. GoDaddy-managed MySQL remains the production target.
-Moving to MySQL requires explicit migrations and compatibility checks, not just
-a connection-string change. The local SQLite entry point blocks production
-startup until MySQL integration is implemented.
+The shared asynchronous stores now support a `mysql2` pool and versioned
+MySQL-specific migrations, not just a connection-string change. Production
+defaults to MySQL, requires HTTPS, and still rejects SQLite. The approved hosted
+database starts fresh; existing local data is not automatically transferred.
 
 **Required application host:** the selected GoDaddy Node.js hosting option.
 Express runs the backend and serves the built React frontend. Architecture and
@@ -171,7 +174,7 @@ and production builds succeed. No database or AI is required yet.
 Every saved business belongs to its authenticated owner; a business ID supplied
 by the browser is not proof of ownership. Use synthetic/test data locally.
 Email verification, password recovery, retention/deletion policies, production
-rate-limiter/proxy configuration, and MySQL integration remain pre-deployment work.
+rate-limiter/proxy configuration, and live hosting verification remain pre-deployment work.
 
 **Learn:** SQL, migrations, runtime validation, authorization versus authentication.
 
@@ -358,8 +361,9 @@ at the AI provider. Explicit retries reuse saved matching scan checkpoints.
 Provider charges can precede crashes, so exactly-once billing is not guaranteed.
 GET viewers rotate every 20 seconds and reconnect without paid POST retries.
 This improves resilience, not generation speed or zero-wait guarantees.
-GoDaddy/MySQL queue storage and persistent-worker hosting verification remain
-deferred until that infrastructure exists; production SQLite startup stays blocked.
+MySQL queue storage, leases, journal and checkpoints are implemented. GoDaddy
+TLS and persistent-worker hosting verification remain deployment prerequisites;
+production SQLite startup stays blocked.
 
 The scanner tool now supplies up to 256 KiB of balanced page evidence and
 100 structured product records, including published offers, variants,
@@ -529,10 +533,11 @@ Technical checks do not prove increased sales or revenue.
 - Upload limits, retention/deletion handling, and safe production configuration.
 - End-to-end tests for the full demonstration and important failure paths.
 - Environment setup and demo/reset documentation.
-- Replace the approved local SQLite store with GoDaddy MySQL: implement the
-  connection pool and MySQL-specific migrations, explicitly transfer any needed
-  local data, and rerun ownership/persistence/transaction tests against MySQL.
-  Only then remove the local-only production-start guard.
+- Implemented: shared asynchronous SQLite/MySQL stores, a connection pool,
+  MySQL-specific checked migrations and real MySQL compatibility checks.
+  Verify live GoDaddy connectivity/TLS and restart behavior before publishing.
+  Start with the approved fresh hosted database; keep local data unchanged.
+  Any later data transfer is a separate, backed-up migration.
 
 Verify the specific GoDaddy plan supports:
 
@@ -586,4 +591,5 @@ The local UI-to-API-to-database and safe manual scanning milestones are
 implemented. The owner deferred the full demo storefront; isolated fixtures
 provide reproducible scanner checks. Continue with checkpoint 5's unified product
 catalogue and source-preserving imports, then checkpoint 6's AI boundary.
-GoDaddy MySQL integration is still required before production deployment.
+GoDaddy runtime configuration, live TLS/health and persistent-worker verification,
+plus the documented public-launch hardening, remain required before deployment.

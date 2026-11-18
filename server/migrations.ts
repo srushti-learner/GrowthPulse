@@ -314,6 +314,24 @@ export const migrations = [{
     CREATE INDEX marketplace_research_product ON marketplace_research(product_id);
     CREATE UNIQUE INDEX marketplace_research_active ON marketplace_research(product_id) WHERE status = 'running';
   `,
+}, {
+  version: 15,
+  sql: `
+    CREATE TABLE graph_checkpoints (
+      thread_id TEXT NOT NULL, checkpoint_ns TEXT NOT NULL, checkpoint_id TEXT NOT NULL,
+      parent_id TEXT, payload TEXT NOT NULL, metadata TEXT NOT NULL,
+      PRIMARY KEY(thread_id, checkpoint_ns, checkpoint_id)
+    );
+    CREATE TABLE graph_writes (
+      thread_id TEXT NOT NULL, checkpoint_ns TEXT NOT NULL, checkpoint_id TEXT NOT NULL,
+      task_id TEXT NOT NULL, write_index INTEGER NOT NULL, task_path TEXT NOT NULL,
+      channel TEXT NOT NULL, payload TEXT NOT NULL,
+      PRIMARY KEY(thread_id, checkpoint_ns, checkpoint_id, task_id, write_index)
+    );
+  `,
+}, {
+  version: 16,
+  sql: "CREATE TABLE IF NOT EXISTS graph_checkpoint_imports (name TEXT PRIMARY KEY);",
 }];
 
 export function migrate(database: Database.Database) {

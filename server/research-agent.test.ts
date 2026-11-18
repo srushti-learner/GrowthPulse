@@ -114,24 +114,24 @@ describe("durable specialist research orchestration", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
   afterEach(async () => {
-    await worker.stop(); store.close(); rmSync(directory, { recursive: true, force: true }); vi.restoreAllMocks();
+    await worker.stop(); await store.close(); rmSync(directory, { recursive: true, force: true }); vi.restoreAllMocks();
   });
-  function owner() {
+  async function owner() {
     const user = { id: randomUUID(), name: "Research owner", email: `${randomUUID()}@example.test` };
     const session = newSession();
-    store.createAccount(user, "test-only hash", session.tokenHash, session.expiresAt);
-    const business = store.saveBusiness(user.id, { name: "Owner supplied name", website: url, category: "", description: "Private profile notes must not be sent" })!;
+    await store.createAccount(user, "test-only hash", session.tokenHash, session.expiresAt);
+    const business = (await store.saveBusiness(user.id, { name: "Owner supplied name", website: url, category: "", description: "Private profile notes must not be sent" }))!;
     return { id: user.id, business, cookie: `gp_session=${session.token}` };
   }
-  function enqueue(user: ReturnType<typeof owner>, research = true, scanId?: string, resumeJobId?: string) {
-    return store.enqueueAnalysis(user.id, user.business.id, randomUUID(), url, scanId, research, resumeJobId);
+  async function enqueue(user: Awaited<ReturnType<typeof owner>>, research = true, scanId?: string, resumeJobId?: string) {
+    return await store.enqueueAnalysis(user.id, user.business.id, randomUUID(), url, scanId, research, resumeJobId);
   }
-  function job(user: ReturnType<typeof owner>, id: string) { return store.getAnalysisJob(user.id, user.business.id, id)!; }
+  async function job(user: Awaited<ReturnType<typeof owner>>, id: string) { return (await store.getAnalysisJob(user.id, user.business.id, id))!; }
 
   it("runs the graph, studies competitor products, checkpoints and saves each role without applying owner changes", async () => {
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     await worker.tick();
-    const result = job(user, first.id), report = result.research!;
+    const result = await job(user, first.id), report = result.research!;
     expect(result.status).toBe("completed");
     expect(report.steps.map((step) => step.key)).toEqual(expect.arrayContaining([
       "store", "discovery", "competitor-site-0", "competitor-site-1", "competitor", "customer", "pricing", "opportunity", "growth",
@@ -143,8 +143,8 @@ describe("durable specialist research orchestration", () => {
     expect(report.steps.find((step) => step.agent === "customer")).toMatchObject({ status: "limited", findings: [] });
     expect(report.steps.find((step) => step.key === "pricing")!.findings[0].detail).toContain("share a GTIN");
     expect(result.understanding!.research).toEqual(report);
-    expect(store.getBusiness(user.id, user.business.id)).toEqual(user.business);
-    expect(store.listProducts(user.id, user.business.id)).toEqual([]);
+    expect(await store.getBusiness(user.id, user.business.id)).toEqual(user.business);
+    expect(await store.listProducts(user.id, user.business.id)).toEqual([]);
     expect(JSON.stringify(complete.mock.calls)).not.toContain(user.business.description);
     expect(JSON.stringify(searchCall.mock.calls)).not.toContain(user.business.description);
     expect(complete.mock.calls.filter(([input]) => input.tool_choice?.type === "tool" && input.tool_choice.name === "record_findings")
@@ -252,9 +252,9 @@ describe("durable specialist research orchestration", () => {
       if (block.type !== "tool_use") throw new Error("Missing test brand proposal.");
       return tool("verify_brand", { ...block.input as object, candidateOwnBrandStore: false });
     });
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     await worker.tick();
-    const report = job(user, first.id).research!;
+    const report = (await job(user, first.id)).research!;
     expect(report.steps.filter((step) => step.profile)).toHaveLength(0);
     expect(report.steps.filter((step) => step.capture).map((step) => step.capture)).toEqual([
       { url: "https://rival.example.org/", pages: 1 }, { url: "https://second.example.org/", pages: 1 },
@@ -274,9 +274,9 @@ describe("durable specialist research orchestration", () => {
 
   it("retains a failed candidate's URL and zero captured pages without a saved scan artifact", async () => {
     failFirstRival = true;
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     await worker.tick();
-    const site = job(user, first.id).research!.steps.find((step) => step.key === "competitor-site-0")!;
+    const site = (await job(user, first.id)).research!.steps.find((step) => step.key === "competitor-site-0")!;
     expect(site).toMatchObject({
       status: "failed", capture: { url: "https://rival.example.org/", pages: 0 },
       diagnostic: { code: "competitor_unreadable", paths: [] },
@@ -294,9 +294,9 @@ describe("durable specialist research orchestration", () => {
       if (block.type !== "tool_use") throw new Error("Missing test brand proposal.");
       return tool("verify_brand", { ...block.input as object, candidateOwnBrandStore: false });
     });
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     await worker.tick();
-    const saved = job(user, first.id);
+    const saved = await job(user, first.id);
     expect(saved.research!.steps.filter((step) => step.profile)).toHaveLength(0);
     const database = new Database(path);
     const read = (key: string) => JSON.parse(database.prepare<[string, string], { artifact_json: string }>(
@@ -312,9 +312,9 @@ describe("durable specialist research orchestration", () => {
     }
     database.close();
     accept = true; scanner.mockClear(); searchCall.mockClear(); complete.mockClear();
-    const retry = enqueue(user, true, saved.scanId!, first.id);
+    const retry = await enqueue(user, true, saved.scanId!, first.id);
     await worker.tick();
-    const report = job(user, retry.id).research!;
+    const report = (await job(user, retry.id)).research!;
     expect(report.steps.filter((step) => step.profile).map((step) => step.profile!.name)).toEqual(["rival", "second"]);
     expect(complete.mock.calls.filter(([input]) => input.tool_choice?.type === "tool" && input.tool_choice.name === "verify_brand")).toHaveLength(2);
     expect(report.usage.searches).toBe(0);
@@ -332,9 +332,9 @@ describe("durable specialist research orchestration", () => {
     const respond = complete.getMockImplementation()!;
     complete.mockImplementation(async (...args) => args[0].tool_choice?.type === "tool" && args[0].tool_choice.name === "select_candidates"
       ? tool("select_candidates", { indices }) : respond(...args));
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     await worker.tick();
-    const report = job(user, first.id).research!;
+    const report = (await job(user, first.id)).research!;
     expect(report.steps.find((step) => step.key === "discovery")).toMatchObject({
       status: "limited", diagnostic: { code: "candidate_validation" },
       limitations: expect.arrayContaining([expect.stringContaining("remaining valid leads were retained")]),
@@ -360,9 +360,9 @@ describe("durable specialist research orchestration", () => {
       }
       return respond(...args);
     });
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     await worker.tick();
-    const report = job(user, first.id).research!;
+    const report = (await job(user, first.id)).research!;
     expect(report.steps.find((step) => step.key === "store")).toMatchObject({
       status: "failed", diagnostic: { code: "model_request_rejected" },
       limitations: [expect.stringContaining("rejected the analysis request (HTTP 400)")],
@@ -392,9 +392,9 @@ describe("durable specialist research orchestration", () => {
       }
       return respond(...args);
     });
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     await worker.tick();
-    const report = job(user, first.id).research!;
+    const report = (await job(user, first.id)).research!;
     expect(report.usage).toEqual({ searches: 6, competitorScans: 6, modelCalls: 13 });
     const queries = searchCall.mock.calls.map(([arguments_]) => arguments_.query as string);
     expect(new Set(queries).size).toBe(6);
@@ -430,11 +430,11 @@ describe("durable specialist research orchestration", () => {
       }
       return response;
     });
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     await worker.tick();
     expect(resellerScanner.mock.calls.map(([url]) => url)).not.toContain("https://www.flipkart.com/superyou");
     expect(resellerScanner.mock.calls.map(([url]) => url)).not.toContain("https://www.amazon.in/merchant");
-    const report = job(user, first.id).research!;
+    const report = (await job(user, first.id)).research!;
     expect(report.steps.filter((step) => step.profile).map((step) => step.profile!.name)).toEqual(["rival"]);
     expect(report.steps.find((step) => step.key === "competitor-brand-0")).toMatchObject({ status: "limited" });
     expect(report.steps.find((step) => step.key === "competitor-brand-0")!.profile).toBeUndefined();
@@ -450,17 +450,17 @@ describe("durable specialist research orchestration", () => {
       scanAt(destination, "25.00", destination === url ? undefined : "IndependentCo"));
     worker = createAnalysisWorker({ store, scanner: sameBrandScanner,
       agent: createResearchAgent({ complete, scanner: sameBrandScanner, search: createTavilySearch({ call: searchCall }) }) });
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     await worker.tick();
-    const profiles = job(user, first.id).research!.steps.filter((step) => step.profile);
+    const profiles = (await job(user, first.id)).research!.steps.filter((step) => step.profile);
     expect(profiles).toHaveLength(1);
     expect(profiles[0].profile!.name).toBe("IndependentCo");
-    const pricing = job(user, first.id).research!.steps.find((step) => step.key === "pricing")!;
+    const pricing = (await job(user, first.id)).research!.steps.find((step) => step.key === "pricing")!;
     expect(pricing.findings.flatMap((finding) => finding.sources).some((source) => source.url.includes("second"))).toBe(false);
     complete.mockClear(); sameBrandScanner.mockClear(); searchCall.mockClear();
-    const retry = enqueue(user, true, job(user, first.id).scanId!, first.id);
+    const retry = await enqueue(user, true, (await job(user, first.id)).scanId!, first.id);
     await worker.tick();
-    expect(job(user, retry.id).research!.steps.filter((step) => step.profile)).toHaveLength(1);
+    expect((await job(user, retry.id)).research!.steps.filter((step) => step.profile)).toHaveLength(1);
     expect(complete).not.toHaveBeenCalled();
     expect(searchCall).not.toHaveBeenCalled();
     expect(sameBrandScanner).not.toHaveBeenCalled();
@@ -476,9 +476,9 @@ describe("durable specialist research orchestration", () => {
       }
       return respond(...args);
     });
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     await worker.tick();
-    const report = job(user, first.id).research!;
+    const report = (await job(user, first.id)).research!;
     expect(planningCalls).toBe(2);
     expect(report.steps.find((step) => step.key === "discovery-plan")).toMatchObject({ status: "completed", diagnostic: null });
     expect(report.usage.modelCalls).toBe(10);
@@ -538,9 +538,9 @@ describe("durable specialist research orchestration", () => {
         return tool("plan_market_search", { categories: [{ term: "cotton clothing", sourceId: "e_0000000000000000" }], market: null });
       return respond(...args);
     });
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     await worker.tick();
-    expect(job(user, first.id).research!.steps.find((step) => step.key === "discovery-plan")).toMatchObject({
+    expect((await job(user, first.id)).research!.steps.find((step) => step.key === "discovery-plan")).toMatchObject({
       status: "failed", diagnostic: { code: "search_plan_evidence", paths: ["categories.0.sourceId"] },
     });
     expect(complete.mock.calls.filter(([input]) => input.tool_choice?.type === "tool" && input.tool_choice.name === "plan_market_search")).toHaveLength(2);
@@ -556,13 +556,13 @@ describe("durable specialist research orchestration", () => {
       }
       return respond(...args);
     });
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     const database = new Database(path);
     try {
       database.prepare("INSERT INTO research_usage (job_id, model_calls) VALUES (?, ?)").run(first.id, researchLimits.modelCalls - 3);
     } finally { database.close(); }
     await worker.tick();
-    const report = job(user, first.id).research!;
+    const report = (await job(user, first.id)).research!;
     expect(report.usage.modelCalls).toBe(researchLimits.modelCalls);
     expect(report.steps.find((step) => step.key === "discovery-plan")).toMatchObject({ status: "failed", diagnostic: { code: "run_limit" } });
     expect(complete).toHaveBeenCalledTimes(3);
@@ -587,18 +587,18 @@ describe("durable specialist research orchestration", () => {
       }
       return response;
     });
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     await worker.tick();
     expect(searchCall).toHaveBeenCalled();
     expect(JSON.stringify(searchCall.mock.calls)).not.toContain("Invented private market");
     expect(complete.mock.calls.filter(([input]) => input.tool_choice?.type === "tool" && input.tool_choice.name === "plan_market_search")).toHaveLength(1);
-    expect(job(user, first.id).research!.steps.find((step) => step.key === "discovery-plan"))
+    expect((await job(user, first.id)).research!.steps.find((step) => step.key === "discovery-plan"))
       .toMatchObject({ status: "limited", diagnostic: { code: "search_plan_evidence", paths: ["market.term"] } });
-    expect(job(user, first.id).research!.steps.filter((step) => step.profile).every((step) => !step.profile!.marketVerified)).toBe(true);
+    expect((await job(user, first.id)).research!.steps.filter((step) => step.profile).every((step) => !step.profile!.marketVerified)).toBe(true);
     inventMarket = false;
-    const second = enqueue(user);
+    const second = await enqueue(user);
     await worker.tick();
-    const profiles = job(user, second.id).research!.steps.filter((step) => step.profile).map((step) => step.profile!);
+    const profiles = (await job(user, second.id)).research!.steps.filter((step) => step.profile).map((step) => step.profile!);
     expect(profiles).toHaveLength(2);
     expect(profiles.every((profile) => !profile.marketVerified && profile.facts.every((fact) => fact.dimension === "products"))).toBe(true);
     expect(profiles.every((profile) => profile.limitations.some((gap) => gap.includes("Unsupported")))).toBe(true);
@@ -615,9 +615,9 @@ describe("durable specialist research orchestration", () => {
         market: null,
       });
     });
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     await worker.tick();
-    const report = job(user, first.id).research!;
+    const report = (await job(user, first.id)).research!;
     expect(report.steps.find((step) => step.key === "discovery-plan")).toMatchObject({
       status: "limited", diagnostic: { code: "search_plan_evidence", paths: ["categories.1.term"] },
     });
@@ -656,23 +656,23 @@ describe("durable specialist research orchestration", () => {
       }
       return respond(...args);
     });
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     await worker.tick();
-    const step = job(user, first.id).research!.steps.find((step) => step.key === "competitor")!;
+    const step = (await job(user, first.id)).research!.steps.find((step) => step.key === "competitor")!;
     expect(step.findings.map((finding) => finding.title)).toEqual(["Verify the product descriptions"]);
     expect(step.diagnostic).toMatchObject({ code: "finding_validation",
       paths: ["findings.0.unsupportedClaim", "findings.1.unsupportedClaim", "findings.2.detail"] });
   });
 
   it("does not silently expand the budget of jobs created before the new research consent", async () => {
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     const database = new Database(path);
     database.prepare("UPDATE analysis_jobs SET research_version = 1 WHERE id = ?").run(first.id);
     database.close();
     await worker.tick();
     expect(searchCall).not.toHaveBeenCalled();
     expect(scanner).toHaveBeenCalledOnce();
-    expect(job(user, first.id).research!.steps.find((step) => step.key === "discovery")!.limitations.join(" ")).toContain("updated research permission");
+    expect((await job(user, first.id)).research!.steps.find((step) => step.key === "discovery")!.limitations.join(" ")).toContain("updated research permission");
   });
 
   it("reports missing competitors rather than synthesizing a marketplace or own-brand comparison", async () => {
@@ -680,9 +680,9 @@ describe("durable specialist research orchestration", () => {
     const ownBrandScanner = vi.fn(async (destination: string) => scanAt(destination, "25.00", "Fixture shop"));
     worker = createAnalysisWorker({ store, scanner: ownBrandScanner,
       agent: createResearchAgent({ complete, scanner: ownBrandScanner, search: createTavilySearch({ call: searchCall }) }) });
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     await worker.tick();
-    const report = job(user, first.id).research!;
+    const report = (await job(user, first.id)).research!;
     expect(report.steps.filter((step) => step.profile)).toHaveLength(0);
     expect(report.steps.find((step) => step.key === "competitor")).toMatchObject({ status: "limited", findings: [] });
     expect(complete.mock.calls.some(([input]) => String(input.system).includes("Study captured"))).toBe(false);
@@ -696,9 +696,9 @@ describe("durable specialist research orchestration", () => {
 
   it("preserves independently validated specialist findings when store output and other individual citations fail", async () => {
     failStore = true; invalidFinding = true;
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     await worker.tick();
-    const result = job(user, first.id);
+    const result = await job(user, first.id);
     expect(result.status).toBe("completed");
     expect(result.understanding!.briefing).toBeNull();
     expect(result.research!.status).toBe("partial");
@@ -710,9 +710,9 @@ describe("durable specialist research orchestration", () => {
       });
 
     }
-    await worker.stop(); store.close(); store = openStore(path);
-    expect(job(user, first.id).research).toEqual(result.research);
-    expect(job(user, first.id).scanId).not.toBeNull();
+    await worker.stop(); await store.close(); store = openStore(path);
+    expect((await job(user, first.id)).research).toEqual(result.research);
+    expect((await job(user, first.id)).scanId).not.toBeNull();
   });
 
   it.each(["overlong", "not-an-array", "too-many"])("keeps checked brand facts and specialist findings when limitations are %s", async (problem) => {
@@ -726,9 +726,9 @@ describe("durable specialist research orchestration", () => {
         limitations: problem === "overlong" ? ["x".repeat(501)] : problem === "too-many" ? Array(6).fill("An evidence gap.") : null,
       });
     });
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     await worker.tick();
-    const report = job(user, first.id).research!;
+    const report = (await job(user, first.id)).research!;
     const profiles = report.steps.flatMap((step) => step.profile ? [step.profile] : []);
     expect(profiles).toHaveLength(2);
     expect(profiles.every((profile) => profile.facts.length === 1 && profile.facts[0].dimension === "products")).toBe(true);
@@ -752,9 +752,9 @@ describe("durable specialist research orchestration", () => {
       }
       return response;
     });
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     await worker.tick();
-    const saved = job(user, first.id).understanding!;
+    const saved = (await job(user, first.id)).understanding!;
     expect(saved.briefing?.summary).toBeUndefined();
     expect(saved.briefing?.insights).toHaveLength(1);
     expect(saved.validationIssues).toContainEqual({ path: "briefing.summary.sources", code: "invalid_reference" });
@@ -765,12 +765,12 @@ describe("durable specialist research orchestration", () => {
     expect(saved.warnings.some((warning) => warning.includes("omitted"))).toBe(true);
     expect(complete).toHaveBeenCalledTimes(9);
     failStore = true;
-    const second = enqueue(user);
+    const second = await enqueue(user);
     await worker.tick();
-    const failed = job(user, second.id).understanding!;
+    const failed = (await job(user, second.id)).understanding!;
     expect(failed.briefing).toBeNull();
     expect(failed.research!.steps.find((step) => step.key === "store")!.status).toBe("failed");
-    await worker.stop(); store.close(); store = openStore(path);
+    await worker.stop(); await store.close(); store = openStore(path);
     const response = await request(createApp({ store })).get(`/api/businesses/${user.business.id}/understanding`).set("Cookie", user.cookie).expect(200);
     expect(response.body.understanding.id).toBe(failed.id);
     expect(response.body.lastSuccessfulUnderstanding).toEqual(saved);
@@ -778,7 +778,7 @@ describe("durable specialist research orchestration", () => {
 
   it.each([false, true])("charges text shortening to the durable model budget and respects exhaustion (%s)", async (exhausted) => {
     overlongAction = true;
-    const user = owner(), first = enqueue(user, false);
+    const user = await owner(), first = await enqueue(user, false);
     if (exhausted) {
       const database = new Database(path);
       try {
@@ -786,7 +786,7 @@ describe("durable specialist research orchestration", () => {
       } finally { database.close(); }
     }
     await worker.tick();
-    const result = job(user, first.id), report = result.research!;
+    const result = await job(user, first.id), report = result.research!;
     expect(result.status).toBe("completed");
     expect(report.usage.modelCalls).toBe(exhausted ? researchLimits.modelCalls : 5);
     expect(complete).toHaveBeenCalledTimes(exhausted ? 2 : 5);
@@ -797,8 +797,8 @@ describe("durable specialist research orchestration", () => {
       : { status: "completed" });
     if (!exhausted) {
       expect(result.understanding!.briefing!.nextSteps).toEqual([{ action: "Verify the current product details.", reason: "Published information can change." }]);
-      await worker.stop(); store.close(); store = openStore(path);
-      expect(job(user, first.id).understanding).toEqual(result.understanding);
+      await worker.stop(); await store.close(); store = openStore(path);
+      expect((await job(user, first.id)).understanding).toEqual(result.understanding);
     } else {
       expect(result.understanding!.briefing?.summary).toBeDefined();
       expect(result.understanding!.briefing?.nextSteps).toEqual([]);
@@ -820,7 +820,7 @@ describe("durable specialist research orchestration", () => {
       }
       return respond(...args);
     });
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     const running = worker.tick();
     try {
       await entered;
@@ -849,22 +849,22 @@ describe("durable specialist research orchestration", () => {
     }
     expect(competitorContext.dependencies).toContainEqual(expect.objectContaining({ key: "store", status: "completed" }));
     expect(JSON.stringify(searchCall.mock.calls)).not.toContain("What do shoppers actually buy?");
-    expect(job(user, first.id).status).toBe("completed");
+    expect((await job(user, first.id)).status).toBe("completed");
   });
 
   it("identifies a failed store handoff and recomputes dependent competitor work when Store Intelligence recovers", async () => {
     failStore = true;
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     await worker.tick();
-    const previous = job(user, first.id);
+    const previous = await job(user, first.id);
     const competitorInput = complete.mock.calls.find(([input]) => typeof input.system === "string" && input.system.includes("Study captured"))![0];
     expect(JSON.parse(String(competitorInput.messages[0].content))).toMatchObject({
       storeIntelligence: { status: "failed", unknowns: [], limitations: [expect.any(String)] }, acceptedFindings: [],
     });
     failStore = false; complete.mockClear(); scanner.mockClear(); searchCall.mockClear();
-    const second = enqueue(user, true, previous.scanId!, first.id);
+    const second = await enqueue(user, true, previous.scanId!, first.id);
     await worker.tick();
-    const report = job(user, second.id).research!;
+    const report = (await job(user, second.id)).research!;
     expect(report.steps.find((step) => step.key === "store")!.status).toBe("completed");
     for (const key of ["discovery", "competitor"]) {
       expect(report.steps.find((step) => step.key === key)!.inputVersion)
@@ -874,13 +874,13 @@ describe("durable specialist research orchestration", () => {
     expect(searchCall).not.toHaveBeenCalled();
     expect(scanner).not.toHaveBeenCalled();
     expect(report.steps.find((step) => step.key === "competitor-site-0")!.reused).toBe(true);
-    expect(job(user, first.id)).toEqual(previous);
+    expect(await job(user, first.id)).toEqual(previous);
   });
 
   it("requires separate research consent and never invents customer evidence or relative price claims", async () => {
-    const user = owner(), first = enqueue(user, false);
+    const user = await owner(), first = await enqueue(user, false);
     await worker.tick();
-    const report = job(user, first.id).research!;
+    const report = (await job(user, first.id)).research!;
     expect(searchCall).not.toHaveBeenCalled();
     expect(scanner).toHaveBeenCalledOnce();
     expect(report.usage).toEqual({ searches: 0, competitorScans: 0, modelCalls: 4 });
@@ -896,6 +896,9 @@ describe("durable specialist research orchestration", () => {
 
   it.each([false, true])("shares the global scan budget when another foreground scan is active: %s", async (foregroundActive) => {
     let active = 0, peak = 0;
+    let firstCompetitorStarted = false;
+    let releaseFirstCompetitor!: () => void;
+    const firstCompetitor = new Promise<void>((resolve) => { releaseFirstCompetitor = resolve; });
     let round = 0;
     searchCall.mockImplementation(async () => ({ results: Array.from({ length: 5 }, (_, index) => ({
       url: `https://brand${round++ + index}.example.org/`, title: "Independent cotton clothing brand",
@@ -908,16 +911,28 @@ describe("durable specialist research orchestration", () => {
     });
     const boundedScanner = vi.fn(async (destination: string) => {
       active++; peak = Math.max(peak, active);
-      try { await Promise.resolve(); return scanAt(destination); } finally { active--; }
+      try {
+        if (!foregroundActive && destination !== url && !firstCompetitorStarted) {
+          firstCompetitorStarted = true;
+          await firstCompetitor;
+        }
+        return scanAt(destination);
+      } finally { active--; }
     });
     await worker.stop();
     worker = createAnalysisWorker({ store, scanner: boundedScanner,
       agent: createResearchAgent({ complete, scanner: boundedScanner, search: createTavilySearch({ call: searchCall }) }) });
     const release = foregroundActive ? claimWorkSlot() : null;
     try {
-      const user = owner(), first = enqueue(user);
-      await worker.tick();
-      expect(job(user, first.id).status).toBe("completed");
+      const user = await owner(), first = await enqueue(user);
+      const execution = worker.tick();
+      try {
+        if (!foregroundActive) await vi.waitFor(() => { expect(peak).toBe(2); });
+      } finally {
+        releaseFirstCompetitor();
+        await execution;
+      }
+      expect((await job(user, first.id)).status).toBe("completed");
       expect(peak).toBe(foregroundActive ? 1 : 2);
       expect(boundedScanner).toHaveBeenCalledTimes(7);
     } finally { release?.(); }
@@ -942,9 +957,9 @@ describe("durable specialist research orchestration", () => {
   it("surfaces missing Tavily configuration without failing the other specialists", async () => {
     await worker.stop();
     worker = createAnalysisWorker({ store, scanner, agent: createResearchAgent({ complete, scanner }) });
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     await worker.tick();
-    const report = job(user, first.id).research!;
+    const report = (await job(user, first.id)).research!;
     expect(report.steps.find((step) => step.key === "discovery")).toMatchObject({
       status: "failed", diagnostic: { code: "search_not_configured" }, limitations: [expect.stringContaining("TAVILY_API_KEY")],
     });
@@ -955,14 +970,14 @@ describe("durable specialist research orchestration", () => {
 
   it("explicitly resumes failed work, reuses successful calls and scans, and refreshes downstream input versions", async () => {
     failFirstRival = true;
-    const user = owner(), first = enqueue(user);
+    const user = await owner(), first = await enqueue(user);
     await worker.tick();
-    const previous = job(user, first.id);
+    const previous = await job(user, first.id);
     const oldOpportunity = previous.research!.steps.find((step) => step.key === "opportunity")!.inputVersion;
     failFirstRival = false; complete.mockClear(); scanner.mockClear(); searchCall.mockClear();
-    const second = enqueue(user, true, previous.scanId!, first.id);
+    const second = await enqueue(user, true, previous.scanId!, first.id);
     await worker.tick();
-    const result = job(user, second.id), report = result.research!;
+    const result = await job(user, second.id), report = result.research!;
     expect(report.usage).toEqual({ searches: 0, competitorScans: 1, modelCalls: 4 });
     expect(searchCall).not.toHaveBeenCalled();
     expect(scanner).toHaveBeenCalledOnce();
@@ -970,37 +985,37 @@ describe("durable specialist research orchestration", () => {
     expect(report.steps.find((step) => step.key === "store")!.reused).toBe(true);
     expect(report.steps.find((step) => step.key === "competitor-site-1")!.reused).toBe(true);
     expect(report.steps.find((step) => step.key === "opportunity")!.inputVersion).not.toBe(oldOpportunity);
-    expect(job(user, first.id)).toEqual(previous);
+    expect(await job(user, first.id)).toEqual(previous);
     complete.mockClear(); scanner.mockClear();
-    const third = enqueue(user, true, result.scanId!, second.id);
+    const third = await enqueue(user, true, result.scanId!, second.id);
     await worker.tick();
-    expect(job(user, third.id).research!.usage).toEqual({ searches: 0, competitorScans: 0, modelCalls: 0 });
+    expect((await job(user, third.id)).research!.usage).toEqual({ searches: 0, competitorScans: 0, modelCalls: 0 });
     expect(complete).not.toHaveBeenCalled(); expect(scanner).not.toHaveBeenCalled();
   });
 
-  it.each([1, 2])("fences journal writes after cancellation and enforces persisted version %s provider budgets", (version) => {
-    const user = owner(), first = enqueue(user);
+  it.each([1, 2])("fences journal writes after cancellation and enforces persisted version %s provider budgets", async (version) => {
+    const user = await owner(), first = await enqueue(user);
     const database = new Database(path);
     database.prepare("UPDATE analysis_jobs SET research_version = ? WHERE id = ?").run(version, first.id);
     database.close();
-    const claim = store.claimAnalysis()!;
+    const claim = (await store.claimAnalysis())!;
     const journal = store.researchJournal(first.id, claim.lease);
     const modelCap = version === 1 ? 7 : researchLimits.modelCalls;
-    for (let i = 0; i < modelCap; i++) journal.consume("modelCalls");
-    expect(() => journal.consume("modelCalls")).toThrow(ResearchLimit);
+    for (let i = 0; i < modelCap; i++) await journal.consume("modelCalls");
+    await expect(journal.consume("modelCalls")).rejects.toThrow(ResearchLimit);
     const step: ResearchStep = { key: "store", agent: "store", status: "completed", findings: [], limitations: [], diagnostic: null,
       startedAt: timestamp, completedAt: timestamp, reused: false };
-    journal.write(step, { accepted: true });
-    store.cancelAnalysis(user.id, user.business.id, first.id);
-    expect(() => journal.write({ ...step, findings: [] })).toThrow(ResearchStopped);
-    expect(() => journal.consume("searches")).toThrow(ResearchStopped);
-    expect(job(user, first.id).research!.usage.modelCalls).toBe(modelCap);
-    expect(job(user, first.id).research!.steps[0].status).toBe("completed");
-    expect(store.getAnalysisJob(owner().id, user.business.id, first.id)).toBeNull();
+    await journal.write(step, { accepted: true });
+    await store.cancelAnalysis(user.id, user.business.id, first.id);
+    await expect(journal.write({ ...step, findings: [] })).rejects.toThrow(ResearchStopped);
+    await expect(journal.consume("searches")).rejects.toThrow(ResearchStopped);
+    expect((await job(user, first.id)).research!.usage.modelCalls).toBe(modelCap);
+    expect((await job(user, first.id)).research!.steps[0].status).toBe("completed");
+    expect(await store.getAnalysisJob((await owner()).id, user.business.id, first.id)).toBeNull();
   });
 
   it("binds idempotency and resume to consent, owner, website and saved evidence, and requires queued wider research", async () => {
-    const user = owner(), other = owner(), key = randomUUID();
+    const user = await owner(), other = await owner(), key = randomUUID();
     const agent = createResearchAgent({ complete });
     const app = createApp({ store, agent, scanner });
     await request(app).post(`/api/businesses/${user.business.id}/understanding`).set("Origin", "http://127.0.0.1:5173")
@@ -1009,33 +1024,33 @@ describe("durable specialist research orchestration", () => {
       .set("Origin", "http://127.0.0.1:5173").set("Prefer", "respond-async").set("Idempotency-Key", randomUUID())
       .set("Cookie", user.cookie).send({ permission: true, research: true }).expect(400);
     expect(outdated.body.error).toContain("updated research");
-    expect(store.latestAnalysisJob(user.id, user.business.id)).toBeNull();
-    const first = store.enqueueAnalysis(user.id, user.business.id, key, url, undefined, true);
-    expect(() => store.matchingAnalysisJob(user.id, user.business.id, key, url, undefined, false)).toThrow("different analysis");
+    expect(await store.latestAnalysisJob(user.id, user.business.id)).toBeNull();
+    const first = await store.enqueueAnalysis(user.id, user.business.id, key, url, undefined, true);
+    await expect(store.matchingAnalysisJob(user.id, user.business.id, key, url, undefined, false)).rejects.toThrow("different analysis");
     await worker.tick();
-    const saved = job(user, first.id);
-    expect(() => enqueue(other, true, undefined, first.id)).toThrow("same website");
-    expect(() => enqueue(user, false, saved.scanId!, first.id)).toThrow("same website");
-    const changedScan = store.saveScan(user.id, user.business.id, scanAt())!;
-    expect(() => enqueue(user, true, changedScan.id, first.id)).toThrow("same website");
-    expect(() => store.researchJournal(first.id, "wrong-lease").consume("modelCalls")).toThrow(ResearchStopped);
+    const saved = await job(user, first.id);
+    await expect(enqueue(other, true, undefined, first.id)).rejects.toThrow("same website");
+    await expect(enqueue(user, false, saved.scanId!, first.id)).rejects.toThrow("same website");
+    const changedScan = (await store.saveScan(user.id, user.business.id, scanAt()))!;
+    await expect(enqueue(user, true, changedScan.id, first.id)).rejects.toThrow("same website");
+    await expect(store.researchJournal(first.id, "wrong-lease").consume("modelCalls")).rejects.toThrow(ResearchStopped);
   });
 
-  it("keeps worst-case research snapshots below the NDJSON frame ceiling while retaining private artifacts", () => {
-    const user = owner(), first = enqueue(user), claim = store.claimAnalysis()!;
+  it("keeps worst-case research snapshots below the NDJSON frame ceiling while retaining private artifacts", async () => {
+    const user = await owner(), first = await enqueue(user), claim = (await store.claimAnalysis())!;
     const journal = store.researchJournal(first.id, claim.lease);
     const source = { id: "e_1111111111111111", url: `https://rival.example.org/${"x".repeat(1500)}`, quote: "x".repeat(500), capturedAt: timestamp };
     for (let i = 0; i < researchLimits.steps; i++) {
       const findings = Array.from({ length: 4 }, () => ({ kind: "observation" as const, title: "t".repeat(150), detail: "d".repeat(600), sources: [source, source, source] }));
-      journal.write({ key: `step-${i}`, agent: "store", status: "completed", startedAt: timestamp, completedAt: timestamp,
+      await journal.write({ key: `step-${i}`, agent: "store", status: "completed", startedAt: timestamp, completedAt: timestamp,
         reused: false, findings, diagnostic: null, limitations: [] }, { findings });
     }
-    const report = journal.report()!;
-    const snapshot = { type: "job", job: { ...job(user, first.id), understanding: { research: report, extra: "x".repeat(65_000) } } };
+    const report = (await journal.report())!;
+    const snapshot = { type: "job", job: { ...await job(user, first.id), understanding: { research: report, extra: "x".repeat(65_000) } } };
     expect(Buffer.byteLength(JSON.stringify(snapshot))).toBeLessThan(researchLimits.frameBytes);
     expect(report.steps.every((step) => Buffer.byteLength(JSON.stringify(step)) > 7 * 1024
       && Buffer.byteLength(JSON.stringify(step)) <= researchLimits.stepBytes)).toBe(true);
     expect(report.steps[0].diagnostic!.code).toBe("report_size");
-    expect(journal.read("step-0")!.artifact).toMatchObject({ findings: expect.arrayContaining([expect.objectContaining({ detail: "d".repeat(600) })]) });
+    expect((await journal.read("step-0"))!.artifact).toMatchObject({ findings: expect.arrayContaining([expect.objectContaining({ detail: "d".repeat(600) })]) });
   });
 });

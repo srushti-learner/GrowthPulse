@@ -6,7 +6,7 @@ import { websiteProducts } from "./product-imports.js";
 import { CatalogueError } from "./catalogue-store.js";
 import { AgentError } from "./business-agent.js";
 
-export function recordUnderstanding(store: Store, ownerId: string, businessId: string, scan: SavedScan,
+export async function recordUnderstanding(store: Store, ownerId: string, businessId: string, scan: SavedScan,
   proposal: Proposal & Pick<Understanding, "evidenceCoverage" | "research">) {
   const warnings = [...scan.notes, ...scan.failures.map((failure) => `${failure.url}: ${failure.message}`),
     ...scan.pages.filter((page) => page.warnings.length).map((page) => `${page.url}: ${page.warnings.join(" ")}`)];
@@ -17,12 +17,12 @@ export function recordUnderstanding(store: Store, ownerId: string, businessId: s
   let productImportId: string | null = null;
   try {
     const rows = websiteProducts(scan);
-    productImportId = store.createProductImport(ownerId, businessId, "website", new URL(scan.requestedUrl).hostname.replace(/^www\./, ""), rows).id;
+    productImportId = (await store.createProductImport(ownerId, businessId, "website", new URL(scan.requestedUrl).hostname.replace(/^www\./, ""), rows)).id;
   } catch (error) {
     if (!(error instanceof CatalogueError) || error.status !== 400) throw error;
     warnings.push(error.message);
   }
-  const understanding = store.saveUnderstanding(ownerId, {
+  const understanding = await store.saveUnderstanding(ownerId, {
     ...proposal, id: randomUUID(), businessId, scanId: scan.id,
     createdAt: new Date().toISOString(), scanStatus: scan.status, reviewedAt: null,
     warnings: warnings.length > 30 ? [...warnings.slice(0, 29), "Additional scan warnings are available in the saved Website evidence."] : warnings,

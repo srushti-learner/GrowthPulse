@@ -142,7 +142,7 @@ describe("owner catalogue API and transactions", () => {
     directory = mkdtempSync(join(tmpdir(), "growthpulse-products-")); path = join(directory, "test.sqlite");
     store = openStore(path); app = createApp({ store, origin });
   });
-  afterEach(() => { store.close(); rmSync(directory, { recursive: true, force: true }); vi.restoreAllMocks(); });
+  afterEach(async () => { await store.close(); rmSync(directory, { recursive: true, force: true }); vi.restoreAllMocks(); });
   async function owner(email = "owner@example.test") {
     const account = await request(app).post("/api/auth/register").set("Origin", origin).send({ name: "Test Owner", email, password: "a test-only long passphrase" }).expect(201);
     const cookie = String(account.headers["set-cookie"][0]).split(";")[0];
@@ -164,13 +164,13 @@ describe("owner catalogue API and transactions", () => {
     expect(edited.body.product.listings).toHaveLength(2);
     expect(edited.body.product.listings.find((item: { source: string }) => item.source === "csv").data.price).toBe("450.00");
     expect(edited.body.product.listings.find((item: { source: string }) => item.source === "manual").data.price).toBe("525");
-    expect(store.listActivity(user.userId, user.id).filter((item) => item.action === "product.saved")).toHaveLength(2);
-    expect(store.listEvidence(user.userId, user.id).filter((item) => item.source === "product")).toHaveLength(3);
+    expect((await store.listActivity(user.userId, user.id)).filter((item) => item.action === "product.saved")).toHaveLength(2);
+    expect((await store.listEvidence(user.userId, user.id)).filter((item) => item.source === "product")).toHaveLength(3);
     await post(user, "products", { ...product, price: "-1" }).expect(400);
     await post(user, "products", { ...product, currency: "" }).expect(400);
     await post(user, "products", { ...product, sku: "tee-1" }).expect(409);
-    store.close(); store = openStore(path);
-    expect(store.listProducts(user.userId, user.id)[0].listings).toHaveLength(2);
+    await store.close(); store = openStore(path);
+    expect((await store.listProducts(user.userId, user.id))[0].listings).toHaveLength(2);
   });
 
   it("requires explicit review of names, normalizes identifiers, prevents repeated imports and reuses a new batch identity", async () => {
@@ -186,9 +186,9 @@ describe("owner catalogue API and transactions", () => {
     const repeat = await preview(user, "listing_id,name,gtin\nsource-one,Refreshed title,04006381333931");
     expect(repeat.matches[0].kind).toBe("repeat");
     await post(user, `product-imports/${repeat.id}/commit`, { decisions: [{ row: 2, action: "link", productId: first.body.product.id }] }).expect(200);
-    expect(store.listProducts(user.userId, user.id)).toHaveLength(1);
-    expect(store.listProducts(user.userId, user.id)[0].name).toBe(product.name);
-    expect(store.listProducts(user.userId, user.id)[0].listings).toHaveLength(3);
+    expect(await store.listProducts(user.userId, user.id)).toHaveLength(1);
+    expect((await store.listProducts(user.userId, user.id))[0].name).toBe(product.name);
+    expect((await store.listProducts(user.userId, user.id))[0].listings).toHaveLength(3);
     const batch = await preview(user, "listing_id,name,sku\nnew-one,Other tee,OTHER\nnew-two,Other source listing,other");
     const result = await post(user, `product-imports/${batch.id}/commit`, { decisions: [{ row: 2, action: "new" }, { row: 3, action: "new" }] }).expect(200);
     expect(result.body.result).toMatchObject({ created: 1, imported: 2 });
@@ -210,41 +210,41 @@ describe("owner catalogue API and transactions", () => {
     await post(bob, `product-imports/${bobDraft.id}/commit`, { decisions: [{ row: 2, action: "link", productId: saved.body.product.id }] }).expect(404);
     await post(bob, "product-imports/website", { scanId: randomUUID(), rows: [] }).expect(400);
     await post(bob, "product-imports/website", { scanId: randomUUID() }).expect(404);
-    expect(store.listProducts(bob.userId, bob.id)).toHaveLength(0);
+    expect(await store.listProducts(bob.userId, bob.id)).toHaveLength(0);
   });
 
   it("saves website listings from existing owned evidence without another network request", async () => {
     const user = await owner();
-    const scan = store.saveScan(user.userId, user.id, { requestedUrl: "https://shop.example.com/", status: "complete", startedAt: timestamp, completedAt: timestamp, failures: [], notes: [], pages: [
+    const scan = (await store.saveScan(user.userId, user.id, { requestedUrl: "https://shop.example.com/", status: "complete", startedAt: timestamp, completedAt: timestamp, failures: [], notes: [], pages: [
       { url: "https://shop.example.com/product", capturedAt: timestamp, title: "", description: "", headings: [], text: "", contacts: [], callsToAction: [], links: [], warnings: [], productJson: [JSON.stringify({ "@type": "Product", name: "Observed tee", sku: "TEE-1", image: "/images/tee.jpg?v=1", offers: { price: "499", priceCurrency: "INR" } })] },
-    ] })!;
+    ] }))!;
     const secondPage = { ...scan.pages[0], url: "https://shop.example.com/another-listing" };
-    const multiple = store.saveScan(user.userId, user.id, { ...scan, pages: [...scan.pages, secondPage] })!;
+    const multiple = (await store.saveScan(user.userId, user.id, { ...scan, pages: [...scan.pages, secondPage] }))!;
     const draft = (await post(user, "product-imports/website", { scanId: multiple.id }).expect(201)).body.draft;
     expect(draft.rows[0].data.imageUrl).toBe("https://shop.example.com/images/tee.jpg?v=1");
     const result = await post(user, `product-imports/${draft.id}/commit`, { decisions: [{ row: 1, action: "new" }, { row: 2, action: "new" }] }).expect(200);
     expect(result.body.result).toMatchObject({ imported: 2, created: 1 });
-    expect(store.listProducts(user.userId, user.id)[0].listings).toHaveLength(2);
-    const listing = store.listProducts(user.userId, user.id)[0].listings[0];
+    expect((await store.listProducts(user.userId, user.id))[0].listings).toHaveLength(2);
+    const listing = (await store.listProducts(user.userId, user.id))[0].listings[0];
     expect(listing).toMatchObject({ source: "website", sourceName: "shop.example.com", reference: "https://shop.example.com/product", capturedAt: timestamp });
     expect(listing.data.imageUrl).toBe("https://shop.example.com/images/tee.jpg?v=1");
     const again = (await post(user, "product-imports/website", { scanId: scan.id }).expect(201)).body.draft;
     expect(again.matches[0].kind).toBe("repeat");
-    store.close(); store = openStore(path);
-    expect(store.listProducts(user.userId, user.id)[0].listings[0].data.imageUrl).toBe("https://shop.example.com/images/tee.jpg?v=1");
+    await store.close(); store = openStore(path);
+    expect((await store.listProducts(user.userId, user.id))[0].listings[0].data.imageUrl).toBe("https://shop.example.com/images/tee.jpg?v=1");
   });
 
   it("refreshes a legacy draft from its exact retained evidence, then imports only validated records", async () => {
     const user = await owner(), other = await owner("other@example.test");
     const scanner = vi.fn(async () => { throw new Error("Refresh must not scan the website."); });
     app = createApp({ store, origin, scanner });
-    const scan = store.saveScan(user.userId, user.id, { requestedUrl: "https://shop.example.com/", status: "complete", startedAt: timestamp, completedAt: timestamp, failures: [], notes: [], pages: [
+    const scan = (await store.saveScan(user.userId, user.id, { requestedUrl: "https://shop.example.com/", status: "complete", startedAt: timestamp, completedAt: timestamp, failures: [], notes: [], pages: [
       { url: "https://shop.example.com/product", capturedAt: timestamp, title: "", description: "", headings: [], text: "", contacts: [], callsToAction: [], links: [], warnings: [], productJson: [
         JSON.stringify({ "@type": "Product", name: "Recoverable tee", sku: "TEE-1", image: "/tee.jpg", offers: { price: "2,899.00", priceCurrency: "INR" } }),
         JSON.stringify({ "@type": "Product", name: "Still needs review", sku: "BAD", image: "/bad.jpg", offers: { price: "-1", priceCurrency: "INR" } }),
       ] },
-    ] })!;
-    const legacy = store.createProductImport(user.userId, user.id, "website", "shop.example.com", websiteProducts(scan).map((row) => ({
+    ] }))!;
+    const legacy = await store.createProductImport(user.userId, user.id, "website", "shop.example.com", websiteProducts(scan).map((row) => ({
       ...row, data: null, preview: undefined, notes: [], errors: ["price: Invalid legacy price."],
     })));
     await post(other, `product-imports/${legacy.id}/refresh`, {}).expect(404);
@@ -254,13 +254,13 @@ describe("owner catalogue API and transactions", () => {
     expect(refreshed.id).not.toBe(legacy.id);
     expect(refreshed.rows[0].data).toMatchObject({ name: "Recoverable tee", price: "2899.00", imageUrl: "https://shop.example.com/tee.jpg" });
     expect(refreshed.rows[1]).toMatchObject({ data: null, preview: { name: "Still needs review", imageUrl: "https://shop.example.com/bad.jpg" } });
-    expect(store.getProductImport(user.userId, user.id, legacy.id).rows.every((row) => row.data === null && !row.preview)).toBe(true);
-    expect(store.listProducts(user.userId, user.id)).toEqual([]);
+    expect((await store.getProductImport(user.userId, user.id, legacy.id)).rows.every((row) => row.data === null && !row.preview)).toBe(true);
+    expect(await store.listProducts(user.userId, user.id)).toEqual([]);
     await post(user, `product-imports/${refreshed.id}/commit`, { decisions: [{ row: 1, action: "new" }, { row: 2, action: "new" }] }).expect(400);
-    expect(store.listProducts(user.userId, user.id)).toEqual([]);
+    expect(await store.listProducts(user.userId, user.id)).toEqual([]);
     const imported = (await post(user, `product-imports/${refreshed.id}/commit`, { decisions: [{ row: 1, action: "new" }, { row: 2, action: "skip" }] }).expect(200)).body;
     expect(imported.result).toMatchObject({ imported: 1, skipped: 1, created: 1 });
-    expect(store.listProducts(user.userId, user.id)[0].listings[0].data).toMatchObject({ price: "2899.00", imageUrl: "https://shop.example.com/tee.jpg" });
+    expect((await store.listProducts(user.userId, user.id))[0].listings[0].data).toMatchObject({ price: "2899.00", imageUrl: "https://shop.example.com/tee.jpg" });
     expect(scanner).not.toHaveBeenCalled();
     const csv = await preview(user, "name,sku\nCSV tee,CSV-1");
     await post(user, `product-imports/${csv.id}/refresh`, {}).expect(400);
@@ -268,8 +268,8 @@ describe("owner catalogue API and transactions", () => {
     expect(repeated.matches[0].kind).toBe("repeat");
     const repeat = await post(user, `product-imports/${repeated.id}/commit`, { decisions: [{ row: 1, action: "link", productId: repeated.matches[0].productId }, { row: 2, action: "skip" }] }).expect(200);
     expect(repeat.body.result).toMatchObject({ imported: 1, created: 0, updated: 1 });
-    store.close(); store = openStore(path);
-    const saved = store.listProducts(user.userId, user.id);
+    await store.close(); store = openStore(path);
+    const saved = await store.listProducts(user.userId, user.id);
     expect(saved).toHaveLength(1);
     expect(saved[0].listings).toHaveLength(1);
     expect(saved[0].listings[0].data.imageUrl).toBe("https://shop.example.com/tee.jpg");
@@ -280,10 +280,10 @@ describe("owner catalogue API and transactions", () => {
     const first = { url: "https://shop.example.com/first", capturedAt: timestamp, title: "", description: "", headings: [], text: "", contacts: [], callsToAction: [], links: [], warnings: [], productJson: [JSON.stringify({ "@type": "Product", name: "First", sku: "FIRST" })] };
     const second = { ...first, url: "https://shop.example.com/second", productJson: [JSON.stringify({ "@type": "Product", name: "Original second", sku: "SECOND" })] };
     const evidence = { requestedUrl: "https://shop.example.com/", status: "complete" as const, startedAt: timestamp, completedAt: timestamp, failures: [], notes: [], pages: [first, second] };
-    const draft = store.createProductImport(user.userId, user.id, "website", "shop.example.com", websiteProducts(evidence));
-    store.saveScan(user.userId, user.id, { ...evidence, pages: [first, { ...second, capturedAt: "2026-11-18T12:00:00.000Z" }] });
+    const draft = await store.createProductImport(user.userId, user.id, "website", "shop.example.com", websiteProducts(evidence));
+    await store.saveScan(user.userId, user.id, { ...evidence, pages: [first, { ...second, capturedAt: "2026-11-18T12:00:00.000Z" }] });
     await post(user, `product-imports/${draft.id}/refresh`, {}).expect(409);
-    store.saveScan(user.userId, user.id, evidence);
+    await store.saveScan(user.userId, user.id, evidence);
     const refreshed = await post(user, `product-imports/${draft.id}/refresh`, {}).expect(201);
     expect(refreshed.body.draft.rows).toHaveLength(2);
     expect(refreshed.body.draft.rows[1]).toMatchObject({ capturedAt: timestamp, data: { name: "Original second" } });
@@ -294,13 +294,13 @@ describe("owner catalogue API and transactions", () => {
     const evidence = { requestedUrl: "https://shop.example.com/", status: "complete" as const, startedAt: timestamp, completedAt: timestamp, failures: [], notes: [], pages: [
       { url: "https://shop.example.com/product", capturedAt: timestamp, title: "", description: "", headings: [], text: "", contacts: [], callsToAction: [], links: [], warnings: [], productJson: [JSON.stringify({ "@type": "Product", name: "Tee", sku: "TEE-1" })] },
     ] };
-    const draft = store.createProductImport(alice.userId, alice.id, "website", "shop.example.com", websiteProducts(evidence));
-    store.saveScan(bob.userId, bob.id, evidence);
+    const draft = await store.createProductImport(alice.userId, alice.id, "website", "shop.example.com", websiteProducts(evidence));
+    await store.saveScan(bob.userId, bob.id, evidence);
     await post(alice, `product-imports/${draft.id}/refresh`, {}).expect(409);
-    store.saveScan(alice.userId, alice.id, evidence);
-    store.saveScan(alice.userId, alice.id, evidence);
+    await store.saveScan(alice.userId, alice.id, evidence);
+    await store.saveScan(alice.userId, alice.id, evidence);
     await post(alice, `product-imports/${draft.id}/refresh`, {}).expect(409);
-    expect(store.listProducts(alice.userId, alice.id)).toEqual([]);
+    expect(await store.listProducts(alice.userId, alice.id)).toEqual([]);
   });
 
   it("uses newly learned batch identifiers, but requires review for contradictory GTINs", async () => {
@@ -312,41 +312,41 @@ describe("owner catalogue API and transactions", () => {
     expect(conflict.matches[0]).toMatchObject({ kind: "review", productId: null });
     const otherSource = await preview(user, "listing_id,name,sku,gtin\nother,Conflicting source,TEE,9780140328721", "Other");
     expect(otherSource.matches[0].kind).toBe("review");
-    expect(store.listProducts(user.userId, user.id)[0].listings).toHaveLength(3);
+    expect((await store.listProducts(user.userId, user.id))[0].listings).toHaveLength(3);
   });
 
   it("rejects older observations and leaves newer listings unchanged atomically", async () => {
     const user = await owner();
     const sourceRow = (capturedAt: string, price: string) => ({ row: 2, sourceKey: "id:one", reference: "CSV row 2", capturedAt, data: { ...product, price }, errors: [], notes: [] });
-    const old = store.createProductImport(user.userId, user.id, "csv", "channel", [sourceRow(timestamp, "450")]);
-    const newer = store.createProductImport(user.userId, user.id, "csv", "channel", [sourceRow("2026-11-17T12:00:00.000Z", "499")]);
-    store.commitProductImport(user.userId, user.id, newer.id, { decisions: [{ row: 2, action: "new" }] });
-    const saved = store.listProducts(user.userId, user.id)[0];
+    const old = await store.createProductImport(user.userId, user.id, "csv", "channel", [sourceRow(timestamp, "450")]);
+    const newer = await store.createProductImport(user.userId, user.id, "csv", "channel", [sourceRow("2026-11-17T12:00:00.000Z", "499")]);
+    await store.commitProductImport(user.userId, user.id, newer.id, { decisions: [{ row: 2, action: "new" }] });
+    const saved = (await store.listProducts(user.userId, user.id))[0];
     await post(user, `product-imports/${old.id}/commit`, { decisions: [{ row: 2, action: "link", productId: saved.id }] }).expect(409);
-    expect(store.listProducts(user.userId, user.id)[0].listings[0].data.price).toBe("499");
-    expect(store.getProductImport(user.userId, user.id, old.id).committed).toBe(false);
+    expect((await store.listProducts(user.userId, user.id))[0].listings[0].data.price).toBe("499");
+    expect((await store.getProductImport(user.userId, user.id, old.id)).committed).toBe(false);
   });
 
   it("skips invalid rows only explicitly and rolls back every write on a later failure", async () => {
     const user = await owner();
     const draft = await preview(user, "listing_id,name,price,currency\none,Valid,10,INR\ntwo,,10,INR");
     await post(user, `product-imports/${draft.id}/commit`, { decisions: [{ row: 2, action: "new" }, { row: 3, action: "new" }] }).expect(400);
-    expect(store.listProducts(user.userId, user.id)).toEqual([]);
+    expect(await store.listProducts(user.userId, user.id)).toEqual([]);
     await post(user, `product-imports/${draft.id}/commit`, { decisions: [{ row: 2, action: "new" }, { row: 2, action: "skip" }] }).expect(400);
     const database = new Database(path);
     database.exec("CREATE TRIGGER reject_product_activity BEFORE INSERT ON activities WHEN NEW.action='products.imported' BEGIN SELECT RAISE(ABORT,'Synthetic failure'); END;");
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     await post(user, `product-imports/${draft.id}/commit`, { decisions: [{ row: 2, action: "new" }, { row: 3, action: "skip" }] }).expect(500);
     expect(log).toHaveBeenCalled();
-    expect(store.listProducts(user.userId, user.id)).toEqual([]);
-    expect(store.listEvidence(user.userId, user.id)).toHaveLength(1);
+    expect(await store.listProducts(user.userId, user.id)).toEqual([]);
+    expect(await store.listEvidence(user.userId, user.id)).toHaveLength(1);
     database.exec("DROP TRIGGER reject_product_activity"); database.close();
     const result = await post(user, `product-imports/${draft.id}/commit`, { decisions: [{ row: 2, action: "new" }, { row: 3, action: "skip" }] }).expect(200);
     expect(result.body.result).toMatchObject({ imported: 1, skipped: 1 });
   });
 
   it("upgrades a populated v2 database without losing previous scans or activities", async () => {
-    store.close();
+    await store.close();
     const legacy = join(directory, "legacy.sqlite");
     const database = new Database(legacy);
     database.exec("PRAGMA foreign_keys=ON; CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY)");
@@ -359,8 +359,8 @@ describe("owner catalogue API and transactions", () => {
     database.prepare("INSERT INTO website_scans VALUES (?,?,'https://shop.example.com/','complete',?,?,0,?)").run(scan, business, timestamp, timestamp, JSON.stringify({ requestedUrl: "https://shop.example.com/", status: "complete", startedAt: timestamp, completedAt: timestamp, pages: [], failures: [], notes: [] }));
     database.close();
     store = openStore(legacy);
-    expect(store.listActivity(user, business)[0].action).toBe("website.scanned");
-    expect(store.getScan(user, business, scan)?.id).toBe(scan);
-    expect(store.listProducts(user, business)).toEqual([]);
+    expect((await store.listActivity(user, business))[0].action).toBe("website.scanned");
+    expect((await store.getScan(user, business, scan))?.id).toBe(scan);
+    expect(await store.listProducts(user, business)).toEqual([]);
   });
 });
