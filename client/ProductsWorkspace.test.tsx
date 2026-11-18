@@ -138,6 +138,40 @@ describe("product workspace", () => {
     expect(container.querySelector(".product-tools")).toBeNull();
   });
 
+  it.each([false, true])("carries an exact recommendation through product selection and back (saved action: %s), without applying it or starting AI", async (savedAction) => {
+    const actionId = "a".repeat(64);
+    const opportunity = {
+      id: actionId, title: "Clarify sizing", detail: "Check measurements.", agents: ["growth"], reviewReason: "Requires validation.",
+      sources: [{ id: "e_1111111111111111", url: "https://shop.example.com/", quote: "Five sizes are available.", capturedAt: timestamp }],
+      strategy: { objective: "Clarify sizing", actions: ["Check measurements."], metric: "Enquiries", hypothesis: "Check sizing.", measurement: "Choose a baseline." },
+    };
+    window.history.replaceState(null, "", `/#products?business=${businessId}&action=${actionId}`);
+    const fetch = fetcher((path) => path.endsWith("/growth") ? json({
+      opportunities: [opportunity], plan: savedAction ? [{
+        opportunity, status: "planned", impact: "unknown", effort: "unknown", timeToValue: "unknown", revision: 0, createdAt: timestamp, updatedAt: timestamp,
+      }] : [], researchStatus: "partial", evidenceSavedAt: timestamp,
+    }) : path.endsWith("/intelligence") ? json({ configured: true, analysis: null, stale: false, running: false, error: null })
+      : json({ products: [product] }));
+    await render();
+    expect(container.querySelector(".journey-task h2")?.textContent).toBe(opportunity.title);
+    expect(container.querySelector(".journey-task")?.textContent).toContain("no product has been selected for you");
+    expect(container.querySelector(".journey-task .agent-sources")?.textContent).toContain("Five sizes are available");
+    expect(container.querySelector(".product-intelligence")).toBeNull();
+    await click("Open product workspace");
+    expect(window.location.hash).toContain(`action=${actionId}`);
+    expect(window.location.hash).toContain(`product=${productId}`);
+    await click("All products");
+    expect(window.location.hash).toBe(`#products?business=${businessId}&action=${actionId}`);
+    expect(container.querySelector(".journey-task .journey-actions a")?.getAttribute("href")).toBe(`#${savedAction ? "actions" : "growth"}?business=${businessId}&action=${actionId}`);
+    expect(fetch.mock.calls.some(([, options]) => options?.method)).toBe(false);
+    await act(async () => {
+      window.history.replaceState(null, "", `/#products?business=${businessId}&action=${"b".repeat(64)}`);
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    expect(container.querySelector(".journey-task [role='alert']")?.textContent).toContain("no longer available");
+    expect(container.querySelector(".journey-task h2")).toBeNull();
+  });
+
   it("requires a decision for uncertain matches and explicitly skips invalid preview rows", async () => {
     const fetch = fetcher((path, options) => {
       if (path.endsWith("/csv")) return json({ draft }, 201);

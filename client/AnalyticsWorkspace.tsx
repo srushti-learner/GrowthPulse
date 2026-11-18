@@ -15,8 +15,9 @@ const fmt = new Intl.NumberFormat("en-GB");
 const dateLabel = (date: string) => new Date(`${date}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 type Tab = "overview" | "forecast" | "scenario";
 
-export function AnalyticsWorkspace({ onSessionExpired, studio = false, selectedBusinessId, onBusinessSelected }: {
+export function AnalyticsWorkspace({ onSessionExpired, studio = false, selectedBusinessId, onBusinessSelected, businessManaged = false }: {
   onSessionExpired: () => void; studio?: boolean; selectedBusinessId?: string; onBusinessSelected?: (id: string) => void;
+  businessManaged?: boolean;
 }) {
   const [context, setContext] = useState(() => new URLSearchParams(window.location.hash.split("?")[1] ?? ""));
   const [businesses, setBusinesses] = useState<Business[]>([]);
@@ -35,13 +36,14 @@ export function AnalyticsWorkspace({ onSessionExpired, studio = false, selectedB
   const [range, setRange] = useState({ start: "", end: "" });
   const [scenario, setScenario] = useState<ScenarioInput>({ name: "My growth scenario", start: "", end: "", ordersPct: 0, aovPct: 0, costPct: 0 });
   const [savedId, setSavedId] = useState("");
-  const [growthAction, setGrowthAction] = useState<Pick<GrowthOpportunity, "id" | "title"> | null>(null);
+  const [growthAction, setGrowthAction] = useState<(Pick<GrowthOpportunity, "id" | "title"> & { planned: boolean }) | null>(null);
   const [growthError, setGrowthError] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
   const requests = useRef<AbortController | null>(null);
   const requestedSelection = useRef({ id: selectedBusinessId, onSelected: onBusinessSelected });
   requestedSelection.current = { id: selectedBusinessId, onSelected: onBusinessSelected };
-  useEffect(() => { setTab(studio ? "scenario" : "overview"); }, [studio]);
+  const requestedView = context.get("view");
+  useEffect(() => { setTab(requestedView === "sales" ? "overview" : studio ? "scenario" : "overview"); }, [studio, requestedView]);
   function report(error: unknown) {
     if (error instanceof ApiFailure && error.status === 401) onSessionExpired();
     else setError(errorMessage(error));
@@ -52,17 +54,19 @@ export function AnalyticsWorkspace({ onSessionExpired, studio = false, selectedB
     void api("/api/businesses", businessesSchema, { signal: controller.signal }).then(({ businesses }) => {
       if (controller.signal.aborted) return;
       setBusinesses(businesses);
-      const selected = businesses.find((item) => item.id === context.get("business"))
-        ?? businesses.find((item) => item.id === requestedSelection.current.id) ?? businesses[0];
+      const selected = businessManaged && requestedSelection.current.id !== undefined
+        ? businesses.find((item) => item.id === requestedSelection.current.id)
+        : businesses.find((item) => item.id === context.get("business"))
+          ?? businesses.find((item) => item.id === requestedSelection.current.id) ?? businesses[0];
       setBusinessId(selected?.id ?? "");
       if (selected) requestedSelection.current.onSelected?.(selected.id);
-      if (!businesses.length) setLoading(false);
+      if (!selected) setLoading(false);
     }).catch((error: unknown) => { if (!controller.signal.aborted) { report(error); setLoading(false); } });
     return () => controller.abort();
   }, [reload, onSessionExpired]);
   useEffect(() => {
-    if (selectedBusinessId && businesses.some((item) => item.id === selectedBusinessId)) setBusinessId(selectedBusinessId);
-  }, [selectedBusinessId, businesses]);
+    if (selectedBusinessId !== undefined) setBusinessId(businesses.find((item) => item.id === selectedBusinessId)?.id ?? "");
+  }, [selectedBusinessId]);
   useEffect(() => {
     function followLink() {
       if (window.location.hash.split("?")[0] !== "#simulator") return;
@@ -93,9 +97,10 @@ export function AnalyticsWorkspace({ onSessionExpired, studio = false, selectedB
     const controller = new AbortController();
     void api(`/api/businesses/${businessId}/growth`, growthResponseSchema, { signal: controller.signal }).then((growth) => {
       if (controller.signal.aborted) return;
-      const action = growth.plan.find((item) => item.opportunity.id === actionId)?.opportunity
+      const selectedPlan = growth.plan.find((item) => item.opportunity.id === actionId);
+      const action = selectedPlan?.opportunity
         ?? growth.opportunities.find((item) => item.id === actionId);
-      if (action) setGrowthAction(action);
+      if (action) setGrowthAction({ ...action, planned: !!selectedPlan });
       else setGrowthError("This recommendation is no longer available. You can still explore your saved sales with your own assumptions.");
     }).catch((error: unknown) => { if (!controller.signal.aborted) {
       if (error instanceof ApiFailure && error.status === 401) onSessionExpired();
@@ -205,14 +210,14 @@ export function AnalyticsWorkspace({ onSessionExpired, studio = false, selectedB
     {error && <div role="alert" className="analytics-alert error">{error} <button type="button" onClick={() => { setError(""); setReload((value) => value + 1); }}>Reload workspace</button></div>}
     {notice && <p role="status" className="analytics-alert">{notice}</p>}
     {growthError && <p role="alert" className="analytics-alert">{growthError}</p>}
-    {growthAction && <div className="analytics-alert"><strong>Exploring: {growthAction.title}</strong><p>This saved recommendation is context, not a predicted uplift. Choose your own assumptions below; no action is executed.</p><a href={`#growth?business=${encodeURIComponent(businessId)}`}>Back to Growth Intelligence</a></div>}
+    {growthAction && <div className="analytics-alert"><strong>Exploring: {growthAction.title}</strong><p>This saved recommendation is context, not a predicted uplift. Choose your own assumptions below; no action is executed.</p><a href={`#${growthAction.planned ? "actions" : "growth"}?business=${encodeURIComponent(businessId)}&action=${growthAction.id}`}>Back to this growth action</a></div>}
     <div className="analytics-toolbar">
-      <label className="a-business"><Icon name="box" /><span className="sr-only">Analytics business</span><select aria-label="Analytics business" value={businessId} disabled={busy || loading} onChange={(event) => {
+      {!businessManaged && <label className="a-business"><Icon name="box" /><span className="sr-only">Analytics business</span><select aria-label="Analytics business" value={businessId} disabled={busy || loading} onChange={(event) => {
         const id = event.target.value;
         const next = new URLSearchParams({ business: id });
         window.history.replaceState(null, "", `#simulator?${next}`);
         setContext(next); setBusinessId(id); requestedSelection.current.onSelected?.(id);
-      }}>{!businesses.length && <option value="">No businesses yet</option>}{businesses.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      }}>{!businesses.length && <option value="">No businesses yet</option>}{businesses.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
       <div className="a-tabs" role="tablist" aria-label="Analytics views">{(["overview", "forecast", "scenario"] as const).map((value) => <button key={value} role="tab" aria-selected={tab === value} onClick={() => setTab(value)}>{value === "overview" ? "My sales" : value === "forecast" ? "Forecast" : "What if?"}</button>)}</div>
       <button className="a-button a-outline" disabled={busy || loading || !businessId} onClick={() => setPanel("manual")}><Icon name="plus" /> Owner entry</button>
     </div>

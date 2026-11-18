@@ -107,21 +107,27 @@ describe("workspace foundation", () => {
     });
     vi.stubGlobal("fetch", fetch); await renderApp();
     await act(async () => {
-      const select = container.querySelector<HTMLSelectElement>(".business-toolbar select")!;
+      const select = container.querySelector<HTMLSelectElement>('select[aria-label="Active business"]')!;
       select.value = businesses[1].id; select.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    for (const section of ["opportunities", "intelligence", "growth", "products", "simulator", "business", "overview"]) {
+    for (const section of ["opportunities", "intelligence", "growth", "actions", "products", "simulator", "website", "progress", "business", "overview"]) {
       await act(async () => {
         window.history.replaceState(null, "", `/#${section}`); window.dispatchEvent(new HashChangeEvent("hashchange"));
         await vi.dynamicImportSettled();
       });
-      expect(container.querySelector<HTMLSelectElement>('.business-toolbar select, select[aria-label="Analytics business"]')?.value).toBe(businesses[1].id);
+      expect(container.querySelector<HTMLSelectElement>('select[aria-label="Active business"]')?.value).toBe(businesses[1].id);
+      expect(container.querySelectorAll('select[aria-label="Active business"]')).toHaveLength(1);
       if (section === "business") expect(container.querySelector(".saved-profile-details")?.textContent).toContain("Second shop");
-      else if (section !== "products" && section !== "simulator") {
+      else if (section === "overview") {
+        expect(container.querySelector(".journey-next")?.textContent).toContain("Give what you sell a place");
+        expect(container.querySelector(".first-visit")).toBeNull();
+      } else if (["growth", "opportunities", "intelligence"].includes(section)) {
         expect(container.querySelector(".business-profile-settings")).toBeNull();
         expect(container.querySelector('.business-workspace a[href="#business"]')?.textContent)
           .toContain(section === "growth" || section === "opportunities" ? "Manage website analysis" : "Manage business profile");
       }
+      expect(container.querySelector('nav[aria-label="Main navigation"] a[href^="#products"]')?.getAttribute("href"))
+        .toBe(`#products?business=${businesses[1].id}`);
     }
     expect(fetch).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ method: "POST" }));
   });
@@ -136,13 +142,64 @@ describe("workspace foundation", () => {
     expect(fetch.mock.calls.every(([path]) => !path.includes("/analytics"))).toBe(true);
   });
 
-  it("removes Opportunities navigation and redirects its saved URL to Growth intelligence", async () => {
+  it("opens chosen steps rather than products from Act, and refreshes the journey after a status update", async () => {
+    const business = {
+      id: "02a221ee-41f1-46c9-bc96-12401d8dcf73", name: "Fixture shop", website: "", category: "", description: "",
+      createdAt: "2026-11-17T12:00:00.000Z", updatedAt: "2026-11-17T12:00:00.000Z",
+    };
+    const opportunity = {
+      id: "a".repeat(64), title: "Check sizing", detail: "Check the measurements.", agents: ["growth"], reviewReason: "Needs validation.",
+      sources: [{ id: "e_1111111111111111", url: "https://shop.example.com/", quote: "Five sizes are available.", capturedAt: business.createdAt }],
+      strategy: { objective: "Clarify sizing", actions: ["Check measurements."], metric: "Enquiries", hypothesis: "Check sizing.", measurement: "Choose a baseline." },
+    };
+    let plan: unknown[] = [];
+    window.history.replaceState(null, "", `/#growth?business=${business.id}`);
+    vi.stubGlobal("fetch", vi.fn(async (path: string, options?: RequestInit) => {
+      if (path === "/api/health") return json(health);
+      if (path === "/api/auth/me") return json({ user: { id: "509e12ce-3028-4ed1-bdf7-329a26d470d8", name: "Test Owner", email: "owner@example.test" } });
+      if (path === "/api/businesses") return json({ businesses: [business] });
+      if (path.endsWith("/products")) return json({ products: [] });
+      if (path.endsWith("/activity")) return json({ activities: [] });
+      if (path.endsWith("/evidence")) return json({ evidence: [] });
+      if (path.endsWith("/growth")) return json({ opportunities: [opportunity], plan, researchStatus: "partial", evidenceSavedAt: business.createdAt });
+      if (path.endsWith("/plan")) {
+        const item = { opportunity, impact: "unknown", effort: "unknown", timeToValue: "unknown", status: options?.method === "PATCH" ? "completed" : "planned",
+          revision: options?.method === "PATCH" ? 1 : 0, createdAt: business.createdAt, updatedAt: business.updatedAt };
+        plan = [item]; return json({ item }, options?.method === "POST" ? 201 : 200);
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    await renderApp();
+    expect(container.querySelector(".journey-stages")?.textContent).toContain("Ready to review");
+    await act(async () => [...container.querySelectorAll("button")].find((item) => item.textContent === "Add to my growth plan")!.click());
+    expect(container.querySelector(".journey-stages")?.textContent).toContain("Plan saved");
+    const actLink = container.querySelectorAll<HTMLAnchorElement>(".journey-stages a")[3];
+    expect(actLink.getAttribute("href")).toBe(`#actions?business=${business.id}`);
+    await act(async () => {
+      window.history.replaceState(null, "", actLink.getAttribute("href")!);
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    expect(container.querySelector("h1")?.textContent).toBe("My actions");
+    expect(container.querySelector(".action-workspace ol")?.textContent).toContain("Check measurements.");
+    expect(container.querySelector(".products-workspace")).toBeNull();
+    expect(container.querySelector('nav[aria-label="Main navigation"] a[href^="#products"]')?.textContent).toBe("Products");
+    expect(container.querySelector('.journey-stages a[aria-current="step"]')?.getAttribute("href")).toBe(`#actions?business=${business.id}`);
+    const details = container.querySelector<HTMLDetailsElement>(".growth-plan-item")!;
+    await act(async () => {
+      details.open = true; details.querySelector<HTMLSelectElement>('select[name="status"]')!.value = "completed";
+      details.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(container.querySelector(".journey-stages")?.textContent).toContain("Owner updates available");
+    expect(container.querySelector(".action-workspace")?.textContent).toContain("No open actions");
+  });
+
+  it("preserves the old Opportunities route as an alias for My growth plan", async () => {
     window.history.replaceState(null, "", "/#opportunities");
     const fetch = publicFetch(); vi.stubGlobal("fetch", fetch);
     await renderApp();
     expect(window.location.hash).toBe("#growth");
     expect(container.querySelector('nav[aria-label="Main navigation"] a[href="#opportunities"]')).toBeNull();
-    expect(container.querySelector('nav[aria-label="Main navigation"] a[aria-current="page"]')?.textContent).toBe("Growth intelligence");
+    expect(container.querySelector('nav[aria-label="Main navigation"] a[aria-current="page"]')?.textContent).toBe("My growth plan");
     expect(fetch).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ method: "POST" }));
   });
 
@@ -264,7 +321,9 @@ describe("workspace foundation", () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("Could not load saved businesses");
     expect(container.querySelector("form.profile-card")).toBeNull();
     failed = false;
-    await act(async () => container.querySelector<HTMLButtonElement>('[role="alert"] button')?.click());
+    await act(async () => {
+      container.querySelectorAll<HTMLButtonElement>('[role="alert"] button').forEach((button) => button.click());
+    });
     expect(container.querySelector('[role="alert"]')).toBeNull();
     expect(container.querySelector("form.profile-card")).not.toBeNull();
   });
@@ -324,6 +383,8 @@ describe("workspace foundation", () => {
       if (path === "/api/health") return json(health);
       if (path === "/api/auth/me") return json({ user: { id: "509e12ce-3028-4ed1-bdf7-329a26d470d8", name: "Test Owner", email: "owner@example.test" } });
       if (path === "/api/businesses") return json({ businesses: [business] });
+      if (path.endsWith("/products")) return json({ products: [] });
+      if (path.endsWith("/growth")) return json({ opportunities: [], plan: [], researchStatus: "unavailable", evidenceSavedAt: null });
       if (path.endsWith("/activity")) return json({ activities: [] });
       if (path.endsWith("/evidence")) return json({ evidence: [] });
       if (options?.method === "PUT") return json({ error: "Could not save your profile" }, 500);
@@ -349,7 +410,7 @@ describe("workspace foundation", () => {
     await act(async () => container.querySelector<HTMLButtonElement>('.profile-actions button[type="button"]')?.click());
     expect(container.querySelector('[role="alert"]')).toBeNull();
     expect(container.querySelector(".saved-profile-details")?.textContent).toContain(business.name);
-    await act(async () => container.querySelector<HTMLButtonElement>(".business-toolbar .secondary-button")?.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Add a business"]')?.click());
     expect(container.querySelector(".saved-profile")).toBeNull();
     expect(container.querySelector<HTMLInputElement>('[name="businessName"]')?.value).toBe("");
   });

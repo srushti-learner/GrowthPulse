@@ -11,6 +11,7 @@ import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { BlurFade } from "./components/ui/blur-fade";
 import { ProductVariants, readableAvailability, SourceReference } from "./SourceDetails";
+import { GrowthTaskContext } from "./GrowthTaskContext";
 
 function ProductThumbnail({ name, src }: { name: string; src?: string }) {
   const [failedSource, setFailedSource] = useState<string>();
@@ -21,8 +22,9 @@ function ProductThumbnail({ name, src }: { name: string; src?: string }) {
   </div>;
 }
 
-export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusinessSelected }: {
+export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusinessSelected, businessManaged = false }: {
   onSessionExpired: () => void; selectedBusinessId?: string; onBusinessSelected?: (id: string) => void;
+  businessManaged?: boolean;
 }) {
   const [context, setContext] = useState(() => new URLSearchParams(window.location.hash.split("?")[1] ?? ""));
   const [businesses, setBusinesses] = useState<Business[]>([]);
@@ -77,14 +79,21 @@ export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusi
     void api("/api/businesses", businessesSchema, { signal: controller.signal }).then(({ businesses }) => {
       if (controller.signal.aborted) return;
       setBusinesses(businesses);
-      const selected = businesses.find((item) => item.id === context.get("business"))
-        ?? businesses.find((item) => item.id === requestedSelection.current.id) ?? businesses[0];
+      const selected = businessManaged && requestedSelection.current.id !== undefined
+        ? businesses.find((item) => item.id === requestedSelection.current.id)
+        : businesses.find((item) => item.id === context.get("business"))
+          ?? businesses.find((item) => item.id === requestedSelection.current.id) ?? businesses[0];
       setBusinessId(selected?.id ?? "");
       if (selected) requestedSelection.current.onSelected?.(selected.id);
     }).catch((error: unknown) => { if (!controller.signal.aborted) report(error); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [onSessionExpired, reload]);
+  useEffect(() => {
+    if (selectedBusinessId !== undefined && selectedBusinessId !== businessId) {
+      setBusinessId(businesses.find((item) => item.id === selectedBusinessId)?.id ?? "");
+    }
+  }, [selectedBusinessId]);
   useEffect(() => {
     const controller = new AbortController();
     setProducts([]); setAnalyses([]); setScans([]); setDraft(null); setChoices({}); setScanId("");
@@ -208,7 +217,8 @@ export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusi
   }
   function openProduct(id: string) {
     setSelectedProductId(id);
-    const next = new URLSearchParams({ business: businessId, product: id });
+    const next = new URLSearchParams(context);
+    next.set("business", businessId); next.set("product", id); next.delete("import");
     window.history.replaceState(null, "", `#products?${next}`);
     setContext(next);
   }
@@ -216,13 +226,15 @@ export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusi
   return <section className="products-workspace">
     {error && <p role="alert" className="form-error">{error} <button type="button" className="text-button" disabled={busy} onClick={() => businesses.length ? setRevision((value) => value + 1) : setReload((value) => value + 1)}>Reload catalogue</button></p>}
     {notice && <p role="status" className="catalogue-notice">{notice}</p>}
-    <div className="business-toolbar"><label>Business<select value={businessId} disabled={disabled} onChange={(event) => {
+    {!businessManaged && <div className="business-toolbar"><label>Business<select value={businessId} disabled={disabled} onChange={(event) => {
       const id = event.target.value, next = new URLSearchParams({ business: id });
       window.history.replaceState(null, "", `#products?${next}`); setContext(next);
       setBusinessId(id); onBusinessSelected?.(id); setCsv("");
-    }}><option value="" disabled>Choose a business</option>{businesses.map((business) => <option key={business.id} value={business.id}>{business.name}</option>)}</select></label></div>
+    }}><option value="" disabled>Choose a business</option>{businesses.map((business) => <option key={business.id} value={business.id}>{business.name}</option>)}</select></label></div>}
     {!businessId ? <p>Create a <a href="#business" className="text-button">business profile</a> before adding products.</p> : <>
       {reading && <p className="loading-message">Loading catalogue and saved scans...</p>}
+      <GrowthTaskContext key={businessId} businessId={businessId}
+        actionId={context.get("business") === businessId ? context.get("action") : null} onSessionExpired={onSessionExpired} />
       {!selectedProduct && <BlurFade className="product-catalogue-intro"><p className="section-eyebrow">PRODUCT INTELLIGENCE</p>
         <h2>Make every listing clearer.</h2><p>Products found in saved website scans appear here automatically, with their own product workspace. Add anything the scan missed manually.</p>
         <dl className="product-catalogue-metrics" aria-label="Saved product overview" aria-busy={reading}>
@@ -327,7 +339,7 @@ export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusi
       </section>}
       {selectedProduct ? <ProductIntelligence key={`${businessId}:${selectedProduct.id}`} businessId={businessId} product={selectedProduct} products={products}
         thumbnail={<ProductThumbnail name={selectedProduct.name} src={productImage(selectedProduct)} />}
-        onBack={() => { setSelectedProductId(""); const next = new URLSearchParams({ business: businessId }); window.history.replaceState(null, "", `#products?${next}`); setContext(next); }}
+        onBack={() => { setSelectedProductId(""); const next = new URLSearchParams(context); next.delete("product"); next.set("business", businessId); window.history.replaceState(null, "", `#products?${next}`); setContext(next); }}
         onProductSaved={(product) => { setProducts((current) => current.map((item) => item.id === product.id ? product : item)); setAnalyses((current) => current.filter((item) => item.productId !== product.id)); }}
         onAnalysed={(analysis) => setAnalyses((current) => current.some((item) => item.productId === analysis.productId && item.fingerprint === analysis.fingerprint) ? current
           : [...current.filter((item) => item.productId !== analysis.productId), { productId: analysis.productId, fingerprint: analysis.fingerprint, createdAt: analysis.createdAt }])}

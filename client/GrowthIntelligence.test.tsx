@@ -35,7 +35,9 @@ describe("growth decision workspace", () => {
     container = document.createElement("div"); document.body.append(container); root = createRoot(container);
   });
   afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
-  async function render() { await act(async () => root.render(<GrowthIntelligence business={business} onSessionExpired={expired} />)); }
+  async function render(actionOnly = false, onPlanSaved?: () => void) {
+    await act(async () => root.render(<GrowthIntelligence business={business} onSessionExpired={expired} actionOnly={actionOnly} onPlanSaved={onPlanSaved} />));
+  }
   function button(text: string, scope: ParentNode = container) {
     return Array.from(scope.querySelectorAll<HTMLButtonElement>("button")).find((item) => item.textContent?.includes(text))!;
   }
@@ -59,6 +61,8 @@ describe("growth decision workspace", () => {
     expect(dialog.textContent).toContain("There is no automatic outcome tracking");
     expect(dialog.querySelector<HTMLAnchorElement>('a[href^="#simulator"]')?.getAttribute("href"))
       .toBe(`#simulator?business=${business.id}&action=${opportunity.id}`);
+    expect(dialog.querySelector<HTMLAnchorElement>('a[href^="#products"]')?.getAttribute("href"))
+      .toBe(`#products?business=${business.id}&action=${opportunity.id}`);
     const evidence = dialog.querySelector<HTMLDetailsElement>(".agent-sources")!;
     expect(evidence.open).toBe(false);
     await act(async () => evidence.querySelector("summary")!.click());
@@ -66,6 +70,21 @@ describe("growth decision workspace", () => {
     expect(evidence.textContent).toContain(opportunity.sources[0].quote);
     expect(fetch).toHaveBeenCalledOnce();
     expect(fetch.mock.calls[0][0]).toBe(`/api/businesses/${business.id}/growth`);
+  });
+
+  it("reopens the exact saved action from a journey handoff without changing its status", async () => {
+    const fetch = vi.fn(async () => json({ ...snapshot, plan: [planned] })); vi.stubGlobal("fetch", fetch);
+    await render();
+    const details = container.querySelector<HTMLDetailsElement>(".growth-plan-item")!;
+    expect(details.open).toBe(false);
+    await act(async () => {
+      window.history.replaceState(null, "", `/#growth?business=${business.id}&action=${opportunity.id}`);
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    expect(details.open).toBe(true);
+    expect(document.activeElement).toBe(details.querySelector("summary"));
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(details.querySelector<HTMLSelectElement>('select[name="status"]')?.value).toBe("planned");
   });
 
   it("saves a plan, assesses its priority and focuses its action from the map without changing the app route", async () => {
@@ -134,5 +153,69 @@ describe("growth decision workspace", () => {
     expect(container.querySelector(".growth-next-move h2")?.textContent).toBe("No pending growth actions.");
     expect(container.textContent).not.toContain("No accepted growth suggestions are available");
     expect(container.querySelector(".growth-summary")?.textContent).toContain("1/1");
+  });
+
+  it("uses Act for chosen actions and next steps, with catalogue tools optional and status edits revision guarded", async () => {
+    const saved = vi.fn();
+    const assessed = { ...planned, impact: "high", effort: "low", timeToValue: "weeks", revision: 3 } as const;
+    const fetch = vi.fn(async (_path: string, options?: RequestInit) => options?.method === "PATCH"
+      ? json({ item: { ...assessed, status: "in_progress", revision: 4 } }) : json({ ...snapshot, plan: [assessed] }));
+    vi.stubGlobal("fetch", fetch); await render(true, saved);
+    expect(container.querySelector(".growth-opportunities-heading")).toBeNull();
+    expect(container.querySelector(".growth-next-move")).toBeNull();
+    const action = container.querySelector<HTMLDetailsElement>(".growth-plan-item")!;
+    expect(action.open).toBe(true);
+    expect(action.querySelector("ol")?.textContent).toContain(opportunity.strategy.actions[0]);
+    expect(action.textContent).toContain("not work the agent has performed");
+    const tools = Array.from(action.querySelectorAll("details")).find((item) => item.querySelector("summary")?.textContent === "Optional tools for this action")!;
+    expect(tools.open).toBe(false);
+    expect(tools.querySelector("a")?.getAttribute("href")).toBe(`#products?business=${business.id}&action=${opportunity.id}`);
+    expect(fetch).toHaveBeenCalledOnce();
+    await act(async () => {
+      action.querySelector<HTMLSelectElement>('[name="status"]')!.value = "in_progress";
+      action.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(fetch.mock.calls.find(([, options]) => options?.method === "PATCH")?.[1]?.body)
+      .toBe(JSON.stringify({ status: "in_progress", impact: "high", effort: "low", timeToValue: "weeks", revision: 3 }));
+    expect(saved).toHaveBeenCalledOnce();
+    expect(container.querySelector('[role="status"]')?.textContent).toContain("action status is saved");
+    expect(container.querySelector(".growth-plan-item summary")?.textContent).toContain("In progress");
+  });
+
+  it("opens exact completed and dismissed actions from Review and filters them without inventing open work", async () => {
+    const dismissed = { ...planned, opportunity: { ...opportunity, id: "b".repeat(64), title: "Dismissed action" }, status: "dismissed" };
+    vi.stubGlobal("fetch", vi.fn(async () => json({ ...empty, plan: [{ ...planned, status: "completed" }, dismissed] })));
+    window.history.replaceState(null, "", `/#actions?business=${business.id}&action=${dismissed.opportunity.id}`);
+    await render(true);
+    expect(container.querySelectorAll(".growth-plan-item")).toHaveLength(1);
+    expect(container.querySelector(".growth-plan-item")?.id).toBe(`growth-action-${dismissed.opportunity.id}`);
+    expect(container.querySelector<HTMLDetailsElement>(".growth-plan-item")?.open).toBe(true);
+    await click("To do & in progress");
+    expect(container.textContent).toContain("No open actions");
+    expect(container.querySelector(".growth-plan-item")).toBeNull();
+    await act(async () => {
+      window.history.replaceState(null, "", `/#actions?business=${business.id}&action=${opportunity.id}`);
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    expect(container.querySelector(".growth-plan-item summary")?.textContent).toContain("Marked complete by you");
+    expect(document.activeElement).toBe(container.querySelector(".growth-plan-item summary"));
+  });
+
+  it("keeps Act empty until an action is chosen, and reports missing or conflicting actions explicitly", async () => {
+    const fetch = vi.fn(async (_path: string, options?: RequestInit) => options?.method === "PATCH"
+      ? json({ error: "Reload before updating this action." }, 409) : json(snapshot));
+    vi.stubGlobal("fetch", fetch);
+    window.history.replaceState(null, "", `/#actions?business=${business.id}&action=${opportunity.id}`);
+    await render(true);
+    expect(container.textContent).toContain("No chosen actions yet");
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("not in this business's saved plan");
+    expect(container.querySelector(".growth-plan-item")).toBeNull();
+    expect(container.querySelector('a[href^="#products"]')).toBeNull();
+    fetch.mockResolvedValueOnce(json({ ...snapshot, plan: [planned] }));
+    await click("Reload saved actions");
+    await act(async () => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Reload before updating");
+    expect(container.querySelector(".growth-plan-item summary")?.textContent).toContain("Planned");
+    expect(container.querySelector('[role="status"]')).toBeNull();
   });
 });

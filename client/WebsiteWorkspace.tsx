@@ -5,7 +5,10 @@ import { api, ApiFailure, errorMessage } from "./api";
 import { Icon } from "./Icon";
 
 const statusLabels = { complete: "Scan complete", partial: "Partial scan", failed: "Scan failed" } as const;
-export function WebsiteWorkspace({ authenticated, onSessionExpired }: { authenticated: boolean; onSessionExpired: () => void }) {
+export function WebsiteWorkspace({ authenticated, onSessionExpired, selectedBusinessId, onBusinessSelected, businessManaged = false }: {
+  authenticated: boolean; onSessionExpired: () => void; selectedBusinessId?: string;
+  onBusinessSelected?: (id: string) => void; businessManaged?: boolean;
+}) {
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [businessId, setBusinessId] = useState("");
   const [url, setUrl] = useState("");
@@ -40,8 +43,9 @@ export function WebsiteWorkspace({ authenticated, onSessionExpired }: { authenti
     void api("/api/businesses", businessesSchema, { signal: controller.signal }).then(({ businesses }) => {
       if (controller.signal.aborted) return;
       setBusinesses(businesses);
-      setBusinessId(businesses[0]?.id ?? "");
-      setUrl(businesses[0]?.website ?? "");
+      const selected = selectedBusinessId !== undefined ? businesses.find((item) => item.id === selectedBusinessId) : businesses[0];
+      setBusinessId(selected?.id ?? "");
+      setUrl(selected?.website ?? "");
     }).catch((error: unknown) => { if (!controller.signal.aborted) report(error, setLoadError); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
@@ -114,13 +118,19 @@ export function WebsiteWorkspace({ authenticated, onSessionExpired }: { authenti
         <div className="card-heading"><p className="section-eyebrow">WEBSITE SCAN</p><h2>Start with a public page.</h2><p>Read up to {scanLimits.pages} public business and product pages without changing your website.</p></div>
         <fieldset disabled={disabled}>
           <legend className="sr-only">Website scan</legend>
-          {authenticated && <label>Save results to<select name="scanBusiness" value={businessId} onChange={(event) => {
+          {authenticated && !businessManaged && <label>Save results to<select name="scanBusiness" value={businessId} onChange={(event) => {
             setBusinessId(event.target.value);
+            onBusinessSelected?.(event.target.value);
             setScanId("");
             setResult(null);
             setUrl(businesses.find((business) => business.id === event.target.value)?.website ?? "");
             setPermission(false);
           }}><option value="">Preview only (not saved)</option>{businesses.map((business) => <option key={business.id} value={business.id}>{business.name}</option>)}</select></label>}
+          {authenticated && businessManaged && <p className="field-note">{businessId ? `Saving evidence to ${businesses.find((item) => item.id === businessId)?.name}. Change the active business above to switch.` : "Preview only: choose an active business above to save evidence."}</p>}
+          {authenticated && businessManaged && <label className="permission-check"><input type="checkbox" checked={!businessId} onChange={(event) => {
+            setBusinessId(event.target.checked ? "" : businesses.find((item) => item.id === selectedBusinessId)?.id ?? "");
+            setScanId(""); setResult(null); setPermission(false);
+          }} />Preview without saving to this business</label>}
           <label>Public website URL<input type="url" name="scanUrl" required maxLength={2048} value={url} placeholder="https://your-public-website.com" onChange={(event) => { setUrl(event.target.value); setPermission(false); }} /><span className="field-note">HTTP(S) only. No login, custom ports, signed links, or query parameters.</span></label>
           <label className="permission-check"><input type="checkbox" name="scanPermission" required checked={permission} onChange={(event) => setPermission(event.target.checked)} /><span>I own this website or have permission to scan its public pages.</span></label>
           <p className="field-note">{businessId ? "This run and its evidence will be saved to the selected business. Valid, unambiguous website products are added to your catalogue automatically. Your profile and manual product edits will not be overwritten." : "Preview only: this result will not be saved to a business."}</p>

@@ -80,7 +80,7 @@ export function MarketIntelligence({ report, businessName, renderComparison }: {
       {area !== "overview" && <Button variant="ghost" onClick={() => navigate("overview")}><ArrowLeft />Market overview</Button>}
       <p className="section-eyebrow">UNDERSTAND THE MARKET</p>
       <h3 ref={heading} tabIndex={-1}>{selected?.label ?? "Your market, without the noise."}</h3>
-      <p>{selected?.description ?? "Outside evidence here. Decisions and action plans in Growth intelligence."}</p>
+      <p>{selected?.description ?? "Outside evidence here. Decisions and action plans in My growth plan."}</p>
     </div><Badge variant="outline">{report.status === "running" ? "Research in progress" : !report.enabled ? "No market research saved" : report.status === "partial" ? "Partial research saved" : "Research saved"}</Badge></div>
     {area === "overview" ? <BlurFade duration={0.25} blur="2px">
       <Card className="market-summary"><CardHeader><CardDescription><Globe2 />WHAT THE SAVED SAMPLE SHOWS</CardDescription>

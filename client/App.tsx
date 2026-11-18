@@ -9,6 +9,7 @@ import { BusinessWorkspace } from "./BusinessWorkspace";
 import { WebsiteWorkspace } from "./WebsiteWorkspace";
 import { ProductsWorkspace } from "./ProductsWorkspace";
 import { FirstVisit } from "./FirstVisit";
+import { GrowthJourney } from "./GrowthJourney";
 const AnalyticsWorkspace = lazy(() => import("./AnalyticsWorkspace").then((module) => ({ default: module.AnalyticsWorkspace })));
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarInset,
@@ -16,14 +17,16 @@ import {
 } from "./components/ui/sidebar";
 
 const sections = [
-  { id: "overview", label: "Overview", icon: "overview", description: "Your business, with a clearer direction." },
-  { id: "business", label: "Business Profile", icon: "box", description: "Meet your business agent. Review the evidence. Make it yours." },
+  { id: "overview", label: "My growth journey", icon: "overview", description: "Your business, your progress, and one useful next step." },
+  { id: "business", label: "My business", icon: "box", description: "Start with what you know. Review what your agent discovers." },
   { id: "website", label: "Website", icon: "globe", description: "Understand your website's customer experience.", checkpoint: 4 },
-  { id: "products", label: "Products", icon: "box", description: "Understand your products. Make every listing clearer.", checkpoint: 5 },
+  { id: "products", label: "Products", icon: "box", description: "Your working catalogue. Review a product, improve its details, and keep the evidence in view.", checkpoint: 5 },
   { id: "whatsapp", label: "WhatsApp Insights", icon: "chat", description: "Discover what your customers are asking.", checkpoint: 7 },
-  { id: "growth", label: "Growth intelligence", icon: "spark", description: "Turn specialist research into your next growth decision." },
+  { id: "growth", label: "My growth plan", icon: "spark", description: "Turn saved evidence into a decision. Choose your next move, then work on your plan." },
+  { id: "actions", label: "My actions", icon: "sliders", description: "Work through your chosen actions, review the next steps, and record your progress." },
   { id: "intelligence", label: "Market intelligence", icon: "chart", description: "Explore the evidence behind your next move." },
   { id: "simulator", label: "Growth Simulator", icon: "chart", description: "Your sales history. Your assumptions. A separate what-if, for every sales channel." },
+  { id: "progress", label: "My progress", icon: "check", description: "Review your saved actions. Separate work completed from results measured." },
   { id: "improvements", label: "Improvements", icon: "sliders", description: "Review changes before anything is applied.", checkpoint: 10 },
   { id: "activity", label: "Activity History", icon: "history", description: "See what changed and why.", checkpoint: 2 },
 ] as const;
@@ -31,22 +34,22 @@ const sections = [
 type Connection = { state: "checking" } | { state: "connected" } | { state: "error"; message: string };
 type Session = { state: "loading" } | { state: "anonymous" } | { state: "authenticated"; user: User } | { state: "error"; message: string };
 
-function WorkspaceNavigation({ active }: { active: typeof sections[number]["id"] }) {
+function WorkspaceNavigation({ active, businessId }: { active: typeof sections[number]["id"]; businessId?: string }) {
   const { setOpenMobile } = useSidebar();
   const planned = new Set(["whatsapp", "improvements"]);
   function links(ids: string[]) {
     return <SidebarMenu>{ids.map((id) => {
       const section = sections.find((item) => item.id === id)!;
       return <SidebarMenuItem key={id}><SidebarMenuButton asChild isActive={active === id}>
-        <a href={`#${id}`} aria-current={active === id ? "page" : undefined} onClick={() => setOpenMobile(false)}>
+        <a href={`#${id}${businessId ? `?business=${encodeURIComponent(businessId)}` : ""}`} aria-current={active === id ? "page" : undefined} onClick={() => setOpenMobile(false)}>
           <Icon name={section.icon} /><span>{section.label}</span>
         </a>
       </SidebarMenuButton></SidebarMenuItem>;
     })}</SidebarMenu>;
   }
   return <nav className="dashboard-navigation" aria-label="Main navigation">
-    <p className="nav-caption">DISCOVER</p>{links(["overview", "growth", "intelligence", "simulator"])}
-    <p className="nav-caption">MANAGE</p>{links(["business", "products", "website", "activity"])}
+    <p className="nav-caption">YOUR GROWTH JOURNEY</p>{links(["overview", "business", "intelligence", "growth", "actions", "progress"])}
+    <p className="nav-caption">EVIDENCE & TOOLS</p>{links(["products", "website", "simulator", "activity"])}
     <details className="planned-navigation" open={planned.has(active)}><summary>Planned tools</summary>{links(["whatsapp", "improvements"])}</details>
   </nav>;
 }
@@ -67,7 +70,14 @@ export function App() {
   const [startBriefing, setStartBriefing] = useState(false);
   const [onboardingJourney, setOnboardingJourney] = useState(false);
   const [useSavedOverview, setUseSavedOverview] = useState(false);
-  const [selectedBusinessId, setSelectedBusinessId] = useState<string>();
+  const [journeyRevision, setJourneyRevision] = useState(0);
+  const onPlanSaved = useCallback(() => setJourneyRevision((value) => value + 1), []);
+  const [selectedBusinessId, setSelectedBusinessId] = useState<string | undefined>(() => {
+    const query = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
+    return query.get("new") === "1" ? "" : query.get("business") ?? undefined;
+  });
+  const showJourney = session.state === "authenticated"
+    && (activeSection.id !== "overview" || (!onboardingJourney && useSavedOverview));
   const onSessionExpired = useCallback(() => {
     setSession({ state: "anonymous" }); setOnboardingJourney(false); setStartBriefing(false); setSelectedBusinessId(undefined); setUseSavedOverview(false);
   }, []);
@@ -103,6 +113,9 @@ export function App() {
       }
       const section = sections.find((item) => item.id === window.location.hash.slice(1).split("?")[0]);
       if (section) {
+        const query = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
+        if (query.get("new") === "1") setSelectedBusinessId("");
+        else if (query.has("business")) setSelectedBusinessId(query.get("business") ?? "");
         setActiveSection(section);
         if (section.id !== "overview") { setOnboardingJourney(false); setStartBriefing(false); }
       }
@@ -157,7 +170,7 @@ export function App() {
         </a>
         <div className="workspace-identity"><span className="workspace-avatar">{session.state === "authenticated" ? session.user.name.slice(0, 1).toUpperCase() : "G"}</span><span>{session.state === "authenticated" ? session.user.name : "My workspace"}<small>Business workspace</small></span></div>
         </SidebarHeader>
-        <SidebarContent><WorkspaceNavigation active={activeSection.id} /></SidebarContent>
+        <SidebarContent><WorkspaceNavigation active={activeSection.id} businessId={selectedBusinessId} /></SidebarContent>
         <SidebarFooter>
         <div className="session-actions">{session.state === "authenticated"
           ? <button className="secondary-button" type="button" disabled={logoutPending} onClick={() => void logout()}>{logoutPending ? "Logging out..." : "Log out"}</button>
@@ -179,17 +192,18 @@ export function App() {
           <div className="page-heading">
             <div>
               <p className="section-eyebrow">LESS NOISE. MORE DIRECTION.</p>
-              <h1>{activeSection.id === "overview" ? session.state === "authenticated" && !onboardingJourney ? "Your next move starts here." : <>Big picture.<br /><span>Better next move.</span></> : activeSection.label}</h1>
+              <h1>{activeSection.id === "overview" ? session.state === "authenticated" && !onboardingJourney ? "Your business. Your next chapter." : <>Big picture.<br /><span>Better next move.</span></> : activeSection.label}</h1>
               <p className="page-description">{activeSection.id === "overview" ? "One place to understand your business. And what to do next." : activeSection.description}</p>
             </div>
           </div>
+          {showJourney && <GrowthJourney section={activeSection.id} selectedBusinessId={selectedBusinessId}
+            onBusinessSelected={setSelectedBusinessId} onSessionExpired={onSessionExpired} revision={journeyRevision} />}
           {activeSection.id === "overview" ? (
             <>
               {session.state === "loading" ? <p className="loading-message">Checking your session...</p>
                 : session.state === "error" ? <p role="alert" className="form-error">{session.message} <button className="text-button" onClick={() => setSessionAttempt((value) => value + 1)}>Retry session</button></p>
                   : session.state === "authenticated" && !onboardingJourney && useSavedOverview
-                    ? <BusinessWorkspace key={session.user.id} activityOnly={false} researchOnly onSessionExpired={onSessionExpired}
-                      selectedBusinessId={selectedBusinessId} onBusinessSelected={setSelectedBusinessId} />
+                    ? null
                     : <FirstVisit key={session.state === "authenticated" ? session.user.id : "public"}
                     authenticated={session.state === "authenticated"} startBriefing={startBriefing}
                     onNoPreview={() => setUseSavedOverview(true)}
@@ -200,24 +214,28 @@ export function App() {
           ) : activeSection.id === "website" ? (
             session.state === "loading" ? <p className="loading-message">Checking your session...</p>
               : session.state === "error" ? <p role="alert" className="form-error">{session.message} <button className="text-button" onClick={() => setSessionAttempt((value) => value + 1)}>Retry session</button></p>
-                : <WebsiteWorkspace key={session.state === "authenticated" ? session.user.id : "public"} authenticated={session.state === "authenticated"} onSessionExpired={onSessionExpired} />
-          ) : activeSection.id === "business" || activeSection.id === "activity" || activeSection.id === "products" || activeSection.id === "intelligence" || activeSection.id === "growth" || activeSection.id === "simulator" ? (
+                : <WebsiteWorkspace key={`${session.state === "authenticated" ? session.user.id : "public"}:${selectedBusinessId ?? ""}`}
+                  authenticated={session.state === "authenticated"} onSessionExpired={onSessionExpired}
+                  selectedBusinessId={selectedBusinessId} onBusinessSelected={setSelectedBusinessId} businessManaged={showJourney} />
+          ) : activeSection.id === "business" || activeSection.id === "activity" || activeSection.id === "products" || activeSection.id === "intelligence" || activeSection.id === "growth" || activeSection.id === "actions" || activeSection.id === "simulator" || activeSection.id === "progress" ? (
             session.state === "loading" ? <p className="loading-message">Checking your session...</p>
               : session.state === "error" ? <p role="alert" className="form-error">{session.message} <button className="text-button" onClick={() => setSessionAttempt((value) => value + 1)}>Retry session</button></p>
                 : session.state === "anonymous" ? <AuthForm onAuthenticated={(user) => setSession({ state: "authenticated", user })} />
+                  : activeSection.id === "progress" ? null
                   : activeSection.id === "simulator" ? <Suspense fallback={<p role="status">Loading your simulator...</p>}>
                     <AnalyticsWorkspace key={session.user.id} studio onSessionExpired={onSessionExpired}
-                      selectedBusinessId={selectedBusinessId} onBusinessSelected={setSelectedBusinessId} />
+                      selectedBusinessId={selectedBusinessId} onBusinessSelected={setSelectedBusinessId} businessManaged />
                   </Suspense>
                   : activeSection.id === "products" ? <ProductsWorkspace key={session.user.id} onSessionExpired={onSessionExpired}
-                    selectedBusinessId={selectedBusinessId} onBusinessSelected={setSelectedBusinessId} />
+                    selectedBusinessId={selectedBusinessId} onBusinessSelected={setSelectedBusinessId} businessManaged />
                     : <BusinessWorkspace key={session.user.id} activityOnly={activeSection.id === "activity"}
                       profileOnly={activeSection.id === "business"}
-                      growthOnly={activeSection.id === "growth"}
+                      growthOnly={activeSection.id === "growth" || activeSection.id === "actions"}
+                      actionOnly={activeSection.id === "actions"}
                       researchOnly={activeSection.id === "intelligence" || activeSection.id === "growth"}
                       researchView={activeSection.id === "intelligence" ? "intelligence" : "overview"}
                       selectedBusinessId={selectedBusinessId} onBusinessSelected={setSelectedBusinessId}
-                      onSessionExpired={onSessionExpired} />
+                      onSessionExpired={onSessionExpired} businessManaged onPlanSaved={onPlanSaved} />
           ) : (
             <section className="empty-state" aria-labelledby="upcoming-heading">
               <span className="empty-symbol"><Icon name={activeSection.icon} /></span>

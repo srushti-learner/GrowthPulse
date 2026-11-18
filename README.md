@@ -26,9 +26,28 @@ one need the compiler prerequisites reported by its installer.
 
 ## Dashboard experience
 
-Returning owners open saved research at **At a glance**: one supported finding
-and one suggested next move. Recommendations and plans live together in
-**Growth intelligence**; the former `#opportunities` URL redirects there.
+Returning owners open **My growth journey**: a saved-data dashboard with their
+active business, catalogue and plan counts, and a contextual next step. A
+persistent five-stage navigator connects **Understand → Discover → Decide →
+Act → Review** without restricting direct access to any workspace. Its labels
+describe saved records, partial research and owner-reported work, not a growth
+score or an assertion that the entire journey is complete.
+
+The shared **Active business** selector follows the owner across My business,
+Market intelligence, My growth plan, My actions, Products, Website evidence and sales tools.
+Sidebar and journey links retain the business ID; changing businesses clears
+product/import/action context rather than attaching it to another business.
+An empty account starts with a profile, and a website-less business can add
+products manually. Existing public website-first onboarding remains available.
+
+Recommendations and plans live together in **My growth plan**; the former
+`#opportunities` URL still redirects to `#growth`.
+**Act → My actions** (`#actions`) is a separate execution workspace for the
+owner's saved plan: suggested next steps, original evidence, and revision-checked
+status updates. Active, completed and dismissed actions remain reviewable.
+Products is a separate tool, not the Act destination. Catalogue and simulator
+links are optional within each action; they never infer a product match or
+perform the work. Completion is owner-reported, not measured uplift.
 **Market intelligence** answers what is happening outside the business, not what
 action to take. Its overview shows one accepted external observation and compact
 routes to Competitors, Customer voice, Market trends, Pricing, Product landscape
@@ -43,17 +62,16 @@ Full explanations and original evidence open on demand. The Store briefing and
 original specialist outputs remain under **At a glance → Store briefing and saved
 specialist details**, not on the Market landing page. The active business is
 retained across these views.
-**Business Profile** opens profile management rather than duplicating the dashboard;
+**My business** opens profile management rather than duplicating the dashboard;
 an approved website-profile save still starts the agent.
 Research views omit the extra profile, product-review, rerun and technical footer
-sections. Use **Business Profile → Manage website analysis** for an optional new
+sections. Use **My business → Manage website analysis** for an optional new
 analysis or profile suggestions; opening these controls does not start a paid run.
 Connection failures and analysis errors remain visible, with explicit recovery.
-**Products** retains the active business and opens its latest saved website
-discoveries automatically if they have not been imported. Names, available images and prices appear for review
-without another scan or AI call. They are separate from the confirmed catalogue;
-only **Confirm import** saves them. Manual entry and CSV remain under
-**Add or import products**.
+**Products** retains the active business. Valid, unambiguous website discoveries
+are saved to the catalogue with the scan, without a separate import confirmation.
+**Add a product manually** stays visible; CSV and optional saved-scan repair
+remain under **Manual entry and optional bulk tools**.
 Browsing does not start another analysis or change the profile. Products also
 upgrades legacy website discoveries from their saved scan into the catalogue.
 The confirmed catalogue now opens a **product intelligence workspace**: search
@@ -67,7 +85,7 @@ controls and reloading saved status do not authorize a new paid request. Website
 scan ownership checks, local listing-change approvals and data-import safeguards
 remain separate.
 
-**Growth intelligence** is a separate decision layer across saved Store,
+**My growth plan** is a separate decision layer across saved Store,
 Competitor, Customer, Pricing, Product Opportunities and Growth Strategy findings.
 It brings together accepted, cited suggestions, a first recommendation to review,
 on-demand strategy/evidence drawers and a persistent business-specific action plan.
@@ -81,6 +99,18 @@ Strategies contain the saved AI recommendation plus a clearly labeled planning
 scaffold, a suggested metric and an experiment proposal to refine before acting.
 No new model/research call occurs when opening this tab, adding an action or
 saving an assessment. Completed status is owner-reported work, not measured uplift.
+Strategy drawers and saved plan actions can open Products with the selected
+recommendation and its source evidence. The owner chooses the relevant product;
+the app does not guess product associations. That action context survives
+opening a product and returning to the catalogue, and a return link reopens the
+exact saved plan action. Non-product recommendations can still be managed as
+plan actions; no content/campaign execution capability is implied.
+
+**My progress** (`#progress`) reviews saved action statuses and their update
+dates. Sales-record links open the existing sales view, while Growth Simulator
+remains a separate what-if tool. Neither a completed task nor a simulation is
+presented as measured uplift or campaign attribution. The redesign adds no
+schema migration, provider calls, integration requirement or hosting change.
 The existing LangGraph research workflow and durable SQL checkpointer still run inside
 the analysis worker; the saved-result Market and Growth views do not replace them.
 Live analytics connectors, experiment execution and automatic recommendation-outcome

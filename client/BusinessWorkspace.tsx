@@ -15,12 +15,15 @@ const empty: BusinessInput = { name: "", category: "", description: "", website:
 function editable(business: Business): BusinessInput {
   return { name: business.name, category: business.category, description: business.description, website: business.website };
 }
-export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView = "overview", selectedBusinessId, onBusinessSelected, profileOnly = false, researchOnly = false, growthOnly = false }: {
+export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView = "overview", selectedBusinessId, onBusinessSelected, profileOnly = false, researchOnly = false, growthOnly = false, actionOnly = false, businessManaged = false, onPlanSaved }: {
   activityOnly: boolean; onSessionExpired: () => void; researchView?: ResearchView;
   selectedBusinessId?: string; onBusinessSelected?: (id: string) => void;
   profileOnly?: boolean;
   researchOnly?: boolean;
   growthOnly?: boolean;
+  actionOnly?: boolean;
+  businessManaged?: boolean;
+  onPlanSaved?: () => void;
 }) {
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -57,7 +60,8 @@ export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView
     void api("/api/businesses", businessesSchema, { signal: controller.signal }).then(({ businesses }) => {
       if (controller.signal.aborted) return;
       setBusinesses(businesses);
-      const selected = businesses.find((business) => business.id === requestedSelection.current) ?? businesses[0];
+      const selected = requestedSelection.current !== undefined
+        ? businesses.find((business) => business.id === requestedSelection.current) : businesses[0];
       setSelectedId(selected?.id ?? "");
       setForm(selected ? editable(selected) : empty);
       setEditing(false);
@@ -70,6 +74,13 @@ export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [reload, onSessionExpired]);
+
+  useEffect(() => {
+    if (selectedBusinessId === undefined || selectedBusinessId === selectedId) return;
+    const selected = businesses.find((item) => item.id === selectedBusinessId);
+    setSelectedId(selected?.id ?? ""); setForm(selected ? editable(selected) : empty);
+    setEditing(false); setAutoStartId(""); setAnalysisOpen(false); setNotice(""); setError("");
+  }, [selectedBusinessId, businesses]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -110,7 +121,7 @@ export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView
       setForm(editable(business));
       setEditing(false);
       setAutoStartId(business.website ? business.id : "");
-      setNotice("Your changes are saved locally. You can edit your profile anytime.");
+      setNotice("Your business profile is saved. You can edit it anytime.");
       setRevision((value) => value + 1);
     } catch (error) {
       if (error instanceof ApiFailure && error.status === 401) onSessionExpired();
@@ -134,12 +145,12 @@ export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView
   return (
     <section className="business-workspace">
       {error && <div className="form-error" role="alert">{error}</div>}
-      <div className="business-toolbar">
+      {!businessManaged && <div className="business-toolbar">
         <label>Business<select value={selectedId} disabled={saving} onChange={(event) => select(event.target.value)}><option value="">{growthOnly ? "Choose a business" : "New business"}</option>{businesses.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
         {!growthOnly && !activityOnly && <button className="secondary-button new-business-button" type="button" aria-label="New business" disabled={saving} onClick={() => select("")}><Icon name="plus" /><span>New business</span></button>}
-      </div>
+      </div>}
       {growthOnly && !selectedBusiness && <section className="profile-card"><h2>Choose a business to build its growth plan.</h2><a className="text-button" href="#business">Manage business profiles</a></section>}
-      {growthOnly && selectedBusiness && <GrowthIntelligence key={selectedBusiness.id} business={selectedBusiness} onSessionExpired={onSessionExpired} />}
+      {growthOnly && selectedBusiness && <GrowthIntelligence key={selectedBusiness.id} business={selectedBusiness} onSessionExpired={onSessionExpired} onPlanSaved={onPlanSaved} actionOnly={actionOnly} />}
       <MarketplaceResearchProvider businessId={researchOnly && researchView === "intelligence" ? selectedBusiness?.id ?? "" : ""} onSessionExpired={onSessionExpired}>
       {researchOnly && researchView === "intelligence" && selectedBusiness && <MarketplaceInsights key={`marketplace:${selectedBusiness.id}`} businessId={selectedBusiness.id} />}
       {!growthOnly && !activityOnly && selectedBusiness?.website && (researchOnly || !editing) && (!profileOnly || analysisVisible) && <BusinessAgentReview key={selectedBusiness.id} business={selectedBusiness} autoStart={autoStartId === selectedBusiness.id}
@@ -159,6 +170,11 @@ export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView
         {researchView === "intelligence" && <MarketplaceCustomerVoice />}
       </section>}
       </MarketplaceResearchProvider>
+      {researchOnly && !growthOnly && researchView === "intelligence" && selectedBusiness && <section className="journey-task">
+        <p className="section-eyebrow">FROM DISCOVERY TO A DECISION</p><h2>What is worth acting on?</h2>
+        <p>Your growth plan brings together supported suggestions from saved research. Review the evidence and its gaps before choosing an action. Opening your plan does not run another analysis.</p>
+        <a className="primary-link" href={`#growth?business=${selectedBusiness.id}`}>Next: choose my growth move<Icon name="arrow" /></a>
+      </section>}
       {!growthOnly && !activityOnly && (!researchOnly || !selectedBusiness) && (
         <details className="business-profile-settings" open={profileOnly || !selectedBusiness?.website || editing || !!notice}>
           <summary>Business profile and settings</summary><div className="business-columns">
@@ -179,6 +195,10 @@ export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView
               {profileOnly && selectedBusiness.website && <button className="secondary-button" type="button" aria-expanded={analysisVisible} onClick={() => { setAutoStartId(""); setAnalysisOpen(!analysisVisible); }}>
                 {analysisVisible ? "Hide website analysis" : "Manage website analysis"}
               </button>}
+              {profileOnly && <div className="journey-actions">
+                <a className="primary-link" href={`#intelligence?business=${selectedBusiness.id}`}>Next: understand my market<Icon name="arrow" /></a>
+                <a className="text-button" href={`#products?business=${selectedBusiness.id}`}>Review what I sell<Icon name="arrow" /></a>
+              </div>}
             </section>
           ) : <form className="workspace-form profile-card" onSubmit={(event) => void save(event)}>
             <div className="card-heading"><p className="section-eyebrow">LET'S GET TO KNOW YOUR BUSINESS</p><h2>{selectedId ? "Your business, in your words." : "A name. A website. We'll take it from here."}</h2><p>{selectedId ? "Review your changes before saving. Nothing is applied to your website." : "Save your profile and let your agent prepare a business review. No website? You can still add information and products yourself."}</p></div>
@@ -200,7 +220,7 @@ export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView
               </div>
             </fieldset>
           </form>}
-          <aside className="ownership-card"><Icon name="shield" /><h2>Yours to manage.</h2><p>Only your signed-in account can manage this profile.</p><p className="field-note">Saved on this computer, not synced to hosting.</p></aside>
+          <aside className="ownership-card"><Icon name="shield" /><h2>The start of your story.</h2><p>This profile gives your workspaces a shared business context. Review suggestions before saving them, then explore your market or work on your products.</p><p className="field-note">Only your signed-in account can manage this profile. A website is optional.</p></aside>
         </div></details>
       )}
       {activityOnly && !selectedId && <div className="profile-card"><h2>Select a saved business to see its history.</h2><a href="#business" className="text-button">Create a business profile <Icon name="arrow" /></a></div>}

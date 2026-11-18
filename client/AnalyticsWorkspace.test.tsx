@@ -55,6 +55,15 @@ describe("analytics owner workflows", () => {
     expect(container.querySelector(".a-kpi-grid")).toBeNull();
     expect(container.textContent).toContain("No website or AI key needed");
   });
+  it("opens real sales rather than projections when returning from progress review", async () => {
+    window.history.replaceState(null, "", `/#simulator?business=${id}&view=sales`);
+    const fetch = fetcher(loaded);
+    await act(async () => root.render(<AnalyticsWorkspace studio businessManaged selectedBusinessId={id} onSessionExpired={expired} />));
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("My sales");
+    expect(container.querySelector(".a-kpi-grid")).not.toBeNull();
+    expect(container.querySelector('select[aria-label="Analytics business"]')).toBeNull();
+    expect(fetch.mock.calls.some(([, options]) => options?.method)).toBe(false);
+  });
   it("previews raw CSV, requires rejected-row acknowledgement and confirms before replacing history", async () => {
     const fetch = fetcher(empty, (path) => path.includes("/commit") ? json({ analytics: loaded }) : json({ draft }, 201));
     await render(); await click("Import sales");
@@ -178,6 +187,7 @@ describe("analytics owner workflows", () => {
     });
     vi.stubGlobal("fetch", fetch); await render();
     expect(container.textContent).toContain(`Exploring: ${opportunity.title}`);
+    expect(container.querySelector('.analytics-alert a[href^="#actions"]')?.getAttribute("href")).toBe(`#actions?business=${id}&action=${opportunity.id}`);
     expect(container.querySelector<HTMLInputElement>('.a-field input[maxlength="80"]')?.value).toBe(opportunity.title);
     for (const label of ["Order volume", "Average order value", "Unit cost of goods"]) {
       expect(container.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)?.value).toBe("0");

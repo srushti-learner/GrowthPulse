@@ -23,6 +23,26 @@ The local research foundation now adds LangGraph orchestration and hosted,
 search-only Tavily MCP. This does not mark the remaining feature checkpoints
 complete.
 
+### Connected owner journey
+
+The existing React/Express workspaces now form a five-stage saved-data journey:
+Understand the business, Discover the market, Decide on an action, Act on the
+plan, and Review progress. Returning owners start at a journey dashboard, with
+one shared business selector and contextual next-step links. Public onboarding,
+website-less profiles, manual products and direct tool navigation remain.
+
+Act opens **My actions**, not the product catalogue. Chosen plan actions expose
+saved suggested steps and evidence, with revision-checked owner status updates
+and filters for active, completed and dismissed work. Decide keeps opportunity
+selection and priority assessment. Products remains a separate tool, offered
+within an action only when relevant; no execution or product match is inferred.
+
+Products can carry an exact growth recommendation and its cited evidence into
+and out of a chosen product workspace; the app does not infer a product match.
+The progress view records owner-marked action statuses, not measured uplift.
+Sales records and simulations stay separate. This interface work adds no new
+execution automation, schemas, provider calls or hosting prerequisites.
+
 ### Implemented local research foundation
 
 The durable SQL queue and in-process worker now coordinate Store,
