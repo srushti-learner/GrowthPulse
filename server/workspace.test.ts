@@ -25,7 +25,7 @@ describe("persisted identity and business ownership", () => {
     store = openStore(path);
     app = createApp({ store, origin });
   });
-  afterEach(() => { store.close(); rmSync(directory, { recursive: true, force: true }); vi.restoreAllMocks(); });
+  afterEach(async () => { await store.close(); rmSync(directory, { recursive: true, force: true }); vi.restoreAllMocks(); });
 
   async function register(email = "owner@example.test") {
     const response = await request(app).post("/api/auth/register").set("Origin", origin).send({ name: "Local Owner", email, password }).expect(201);
@@ -65,7 +65,7 @@ describe("persisted identity and business ownership", () => {
     const cookie = String(login.headers["set-cookie"][0]).split(";")[0];
     expect(cookie).not.toBe(owner.cookie);
     await request(app).get("/api/auth/me").set("Cookie", owner.cookie).expect(401);
-    store.close();
+    await store.close();
     store = openStore(path);
     app = createApp({ store, origin });
     await request(app).get("/api/auth/me").set("Cookie", cookie).expect(200);
@@ -104,7 +104,7 @@ describe("persisted identity and business ownership", () => {
     const { cookie, response } = await register();
     await request(app).get("/api/auth/me").set("Cookie", `gp_session=${"f".repeat(64)}`).expect(401);
     const expired = newSession();
-    store.createSession(response.body.user.id, expired.tokenHash, Date.now() - 1);
+    await store.createSession(response.body.user.id, expired.tokenHash, Date.now() - 1);
     await request(app).get("/api/auth/me").set("Cookie", `gp_session=${expired.token}`).expect(401);
     await request(app).post("/api/businesses").set("Cookie", cookie).send(profile).expect(403);
     await request(app).post("/api/businesses").set("Origin", "https://other.example").set("Cookie", cookie).send(profile).expect(403);
@@ -139,9 +139,9 @@ describe("persisted identity and business ownership", () => {
     expect(result.headers["set-cookie"][0]).toMatch(/; Secure;/);
   });
 
-  it("records migrations once and refuses a database from a newer application", () => {
+  it("records migrations once and refuses a database from a newer application", async () => {
     const reopened = openStore(path);
-    reopened.close();
+    await reopened.close();
     const database = new Database(path);
     expect(database.prepare("SELECT version FROM schema_migrations").all()).toEqual(migrations.map(({ version }) => ({ version })));
     database.prepare("INSERT INTO schema_migrations (version) VALUES (?)").run(99);
@@ -149,7 +149,7 @@ describe("persisted identity and business ownership", () => {
     expect(() => openStore(path)).toThrow("Database schema is newer than this application");
   });
 
-  it.each([6, 7, 9, 12])("upgrades database version %s without losing saved analyses, scans or preview references", (version) => {
+  it.each([6, 7, 9, 12])("upgrades database version %s without losing saved analyses, scans or preview references", async (version) => {
     const legacyPath = join(directory, "legacy.sqlite");
     const legacy = new Database(legacyPath);
     const ownerId = randomUUID(), businessId = randomUUID(), scanId = randomUUID(), understandingId = randomUUID(), oldJobId = randomUUID();
@@ -184,22 +184,22 @@ describe("persisted identity and business ownership", () => {
     } finally { legacy.close(); }
     const upgraded = openStore(legacyPath);
     try {
-      const claimed = upgraded.claimPreview(ownerId, "claimed-preview");
+      const claimed = await upgraded.claimPreview(ownerId, "claimed-preview");
       expect(claimed.scan.id).toBe(scanId);
       expect(claimed.scan.pages).toEqual(scan.pages);
-      expect(upgraded.getPreview("pending-preview")?.scan.pages).toHaveLength(20);
-      expect(upgraded.claimPreview(ownerId, "pending-preview").scan.pages).toHaveLength(20);
-      expect(upgraded.listScans(ownerId, businessId)).toHaveLength(2);
-      expect(upgraded.getBusiness(ownerId, businessId)?.name).toBe("Legacy shop");
-      expect(upgraded.latestUnderstanding(ownerId, businessId)).toMatchObject({ scanId, scanStatus: "complete", briefing: null });
-      expect(upgraded.salesData(ownerId, businessId)).toMatchObject({ days: [], scenarios: [], traffic: null });
-      if (version === 9) expect(upgraded.getAnalysisJob(ownerId, businessId, oldJobId)).toMatchObject({ researchEnabled: true, researchVersion: 1 });
-      const job = upgraded.enqueueAnalysis(ownerId, businessId, randomUUID(), website, scanId);
-      expect(upgraded.latestAnalysisJob(ownerId, businessId)).toMatchObject({ id: job.id, status: "queued", scanId, researchVersion: 2 });
+      expect((await upgraded.getPreview("pending-preview"))?.scan.pages).toHaveLength(20);
+      expect((await upgraded.claimPreview(ownerId, "pending-preview")).scan.pages).toHaveLength(20);
+      expect(await upgraded.listScans(ownerId, businessId)).toHaveLength(2);
+      expect((await upgraded.getBusiness(ownerId, businessId))?.name).toBe("Legacy shop");
+      expect(await upgraded.latestUnderstanding(ownerId, businessId)).toMatchObject({ scanId, scanStatus: "complete", briefing: null });
+      expect(await upgraded.salesData(ownerId, businessId)).toMatchObject({ days: [], scenarios: [], traffic: null });
+      if (version === 9) expect(await upgraded.getAnalysisJob(ownerId, businessId, oldJobId)).toMatchObject({ researchEnabled: true, researchVersion: 1 });
+      const job = await upgraded.enqueueAnalysis(ownerId, businessId, randomUUID(), website, scanId);
+      expect(await upgraded.latestAnalysisJob(ownerId, businessId)).toMatchObject({ id: job.id, status: "queued", scanId, researchVersion: 2 });
       const database = new Database(legacyPath);
       try { expect(database.pragma("foreign_key_check")).toEqual([]); }
       finally { database.close(); }
-    } finally { upgraded.close(); }
+    } finally { await upgraded.close(); }
   });
 
   it("does not report healthy when the database check fails", async () => {

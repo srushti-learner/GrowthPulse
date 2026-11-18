@@ -47,29 +47,29 @@ describe("traffic CSV validation and formulas", () => {
 });
 describe("traffic imports through real owner-scoped HTTP routes", () => {
   const resources: { store: ReturnType<typeof openStore>; directory: string }[] = [];
-  afterEach(() => {
-    for (const { store, directory } of resources.splice(0)) { store.close(); rmSync(directory, { recursive: true, force: true }); }
+  afterEach(async () => {
+    for (const { store, directory } of resources.splice(0)) { await store.close(); rmSync(directory, { recursive: true, force: true }); }
   });
-  function setup() {
+  async function setup() {
     const directory = mkdtempSync(join(tmpdir(), "growthpulse-traffic-"));
     const path = join(directory, "test.sqlite");
     const store = openStore(path); resources.push({ store, directory });
     const user = { id: randomUUID(), name: "Traffic test owner", email: `${randomUUID()}@example.test` };
     const session = newSession();
-    store.createAccount(user, "unused", session.tokenHash, session.expiresAt);
-    const business = store.saveBusiness(user.id, { name: "GA public sample", category: "", description: "", website: "" })!;
+    await store.createAccount(user, "unused", session.tokenHash, session.expiresAt);
+    const business = (await store.saveBusiness(user.id, { name: "GA public sample", category: "", description: "", website: "" }))!;
     return { store, path, user, business, cookie: `gp_session=${session.token}`, app: createApp({ store }) };
   }
   it("previews and persists both exact fixtures without turning missing sales dates into zeros or purchases into orders", async () => {
-    const { store, path, user, business, cookie, app } = setup();
+    const { store, path, user, business, cookie, app } = await setup();
     const prefix = `/api/businesses/${business.id}`;
     const sales = await readSalesFile(salesCsv, "csv", "USD");
-    const initial = store.salesData(user.id, business.id);
-    const saleDraft = store.previewSales(user.id, business.id, "purchase-items.csv", salesFileHash(salesCsv), sales);
-    const original = store.commitSales(user.id, business.id, saleDraft.id, initial.version, true);
+    const initial = await store.salesData(user.id, business.id);
+    const saleDraft = await store.previewSales(user.id, business.id, "purchase-items.csv", salesFileHash(salesCsv), sales);
+    const original = await store.commitSales(user.id, business.id, saleDraft.id, initial.version, true);
     const response = await request(app).post(`${prefix}/traffic-imports?filename=daily-traffic.csv&sourceName=Google%20Merchandise%20Store%20sample`)
       .set("Origin", origin).set("Cookie", cookie).set("Content-Type", "text/csv").send(trafficCsv.toString()).expect(201);
-    expect(store.salesData(user.id, business.id).traffic).toBeNull();
+    expect((await store.salesData(user.id, business.id)).traffic).toBeNull();
     const draftId: string = response.body.draft.id;
     await request(app).post(`${prefix}/traffic-imports/${draftId}/commit`).set("Origin", origin).set("Cookie", cookie).send({ expectedVersion: original.version, sameBusiness: false }).expect(400);
     const result = await request(app).post(`${prefix}/traffic-imports/${draftId}/commit`).set("Origin", origin).set("Cookie", cookie).send({ expectedVersion: original.version, sameBusiness: true }).expect(200);
@@ -80,59 +80,59 @@ describe("traffic imports through real owner-scoped HTTP routes", () => {
     expect(trafficMetrics(result.body.analytics.traffic.snapshot.days).purchasingSessions).toBe(4851);
     const retry = await request(app).post(`${prefix}/traffic-imports/${draftId}/commit`).set("Origin", origin).set("Cookie", cookie).send({ expectedVersion: original.version, sameBusiness: true }).expect(200);
     expect(retry.body.analytics.version).toBe(result.body.analytics.version);
-    const simulated = store.saveSalesScenario(user.id, business.id, {
+    const simulated = await store.saveSalesScenario(user.id, business.id, {
       name: "Separate owner assumption", start: "2020-11-11", end: "2021-01-30", ordersPct: 100, aovPct: 0, costPct: 0,
     }, result.body.analytics.version);
     const reopened = openStore(path);
     try {
-      const saved = reopened.salesData(user.id, business.id);
+      const saved = await reopened.salesData(user.id, business.id);
       expect(saved.traffic?.snapshot.days).toHaveLength(92);
       expect(saved.days).toEqual(original.days);
       expect(saved.scenarios).toEqual(simulated.scenarios);
     }
-    finally { reopened.close(); }
+    finally { await reopened.close(); }
   });
   it("accepts traffic first without inventing revenue, then pairs the sales sample", async () => {
-    const { store, user, business } = setup();
-    const initial = store.salesData(user.id, business.id);
-    const draft = store.previewTraffic(user.id, business.id, "daily-traffic.csv", "GA sample", salesFileHash(trafficCsv), readTrafficFile(trafficCsv));
-    const trafficOnly = store.commitTraffic(user.id, business.id, draft.id, initial.version, true);
+    const { store, user, business } = await setup();
+    const initial = await store.salesData(user.id, business.id);
+    const draft = await store.previewTraffic(user.id, business.id, "daily-traffic.csv", "GA sample", salesFileHash(trafficCsv), readTrafficFile(trafficCsv));
+    const trafficOnly = await store.commitTraffic(user.id, business.id, draft.id, initial.version, true);
     expect(trafficOnly.days).toEqual([]);
     expect(trafficOnly.currency).toBeNull();
     const snapshot = await readSalesFile(salesCsv, "csv", "USD");
-    const sales = store.previewSales(user.id, business.id, "purchase-items.csv", salesFileHash(salesCsv), snapshot);
-    const combined = store.commitSales(user.id, business.id, sales.id, trafficOnly.version, true);
+    const sales = await store.previewSales(user.id, business.id, "purchase-items.csv", salesFileHash(salesCsv), snapshot);
+    const combined = await store.commitSales(user.id, business.id, sales.id, trafficOnly.version, true);
     expect(combined.currency).toBe("USD");
     expect(combined.traffic?.snapshot.days).toHaveLength(92);
   });
   it("rejects stale reviews, unrelated dates and conflicting owner traffic without replacing records", async () => {
-    const { store, user, business } = setup();
-    const empty = store.salesData(user.id, business.id);
-    const traffic = store.previewTraffic(user.id, business.id, "daily-traffic.csv", "GA sample", salesFileHash(trafficCsv), readTrafficFile(trafficCsv));
+    const { store, user, business } = await setup();
+    const empty = await store.salesData(user.id, business.id);
+    const traffic = await store.previewTraffic(user.id, business.id, "daily-traffic.csv", "GA sample", salesFileHash(trafficCsv), readTrafficFile(trafficCsv));
     const entry = { currency: "GBP", evidence: "Synthetic unrelated owner log", estimated: false, day: {
       date: "2011-01-01", gross: 0, discounts: 0, reversals: 0, orders: 0, units: 0,
       cogs: null, operatingExpenses: null, sessions: null, purchasingSessions: null,
     } };
-    const actual = store.saveManualSales(user.id, business.id, entry, empty.version);
-    expect(() => store.commitTraffic(user.id, business.id, traffic.id, empty.version, true)).toThrow("History changed");
-    expect(() => store.commitTraffic(user.id, business.id, traffic.id, actual.version, true)).toThrow("no overlapping dates");
-    expect(store.salesData(user.id, business.id).traffic).toBeNull();
-    const other = store.saveBusiness(user.id, { name: "Conflicting traffic", category: "", description: "", website: "" })!;
-    const owner = store.saveManualSales(user.id, other.id, { ...entry, day: { ...entry.day, date: "2020-11-01", sessions: 1, purchasingSessions: 0 } }, store.salesData(user.id, other.id).version);
-    const draft = store.previewTraffic(user.id, other.id, "daily-traffic.csv", "GA sample", salesFileHash(trafficCsv), readTrafficFile(trafficCsv));
-    expect(() => store.commitTraffic(user.id, other.id, draft.id, owner.version, true)).toThrow("conflicts");
+    const actual = await store.saveManualSales(user.id, business.id, entry, empty.version);
+    await expect(store.commitTraffic(user.id, business.id, traffic.id, empty.version, true)).rejects.toThrow("History changed");
+    await expect(store.commitTraffic(user.id, business.id, traffic.id, actual.version, true)).rejects.toThrow("no overlapping dates");
+    expect((await store.salesData(user.id, business.id)).traffic).toBeNull();
+    const other = (await store.saveBusiness(user.id, { name: "Conflicting traffic", category: "", description: "", website: "" }))!;
+    const owner = await store.saveManualSales(user.id, other.id, { ...entry, day: { ...entry.day, date: "2020-11-01", sessions: 1, purchasingSessions: 0 } }, (await store.salesData(user.id, other.id)).version);
+    const draft = await store.previewTraffic(user.id, other.id, "daily-traffic.csv", "GA sample", salesFileHash(trafficCsv), readTrafficFile(trafficCsv));
+    await expect(store.commitTraffic(user.id, other.id, draft.id, owner.version, true)).rejects.toThrow("conflicts");
   });
   it("enforces authentication, business/draft ownership, origin and upload limits", async () => {
-    const first = setup(), other = setup();
-    const draft = first.store.previewTraffic(first.user.id, first.business.id, "daily-traffic.csv", "GA sample", salesFileHash(trafficCsv), readTrafficFile(trafficCsv));
+    const first = await setup(), other = await setup();
+    const draft = await first.store.previewTraffic(first.user.id, first.business.id, "daily-traffic.csv", "GA sample", salesFileHash(trafficCsv), readTrafficFile(trafficCsv));
     const otherUser = { id: randomUUID(), name: "Other owner", email: "other@example.test" };
-    const otherSession = newSession(); first.store.createAccount(otherUser, "unused", otherSession.tokenHash, otherSession.expiresAt);
-    const otherBusiness = first.store.saveBusiness(otherUser.id, { name: "Other business", category: "", description: "", website: "" })!;
+    const otherSession = newSession(); await first.store.createAccount(otherUser, "unused", otherSession.tokenHash, otherSession.expiresAt);
+    const otherBusiness = (await first.store.saveBusiness(otherUser.id, { name: "Other business", category: "", description: "", website: "" }))!;
     const prefix = `/api/businesses/${first.business.id}`;
     await request(first.app).post(`${prefix}/traffic-imports?filename=test.csv&sourceName=Test`).set("Origin", origin).set("Content-Type", "text/csv").send("x").expect(401);
     await request(first.app).post(`${prefix}/traffic-imports/${draft.id}/commit`).set("Cookie", first.cookie).send({}).expect(403);
     await request(first.app).post(`${prefix}/traffic-imports/${draft.id}/commit`).set("Origin", origin).set("Cookie", `gp_session=${otherSession.token}`).send({}).expect(404);
-    await request(first.app).post(`/api/businesses/${otherBusiness.id}/traffic-imports/${draft.id}/commit`).set("Origin", origin).set("Cookie", `gp_session=${otherSession.token}`).send({ expectedVersion: first.store.salesData(otherUser.id, otherBusiness.id).version, sameBusiness: true }).expect(404);
+    await request(first.app).post(`/api/businesses/${otherBusiness.id}/traffic-imports/${draft.id}/commit`).set("Origin", origin).set("Cookie", `gp_session=${otherSession.token}`).send({ expectedVersion: (await first.store.salesData(otherUser.id, otherBusiness.id)).version, sameBusiness: true }).expect(404);
     await request(other.app).post(`/api/businesses/${other.business.id}/traffic-imports?filename=test.csv&sourceName=Test`).set("Origin", origin).set("Cookie", other.cookie).set("Content-Type", "text/csv").send("x".repeat(1024 * 1024 + 1)).expect(413);
   });
 });

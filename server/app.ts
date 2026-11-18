@@ -16,14 +16,15 @@ import { SalesError } from "./sales-imports.js";
 
 const defaultClientDirectory = fileURLToPath(new URL("../client/", import.meta.url));
 
-export function createApp(options: { store: Store; origin?: string; production?: boolean; clientDirectory?: string; scanner?: WebsiteScanner; agent?: BusinessAgent; productAnalyst?: ProductAnalyst }) {
+export function createApp(options: { store: Store; origin?: string; production?: boolean; trustProxyHops?: number; clientDirectory?: string; scanner?: WebsiteScanner; agent?: BusinessAgent; productAnalyst?: ProductAnalyst }) {
   const app = express();
   app.disable("x-powered-by");
+  if (options.trustProxyHops) app.set("trust proxy", options.trustProxyHops);
   app.use(express.json({ limit: "100kb" }));
 
-  app.get("/api/health", (_request, response) => {
-    options.store.checkHealth();
-    response.set("Cache-Control", "no-store").json({ status: "ok", service: "growthpulse-api", database: { engine: "sqlite", status: "ok" } });
+  app.get("/api/health", async (_request, response) => {
+    await options.store.checkHealth();
+    response.set("Cache-Control", "no-store").json({ status: "ok", service: "growthpulse-api", database: { engine: options.store.engine, status: "ok" } });
   });
 
   const api = createApi(options.store, options.origin ?? "http://127.0.0.1:5173", options.production ?? false, options.scanner, options.agent, options.productAnalyst);
@@ -85,7 +86,7 @@ export function createApp(options: { store: Store; origin?: string; production?:
       sendError(413, { error: "Request body is too large" });
       return;
     }
-    console.error("Request failed:", error);
+    console.error("Request failed:", error instanceof Error ? error.name : "unknown");
     sendError(500, { error: "An unexpected server error occurred" });
   };
   app.use(handleError);

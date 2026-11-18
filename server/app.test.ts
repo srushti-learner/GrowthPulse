@@ -13,7 +13,7 @@ function createApp(options: Omit<Parameters<typeof createServerApp>[0], "store">
   stores.push(store);
   return createServerApp({ ...options, store });
 }
-afterAll(() => stores.forEach((store) => store.close()));
+afterAll(async () => { await Promise.all(stores.map((store) => store.close())); });
 
 describe("API", () => {
   const app = createApp();
@@ -69,9 +69,24 @@ describe("production frontend", () => {
 
 describe("environment configuration", () => {
   it("uses a supplied hosting port", () => {
-    expect(loadConfig({ PORT: "8080", NODE_ENV: "production" })).toEqual({
-      PORT: 8080, NODE_ENV: "production", APP_ORIGIN: "http://127.0.0.1:5173", SQLITE_PATH: "./data/growthpulse.sqlite", ANTHROPIC_MODEL: "claude-haiku-4-5",
+    expect(loadConfig({ PORT: "8080", NODE_ENV: "production", APP_ORIGIN: "https://growth.example",
+      DB_HOST: "database.example", DB_NAME: "growthpulse", DB_USER: "fixture", DB_PASSWORD: "fixture-not-a-real-password" })).toMatchObject({
+      PORT: 8080, NODE_ENV: "production", APP_ORIGIN: "https://growth.example", DATABASE_CLIENT: "mysql",
+      mysql: { DB_HOST: "database.example", DB_PORT: 3306, DB_SSL_MODE: "required" },
     });
+  });
+
+  it("keeps local SQLite available without hosted credentials", () => {
+    expect(loadConfig({})).toMatchObject({ DATABASE_CLIENT: "sqlite", mysql: undefined, TRUST_PROXY_HOPS: 0 });
+  });
+
+  it("refuses production SQLite, missing hosted credentials and insecure origins", () => {
+    expect(() => loadConfig({ NODE_ENV: "production", DATABASE_CLIENT: "sqlite" })).toThrow("requires MySQL");
+    expect(() => loadConfig({ NODE_ENV: "production", APP_ORIGIN: "https://growth.example" })).toThrow("DB_HOST");
+    expect(() => loadConfig({ NODE_ENV: "production", APP_ORIGIN: "http://growth.example" })).toThrow("HTTPS");
+    expect(() => loadConfig({ DATABASE_CLIENT: "mysql", DB_PASSWORD: "fixture-must-not-be-logged" }))
+      .toThrow(/^Invalid MySQL configuration: (?!.*fixture-must-not-be-logged)/);
+    expect(() => loadConfig({ TRUST_PROXY_HOPS: "true" })).toThrow("TRUST_PROXY_HOPS");
   });
 
   it.each(["", "0", "-1", "65536", "abc", "1.5"])("rejects invalid port %j", (PORT) => {

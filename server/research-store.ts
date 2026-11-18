@@ -1,5 +1,5 @@
-import type Database from "better-sqlite3";
-import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
+import type { SqlDatabase } from "./sql-database.js";
+import type { BaseCheckpointSaver } from "@langchain/langgraph-checkpoint";
 import { researchLimits, researchReportSchema, researchStepSchema, type ResearchReport, type ResearchStep } from "../shared/research.js";
 
 type Usage = keyof ResearchReport["usage"];
@@ -11,13 +11,12 @@ export class ResearchStopped extends Error {}
 export class ResearchLimit extends Error {}
 export type ResearchJournal = ReturnType<ReturnType<typeof researchStore>["researchJournal"]>;
 
-export function researchStore(database: Database.Database) {
-  const checkpointer = new SqliteSaver(database);
+export function researchStore(database: SqlDatabase, checkpointer: BaseCheckpointSaver) {
   return {
     researchCheckpointer: checkpointer,
     researchJournal(id: string, lease: string) {
-      function current() {
-        const row = database.prepare<[string, string, number], { research: number; version: number; status: string }>(
+      async function current() {
+        const row = await database.prepare<[string, string, number], { research: number; version: number; status: string }>(
           `SELECT research_enabled AS research, research_version AS version, status FROM analysis_jobs
            WHERE id = ? AND lease_token = ? AND status = 'running' AND lease_until > ?`,
         ).get(id, lease, Date.now());
@@ -26,18 +25,18 @@ export function researchStore(database: Database.Database) {
       }
       return {
         id, checkpointer,
-        get version() { return current().version; },
-        report() {
-          return readResearchReport(database, id, !!current().research, false);
+        async version() { return (await current()).version; },
+        async report() {
+          return readResearchReport(database, id, !!(await current()).research, false);
         },
-        read(key: string) {
-          current();
-          const row = database.prepare<[string, string], { result: string; artifact: string | null }>(
+        async read(key: string) {
+          await current();
+          const row = await database.prepare<[string, string], { result: string; artifact: string | null }>(
             "SELECT result_json AS result, artifact_json AS artifact FROM research_steps WHERE job_id = ? AND step_key = ?",
           ).get(id, key);
           return row ? { step: researchStepSchema.parse(JSON.parse(row.result)), artifact: row.artifact ? JSON.parse(row.artifact) as unknown : undefined } : null;
         },
-        write(input: ResearchStep, artifact?: unknown) {
+        async write(input: ResearchStep, artifact?: unknown) {
           const step = researchStepSchema.parse(input);
           let clipped = false;
           while (Buffer.byteLength(JSON.stringify(step)) > researchLimits.stepBytes && step.findings.length) {
@@ -53,24 +52,30 @@ export function researchStore(database: Database.Database) {
           }
           const json = artifact === undefined ? null : JSON.stringify(artifact);
           if (json && Buffer.byteLength(json) > 2 * 1024 * 1024) throw new ResearchLimit("Research evidence exceeded its storage limit.");
-          database.transaction(() => {
-            current();
-            const count = database.prepare<[string], { count: number }>("SELECT COUNT(*) AS count FROM research_steps WHERE job_id = ?").get(id)!.count;
-            if (count >= researchLimits.steps && !this.read(step.key)) throw new ResearchLimit("Research step limit reached.");
-            database.prepare(`INSERT INTO research_steps (job_id, step_key, result_json, artifact_json) VALUES (?, ?, ?, ?)
-              ON CONFLICT(job_id, step_key) DO UPDATE SET result_json = excluded.result_json, artifact_json = excluded.artifact_json`)
+          await database.transaction(async () => {
+            await current();
+            const count = (await database.prepare<[string], { count: number }>("SELECT COUNT(*) AS count FROM research_steps WHERE job_id = ?").get(id))!.count;
+            if (count >= researchLimits.steps && !await this.read(step.key)) throw new ResearchLimit("Research step limit reached.");
+            await database.prepare(`INSERT INTO research_steps (job_id, step_key, result_json, artifact_json) VALUES (?, ?, ?, ?)
+              ${database.dialect === "mysql"
+                ? "ON DUPLICATE KEY UPDATE result_json = VALUES(result_json), artifact_json = VALUES(artifact_json)"
+                : "ON CONFLICT(job_id, step_key) DO UPDATE SET result_json = excluded.result_json, artifact_json = excluded.artifact_json"}`)
               .run(id, step.key, JSON.stringify(step), json);
-            database.prepare("UPDATE analysis_jobs SET revision = revision + 1, updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+            await database.prepare("UPDATE analysis_jobs SET revision = revision + 1, updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+            await current();
           }).immediate();
         },
-        consume(kind: Usage) {
-          database.transaction(() => {
-            const job = current();
-            database.prepare("INSERT OR IGNORE INTO research_usage (job_id) VALUES (?)").run(id);
+        async consume(kind: Usage) {
+          await database.transaction(async () => {
+            const job = await current();
+            await database.prepare(database.dialect === "mysql"
+              ? "INSERT INTO research_usage (job_id) VALUES (?) ON DUPLICATE KEY UPDATE job_id = VALUES(job_id)"
+              : "INSERT OR IGNORE INTO research_usage (job_id) VALUES (?)").run(id);
             const column = columns[kind];
-            const changed = database.prepare(`UPDATE research_usage SET ${column} = ${column} + 1 WHERE job_id = ? AND ${column} < ?`)
-              .run(id, job.version === 1 ? { searches: 1, modelCalls: 7, competitorScans: 2 }[kind] : ceilings[kind]).changes;
+            const changed = (await database.prepare(`UPDATE research_usage SET ${column} = ${column} + 1 WHERE job_id = ? AND ${column} < ?`)
+              .run(id, job.version === 1 ? { searches: 1, modelCalls: 7, competitorScans: 2 }[kind] : ceilings[kind])).changes;
             if (!changed) throw new ResearchLimit(`The per-run ${kind} limit was reached.`);
+            await current();
           }).immediate();
         },
       };
@@ -78,22 +83,23 @@ export function researchStore(database: Database.Database) {
   };
 }
 
-export function readResearchReport(database: Database.Database, id: string, enabled: boolean, active: boolean) {
-  const steps = database.prepare<[string], { json: string; captureUrl: string | null; capturePages: number | null }>(
-    `SELECT s.result_json AS json,
-      CASE WHEN s.step_key GLOB 'competitor-site-[0-9]' THEN
-        COALESCE(json_extract(s.artifact_json, '$.requestedUrl'),
-          json_extract(d.artifact_json, '$[' || substr(s.step_key, 17) || '].url')) END AS captureUrl,
-      CASE WHEN s.step_key GLOB 'competitor-site-[0-9]' THEN
-        json_array_length(s.artifact_json, '$.pages') END AS capturePages
+export async function readResearchReport(database: SqlDatabase, id: string, enabled: boolean, active: boolean) {
+  const steps = (await database.prepare<[string], { json: string; artifact: string | null; discovery: string | null; key: string }>(
+    `SELECT s.result_json AS json, s.artifact_json AS artifact, d.artifact_json AS discovery, s.step_key AS \`key\`
      FROM research_steps s LEFT JOIN research_steps d ON d.job_id = s.job_id AND d.step_key = 'discovery'
      WHERE s.job_id = ? ORDER BY s.rowid`,
-  ).all(id).map(({ json, captureUrl, capturePages }) => researchStepSchema.parse({
-    ...JSON.parse(json),
-    ...(captureUrl ? { capture: { url: captureUrl, pages: capturePages ?? 0 } } : {}),
-  }));
+  ).all(id)).map(({ json, artifact, discovery, key }) => {
+    const scan = artifact ? JSON.parse(artifact) : undefined;
+    const index = /^competitor-site-([0-9])$/.exec(key)?.[1];
+    const captureUrl = index === undefined ? undefined
+      : scan?.requestedUrl ?? (discovery ? JSON.parse(discovery)[Number(index)]?.url : undefined);
+    return researchStepSchema.parse({
+      ...JSON.parse(json),
+      ...(captureUrl ? { capture: { url: captureUrl, pages: Array.isArray(scan?.pages) ? scan.pages.length : 0 } } : {}),
+    });
+  });
   if (!steps.length) return undefined;
-  const row = database.prepare<[string], { searches: number; modelCalls: number; competitorScans: number }>(
+  const row = await database.prepare<[string], { searches: number; modelCalls: number; competitorScans: number }>(
     "SELECT searches, model_calls AS modelCalls, competitor_scans AS competitorScans FROM research_usage WHERE job_id = ?",
   ).get(id);
   return researchReportSchema.parse({

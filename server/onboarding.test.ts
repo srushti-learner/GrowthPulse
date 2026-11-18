@@ -53,7 +53,7 @@ describe("public-first onboarding", () => {
       .mockResolvedValueOnce({ stop_reason: "tool_use", content: [{ type: "tool_use", id: "proposal", name: "propose_business", input: referencedProposal }] });
     app = buildApp();
   });
-  afterEach(() => { store.close(); rmSync(directory, { recursive: true, force: true }); vi.restoreAllMocks(); });
+  afterEach(async () => { await store.close(); rmSync(directory, { recursive: true, force: true }); vi.restoreAllMocks(); });
   async function preview() {
     const response = await request(app).post("/api/onboarding/scan").set("Origin", origin).send({ url, permission: true }).expect(200);
     return { cookie: String(response.headers["set-cookie"][0]).split(";")[0], response };
@@ -74,8 +74,8 @@ describe("public-first onboarding", () => {
     expect(publicResult.response.headers["set-cookie"][0]).toMatch(/SameSite=Lax/);
     expect(complete).not.toHaveBeenCalled();
     const user = await account();
-    expect(store.listBusinesses(user.id)).toEqual([]);
-    store.close(); store = openStore(path); app = buildApp();
+    expect(await store.listBusinesses(user.id)).toEqual([]);
+    await store.close(); store = openStore(path); app = buildApp();
     const restored = await request(app).get("/api/onboarding/preview").set("Cookie", publicResult.cookie).expect(200);
     expect(restored.body).toEqual(publicResult.response.body);
     expect(scanner).toHaveBeenCalledOnce();
@@ -92,7 +92,7 @@ describe("public-first onboarding", () => {
     await claim(`${publicResult.cookie}; ${user.cookie}`, {}).expect(400);
     await claim(`${publicResult.cookie}; ${user.cookie}`, { permission: true, scan }).expect(400);
     await request(app).post("/api/onboarding/claim").set("Cookie", `${publicResult.cookie}; ${user.cookie}`).send({ permission: true }).expect(403);
-    expect(store.listBusinesses(user.id)).toEqual([]);
+    expect(await store.listBusinesses(user.id)).toEqual([]);
     expect(complete).not.toHaveBeenCalled();
     expect(scanner).toHaveBeenCalledOnce();
   });
@@ -100,18 +100,18 @@ describe("public-first onboarding", () => {
   it("claims once, preserves existing owner details, and cannot be claimed by another account", async () => {
     const publicResult = await preview();
     const user = await account();
-    const existing = store.saveBusiness(user.id, { name: "Owner's name", website: url, category: "Owner category", description: "Private owner notes" })!;
+    const existing = (await store.saveBusiness(user.id, { name: "Owner's name", website: url, category: "Owner category", description: "Private owner notes" }))!;
     const cookies = `${publicResult.cookie}; ${user.cookie}`;
     const first = await claim(cookies).expect(200);
     const second = await claim(cookies).expect(200);
     expect(first.body.business).toEqual(existing);
     expect(second.body).toEqual(first.body);
-    expect(store.listScans(user.id, existing.id)).toHaveLength(1);
-    expect(store.listActivity(user.id, existing.id)).toHaveLength(2);
+    expect(await store.listScans(user.id, existing.id)).toHaveLength(1);
+    expect(await store.listActivity(user.id, existing.id)).toHaveLength(2);
     expect(complete).not.toHaveBeenCalled();
     const other = await account("other@example.test");
     await claim(`${publicResult.cookie}; ${other.cookie}`).expect(409);
-    expect(store.listBusinesses(other.id)).toEqual([]);
+    expect(await store.listBusinesses(other.id)).toEqual([]);
   });
 
   it("saves a twenty-page preview and creates its briefing without rescanning, including after reopening", async () => {
@@ -136,11 +136,11 @@ describe("public-first onboarding", () => {
     await request(app).post(`/api/businesses/${saved.body.business.id}/understanding`).set("Origin", origin)
       .set("Cookie", user.cookie).send({ permission: true, scanId: saved.body.scan.id }).expect(201);
     expect(scanner).toHaveBeenCalledOnce();
-    store.close(); store = openStore(path); app = buildApp();
+    await store.close(); store = openStore(path); app = buildApp();
     const restored = await claim(cookies).expect(200);
     expect(restored.body.scan).toEqual(saved.body.scan);
     expect(restored.body.understanding.scanId).toBe(saved.body.scan.id);
-    expect(store.listScans(user.id, saved.body.business.id)[0].pageCount).toBe(20);
+    expect((await store.listScans(user.id, saved.body.business.id))[0].pageCount).toBe(20);
   });
 
   it("streams a grounded briefing from the claimed scan without scanning again or importing client evidence", async () => {
@@ -156,19 +156,19 @@ describe("public-first onboarding", () => {
     expect(events.at(-1)).toMatchObject({ type: "complete", understanding: { briefing: proposal.briefing, scanId: claimed.body.scan.id } });
     expect(scanner).toHaveBeenCalledOnce();
     expect(complete).toHaveBeenCalledTimes(2);
-    expect(store.listScans(user.id, businessId)).toHaveLength(1);
+    expect(await store.listScans(user.id, businessId)).toHaveLength(1);
     const restored = await claim(`${publicResult.cookie}; ${user.cookie}`).expect(200);
-    expect(restored.body.understanding).toEqual(store.latestUnderstanding(user.id, businessId));
+    expect(restored.body.understanding).toEqual(await store.latestUnderstanding(user.id, businessId));
     expect(complete).toHaveBeenCalledTimes(2);
   });
 
   it("rejects foreign, mismatched and empty saved scans before making a provider request", async () => {
     const user = await account(), other = await account("other@example.test");
-    const business = store.saveBusiness(user.id, { name: "Shop", website: url, category: "", description: "" })!;
-    const foreign = store.saveBusiness(other.id, { name: "Other", website: url, category: "", description: "" })!;
-    const foreignScan = store.saveScan(other.id, foreign.id, scan)!;
-    const mismatch = store.saveScan(user.id, business.id, { ...scan, requestedUrl: "https://different.example.com/" })!;
-    const failed = store.saveScan(user.id, business.id, { ...scan, status: "failed", pages: [] })!;
+    const business = (await store.saveBusiness(user.id, { name: "Shop", website: url, category: "", description: "" }))!;
+    const foreign = (await store.saveBusiness(other.id, { name: "Other", website: url, category: "", description: "" }))!;
+    const foreignScan = (await store.saveScan(other.id, foreign.id, scan))!;
+    const mismatch = (await store.saveScan(user.id, business.id, { ...scan, requestedUrl: "https://different.example.com/" }))!;
+    const failed = (await store.saveScan(user.id, business.id, { ...scan, status: "failed", pages: [] }))!;
     for (const [scanId, status] of [[foreignScan.id, 404], [mismatch.id, 404], [failed.id, 400]] as const) {
       await request(app).post(`/api/businesses/${business.id}/understanding`).set("Origin", origin).set("Cookie", user.cookie)
         .send({ permission: true, scanId }).expect(status);
@@ -183,7 +183,7 @@ describe("public-first onboarding", () => {
     vi.spyOn(Date, "now").mockReturnValue(now + previewLifetime + 1);
     await claim(`${publicResult.cookie}; ${user.cookie}`).expect(410);
     expect((await request(app).get("/api/onboarding/preview").set("Cookie", publicResult.cookie).expect(200)).body).toEqual({ preview: null });
-    expect(store.listBusinesses(user.id)).toEqual([]);
+    expect(await store.listBusinesses(user.id)).toEqual([]);
     expect(scanner).toHaveBeenCalledOnce();
     expect(complete).not.toHaveBeenCalled();
   });
@@ -192,23 +192,23 @@ describe("public-first onboarding", () => {
     scanner.mockResolvedValueOnce({ ...scan, status: "failed", pages: [], failures: [{ url, message: "Reading is not permitted." }] });
     const publicResult = await preview(), user = await account();
     await claim(`${publicResult.cookie}; ${user.cookie}`).expect(400);
-    expect(store.listBusinesses(user.id)).toEqual([]);
+    expect(await store.listBusinesses(user.id)).toEqual([]);
     const logout = await request(app).post("/api/auth/logout").set("Origin", origin).set("Cookie", `${publicResult.cookie}; ${user.cookie}`).expect(204);
     expect(logout.headers["set-cookie"].some((value: string) => value.startsWith("gp_preview="))).toBe(true);
     expect((await request(app).get("/api/onboarding/preview").set("Cookie", publicResult.cookie).expect(200)).body.preview).toBeNull();
     expect(complete).not.toHaveBeenCalled();
   });
 
-  it("bounds anonymous preview storage and replacement without evicting other browsers", () => {
+  it("bounds anonymous preview storage and replacement without evicting other browsers", async () => {
     const first = digestToken(randomUUID());
-    store.savePreview(first, scan);
-    for (let index = 1; index < 50; index++) store.savePreview(digestToken(randomUUID()), scan);
-    expect(() => store.savePreview(digestToken(randomUUID()), scan)).toThrow("storage is busy");
+    await store.savePreview(first, scan);
+    for (let index = 1; index < 50; index++) await store.savePreview(digestToken(randomUUID()), scan);
+    await expect(store.savePreview(digestToken(randomUUID()), scan)).rejects.toThrow("storage is busy");
     const replacement = digestToken(randomUUID());
-    store.savePreview(replacement, scan, first);
-    expect(store.getPreview(first)).toBeNull();
-    expect(store.getPreview(replacement)?.scan).toEqual(scan);
+    await store.savePreview(replacement, scan, first);
+    expect(await store.getPreview(first)).toBeNull();
+    expect((await store.getPreview(replacement))?.scan).toEqual(scan);
     const oversized = { ...scan, pages: Array.from({ length: 5 }, () => ({ ...scan.pages[0], productJson: Array.from({ length: 50 }, () => "x".repeat(20000)) })) };
-    expect(() => store.savePreview(digestToken(randomUUID()), oversized)).toThrow("too large");
+    await expect(store.savePreview(digestToken(randomUUID()), oversized)).rejects.toThrow("too large");
   });
 });

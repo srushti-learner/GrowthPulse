@@ -149,18 +149,18 @@ function steps(journal: ResearchJournal, signal: AbortSignal) {
   return async function run<T>(key: string, agent: ResearchAgent, schema: z.ZodType<T>, work: () => Promise<StepResult<T>>, input?: unknown): Promise<T | undefined> {
     signal.throwIfAborted();
     const inputVersion = createHash("sha256").update(JSON.stringify([researchLimits.version, key, input ?? null])).digest("hex");
-    const cached = journal.read(key);
+    const cached = await journal.read(key);
     if (cached && cached.step.inputVersion === inputVersion && (cached.step.status === "completed" || cached.step.status === "limited") && cached.artifact !== undefined) {
       return schema.parse(cached.artifact);
     }
     const startedAt = new Date().toISOString();
     const base = { key, agent, startedAt, reused: false, inputVersion };
-    journal.write({ ...base, status: "running", findings: [], limitations: [], diagnostic: null, completedAt: null });
+    await journal.write({ ...base, status: "running", findings: [], limitations: [], diagnostic: null, completedAt: null });
     try {
       const result = await work();
       signal.throwIfAborted();
       const artifact = schema.parse(result.artifact);
-      journal.write({
+      await journal.write({
         ...base, status: result.status ?? "completed", findings: result.findings ?? [],
         limitations: (result.limitations ?? []).slice(0, 8).map((text) => text.slice(0, 500)),
         diagnostic: result.diagnostic ?? null, completedAt: new Date().toISOString(),
@@ -179,7 +179,7 @@ function steps(journal: ResearchJournal, signal: AbortSignal) {
           status: error.status, requestId: providerFailure(error).requestId, providerCode: providerFailure(error).providerCode,
         } : {}),
       });
-      journal.write({
+      await journal.write({
         ...base, status: "failed", findings: [], completedAt: new Date().toISOString(), diagnostic,
         limitations: [error instanceof ResearchToolError || error instanceof ResearchLimit || error instanceof AgentError
           ? error.message.slice(0, 500) : error instanceof Anthropic.APIError
@@ -212,20 +212,21 @@ export function createResearchAgent(options: {
       const own = researchEvidence(merchant);
       const ownProducts = researchProducts(merchant, "merchant");
       const run = steps(journal, signal);
-      const metered: AgentModel = (input, cancellation, preview) => {
+      const metered: AgentModel = async (input, cancellation, preview) => {
         cancellation.throwIfAborted();
-        journal.consume("modelCalls");
+        await journal.consume("modelCalls");
+        cancellation.throwIfAborted();
         return complete(input, cancellation, preview);
       };
       const specialist = async (key: ResearchAgent, instruction: string, groups: ResearchSource[][], products: ResearchProduct[], prior: ResearchFinding[] = []) => {
         const keys = key === "opportunity" ? ["store", "competitor", "pricing", "customer"]
           : key === "growth" ? ["opportunity", "competitor", "store", "customer"]
           : ["store", "discovery", ...Array.from({ length: researchLimits.competitors }, (_, i) => [`competitor-site-${i}`, `competitor-brand-${i}`]).flat()];
-        const dependencies = keys.flatMap((id) => {
-          const step = journal.read(id)?.step;
-          return step ? [{ key: id, status: step.status, inputVersion: step.inputVersion }] : [{ key: id, status: "unavailable" }];
-        });
-        const input = contextFor(groups, products, prior, dependencies, key === "competitor" ? storeContext() : undefined, verifiedBrands());
+        const dependencies = await Promise.all(keys.map(async (id) => {
+          const step = (await journal.read(id))?.step;
+          return step ? { key: id, status: step.status, inputVersion: step.inputVersion } : { key: id, status: "unavailable" };
+        }));
+        const input = contextFor(groups, products, prior, dependencies, key === "competitor" ? await storeContext() : undefined, await verifiedBrands());
         return run(key, key, acceptedSchema, async () => {
           if (!input.sources.length) return {
             artifact: { findings: [], limitations: ["No permitted captured evidence is available for this specialist."], diagnostic: null }, status: "limited",
@@ -240,39 +241,39 @@ export function createResearchAgent(options: {
             ? "limited" : "completed" };
         }, input);
       };
-      const completedFindings = (keys: string[]) => keys.flatMap((key) => journal.read(key)?.step.findings ?? []);
-      const storeContext = (): StoreContext => {
-        const saved = journal.read("store");
+      const completedFindings = async (keys: string[]) => (await Promise.all(keys.map(async (key) => (await journal.read(key))?.step.findings ?? []))).flat();
+      const storeContext = async (): Promise<StoreContext> => {
+        const saved = await journal.read("store");
         const proposal = saved?.artifact ? proposalArtifactSchema.parse(saved.artifact) : undefined;
         return {
           status: saved?.step.status ?? "unavailable", inputVersion: saved?.step.inputVersion,
           unknowns: proposal?.briefing?.unknowns ?? [], limitations: saved?.step.limitations ?? [],
         };
       };
-      const competitorScans = () => {
-        const discovery = journal.read("discovery");
+      const competitorScans = async () => {
+        const discovery = await journal.read("discovery");
         const candidates = discovery?.artifact ? candidatesSchema.parse(discovery.artifact) : [];
-        return candidates.flatMap((candidate, index) => {
-          const saved = journal.read(`competitor-site-${index}`);
+        return (await Promise.all(candidates.map(async (candidate, index) => {
+          const saved = await journal.read(`competitor-site-${index}`);
           if (!saved?.artifact) return [];
           const scan = scanResultSchema.parse(saved.artifact);
-          const profile = journal.read(`competitor-brand-${index}`)?.step.profile;
+          const profile = (await journal.read(`competitor-brand-${index}`))?.step.profile;
           return scan.requestedUrl === candidate.url && profile?.url === candidate.url ? [scan] : [];
-        });
+        }))).flat();
       };
-      const verifiedBrands = () => {
-        const discovery = journal.read("discovery");
+      const verifiedBrands = async () => {
+        const discovery = await journal.read("discovery");
         const candidates = discovery?.artifact ? candidatesSchema.parse(discovery.artifact) : [];
-        return candidates.flatMap((candidate, index) => {
-          const saved = journal.read(`competitor-brand-${index}`);
+        return (await Promise.all(candidates.map(async (candidate, index) => {
+          const saved = await journal.read(`competitor-brand-${index}`);
           const profile = saved?.step.profile;
           return profile?.url === candidate.url ? [profile] : [];
-        });
+        }))).flat();
       };
-      const competitorContext = () => {
-        const scans = competitorScans();
+      const competitorContext = async () => {
+        const scans = await competitorScans();
         return {
-          groups: [own.sources, ...verifiedBrands().map((profile) => profile.sources)],
+          groups: [own.sources, ...(await verifiedBrands()).map((profile) => profile.sources)],
           products: [...ownProducts, ...scans.flatMap((scan) => researchProducts(scan, "competitor"))],
         };
       };
@@ -305,16 +306,17 @@ export function createResearchAgent(options: {
           return { done: ["store"] };
         })
         .addNode("discovery", async () => {
-          const merchantContext = contextFor([own.sources], ownProducts, completedFindings(["store"]), [], storeContext());
-          if (!enabled || journal.version < researchLimits.version || !search.configured) {
+          const merchantContext = contextFor([own.sources], ownProducts, await completedFindings(["store"]), [], await storeContext());
+          const version = await journal.version();
+          if (!enabled || version < researchLimits.version || !search.configured) {
             await run("discovery", "competitor", candidatesSchema, async () => {
               if (!enabled) return { artifact: [], status: "limited", limitations: ["Wider public research was not enabled. No public queries were sent to Tavily and no competitor sites were scanned."] };
-              if (journal.version < researchLimits.version) return {
+              if (version < researchLimits.version) return {
                 artifact: [], status: "limited",
                 limitations: ["This older job did not authorize the expanded market-research budget. Start a new analysis after confirming the updated research permission."],
               };
               throw new ResearchToolError("search_not_configured", "Competitor discovery needs a server-side TAVILY_API_KEY. No search was made.");
-            }, { enabled, version: journal.version, configured: search.configured });
+            }, { enabled, version, configured: search.configured });
             return { done: ["discovery"] };
           }
           const plan = await run("discovery-plan", "competitor", discoveryPlanSchema, async () => {
@@ -335,7 +337,8 @@ export function createResearchAgent(options: {
           for (const [index, query] of discoveryQueries(plan, url).slice(0, researchLimits.searches).entries()) {
             const leads = await run(`discovery-search-${index}`, "competitor",
               z.array(z.object({ title: z.string(), url: z.url(), snippet: z.string() })).max(5), async () => {
-                journal.consume("searches");
+                await journal.consume("searches");
+                signal.throwIfAborted();
                 const artifact = await search.search(query, signal);
                 return { artifact, search: { query, domains: artifact.map((lead) => new URL(lead.url).hostname) } };
               }, query);
@@ -380,14 +383,15 @@ export function createResearchAgent(options: {
           return { done: ["discovery"] };
         })
         .addNode("competitor", async () => {
-          const discovery = journal.read("discovery");
+          const discovery = await journal.read("discovery");
           const candidates = discovery?.artifact ? candidatesSchema.parse(discovery.artifact) : [];
-          const planArtifact = journal.read("discovery-plan")?.artifact;
+          const planArtifact = (await journal.read("discovery-plan"))?.artifact;
           const plan = planArtifact ? discoveryPlanSchema.parse(planArtifact) : undefined;
           const read = async (candidate: z.infer<typeof candidatesSchema>[number], index: number) => {
             const scan = await run(`competitor-site-${index}`, "competitor", scanResultSchema, async () => {
               if (excludedCompetitor(candidate.url, url)) throw new ResearchToolError("candidate_excluded", "This source is not an eligible independent brand website.");
-              journal.consume("competitorScans");
+              await journal.consume("competitorScans");
+              signal.throwIfAborted();
               const scan = await scanner(candidate.url, signal);
               if (scan.status === "failed" || !scan.pages.length) throw new ResearchToolError("competitor_unreadable", "This candidate could not be read within public-site safety rules. No bypass or alternate fetching service was used.");
               return { artifact: scan, status: scan.status === "partial" ? "limited" : "completed", limitations: scan.notes };
@@ -414,29 +418,29 @@ export function createResearchAgent(options: {
           } finally { parallelSlot?.(); }
           const seenBrands = new Set<string>();
           for (let index = 0; index < researchLimits.competitors; index++) {
-            const saved = journal.read(`competitor-brand-${index}`);
+            const saved = await journal.read(`competitor-brand-${index}`);
             if (!saved?.artifact) continue;
             const assessment = brandAssessmentSchema.parse(saved.artifact);
             if (!assessment.profile) continue;
             const identity = assessment.profile.name.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
-            if (assessment.profile.url !== candidates[index]?.url || !journal.read(`competitor-site-${index}`)?.artifact || seenBrands.has(identity)) {
+            if (assessment.profile.url !== candidates[index]?.url || !(await journal.read(`competitor-site-${index}`))?.artifact || seenBrands.has(identity)) {
               const limitations = ["This brand is duplicated or no longer belongs to the current discovery sample."];
-              journal.write({ ...saved.step, profile: undefined, findings: [], limitations, status: "limited" },
+              await journal.write({ ...saved.step, profile: undefined, findings: [], limitations, status: "limited" },
                 assessment);
             } else {
               seenBrands.add(identity);
-              if (!saved.step.profile) journal.write({ ...saved.step, profile: assessment.profile, limitations: assessment.limitations,
+              if (!saved.step.profile) await journal.write({ ...saved.step, profile: assessment.profile, limitations: assessment.limitations,
                 status: assessment.profile.marketVerified ? "completed" : "limited" }, assessment);
             }
           }
-          if (!competitorScans().length) {
+          if (!(await competitorScans()).length) {
             await run("competitor", "competitor", acceptedSchema, async () => ({
               artifact: { findings: [], limitations: ["No independent competing brand was verified from the captured pages. Market comparisons are unavailable; marketplace listings are not a substitute."], diagnostic: null },
               status: "limited", limitations: ["No independent competing brand was verified from the captured pages. Market comparisons are unavailable; marketplace listings are not a substitute."],
             }));
           } else {
-            const evidence = competitorContext();
-            await specialist("competitor", "Study captured VERIFIED independent-brand products, positioning, public offers and buying experience against the merchant sample. Name the relevant brands in findings, explain a specific observed distinction and suggest an evidence-backed next experiment. Do not treat marketplace listings or the merchant's own products as competitors. Use accepted Store Intelligence to understand the merchant; its open questions remain questions. Market overlap is unverified unless marketVerified=true. This is sampled market research, not a complete market census. No claims about demand, sales, margins or relative prices. Observations must quote evidence verbatim; proposed interpretations are hypotheses, not facts.", evidence.groups, evidence.products, completedFindings(["store"]));
+            const evidence = await competitorContext();
+            await specialist("competitor", "Study captured VERIFIED independent-brand products, positioning, public offers and buying experience against the merchant sample. Name the relevant brands in findings, explain a specific observed distinction and suggest an evidence-backed next experiment. Do not treat marketplace listings or the merchant's own products as competitors. Use accepted Store Intelligence to understand the merchant; its open questions remain questions. Market overlap is unverified unless marketVerified=true. This is sampled market research, not a complete market census. No claims about demand, sales, margins or relative prices. Observations must quote evidence verbatim; proposed interpretations are hypotheses, not facts.", evidence.groups, evidence.products, await completedFindings(["store"]));
           }
           return { done: ["competitor"] };
         })
@@ -449,20 +453,20 @@ export function createResearchAgent(options: {
         })
         .addNode("pricing", async () => {
           await run("pricing", "pricing", acceptedSchema, async () => {
-            const products = competitorScans().flatMap((scan) => researchProducts(scan, "competitor"));
+            const products = (await competitorScans()).flatMap((scan) => researchProducts(scan, "competitor"));
             const result = compareResearchProducts(ownProducts, products);
             return { artifact: { ...result, diagnostic: null }, ...result, status: "limited" };
-          }, { ownProducts, competitorProducts: competitorScans().flatMap((scan) => researchProducts(scan, "competitor")) });
+          }, { ownProducts, competitorProducts: (await competitorScans()).flatMap((scan) => researchProducts(scan, "competitor")) });
           return { done: ["pricing"] };
         })
         .addNode("opportunity", async () => {
-          const evidence = competitorContext();
-          await specialist("opportunity", "Propose small product, bundle or merchandising experiments from the available captured sample and accepted findings. Explicitly label opportunity ideas as hypotheses or suggestions, not established demand or catalogue gaps.", evidence.groups, evidence.products, completedFindings(["store", "competitor", "pricing"]));
+          const evidence = await competitorContext();
+          await specialist("opportunity", "Propose small product, bundle or merchandising experiments from the available captured sample and accepted findings. Explicitly label opportunity ideas as hypotheses or suggestions, not established demand or catalogue gaps.", evidence.groups, evidence.products, await completedFindings(["store", "competitor", "pricing"]));
           return { done: ["opportunity"] };
         })
         .addNode("growth", async () => {
-          const evidence = competitorContext();
-          await specialist("growth", "Prioritise one or two practical next experiments using the available evidence and accepted opportunities. Explain the evidence and what the owner must verify. Do not invent campaign performance, forecasts, acquisition costs or returns.", evidence.groups, evidence.products, completedFindings(["opportunity", "competitor", "store"]));
+          const evidence = await competitorContext();
+          await specialist("growth", "Prioritise one or two practical next experiments using the available evidence and accepted opportunities. Explain the evidence and what the owner must verify. Do not invent campaign performance, forecasts, acquisition costs or returns.", evidence.groups, evidence.products, await completedFindings(["opportunity", "competitor", "store"]));
           return { done: ["growth"] };
         })
         .addEdge(START, "coordinate")
@@ -474,9 +478,9 @@ export function createResearchAgent(options: {
         .compile({ checkpointer: journal.checkpointer });
       await graph.invoke({ done: [] }, { configurable: { thread_id: journal.id }, signal, maxConcurrency: 3, recursionLimit: 20 });
       signal.throwIfAborted();
-      const stored = journal.read("store");
+      const stored = await journal.read("store");
       const proposal = stored?.artifact ? proposalArtifactSchema.parse(stored.artifact) : { briefing: null, suggestions: [], evidenceCoverage: own.coverage };
-      return { ...proposal, research: journal.report() };
+      return { ...proposal, research: await journal.report() };
     },
   };
 }

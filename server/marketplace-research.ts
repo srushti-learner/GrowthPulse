@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import type Database from "better-sqlite3";
+import type { SqlDatabase } from "./sql-database.js";
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import { parse, CsvError } from "csv-parse/sync";
 import { z } from "zod";
@@ -307,65 +307,70 @@ export function importMarketplaceCsv(product: Product, csv: string) {
 }
 
 type JobRow = { id: string; product_id: string; fingerprint: string; status: string; result_json: string | null; error: string | null; lease_until: number; request_key: string; input_hash: string };
-export function marketplaceStore(database: Database.Database) {
-  function authorize(ownerId: string, businessId: string, productId: string) {
-    if (!database.prepare(`SELECT p.id FROM products p JOIN businesses b ON b.id = p.business_id
+export function marketplaceStore(database: SqlDatabase) {
+  async function authorize(ownerId: string, businessId: string, productId: string) {
+    if (!await database.prepare(`SELECT p.id FROM products p JOIN businesses b ON b.id = p.business_id
       WHERE p.id = ? AND b.id = ? AND b.owner_id = ?`).get(productId, businessId, ownerId)) throw new AgentError(404, "Product not found.");
   }
-  function expire() {
-    database.prepare("UPDATE marketplace_research SET status = 'failed', error = ? WHERE status = 'running' AND lease_until < ?")
+  async function expire() {
+    await database.prepare("UPDATE marketplace_research SET status = 'failed', error = ? WHERE status = 'running' AND lease_until < ?")
       .run("Marketplace research was interrupted. Saved evidence remains available. No automatic retry was made.", Date.now());
   }
-  function latest(productId: string) {
+  async function latest(productId: string) {
     return database.prepare<[string], JobRow>("SELECT * FROM marketplace_research WHERE product_id = ? ORDER BY rowid DESC LIMIT 1").get(productId);
   }
-  function saved(productId: string) {
+  async function saved(productId: string) {
     return database.prepare<[string], JobRow>("SELECT * FROM marketplace_research WHERE product_id = ? AND result_json IS NOT NULL ORDER BY rowid DESC LIMIT 1").get(productId);
   }
   return {
-    marketplaceState(ownerId: string, businessId: string, productId: string, fingerprint: string) {
-      authorize(ownerId, businessId, productId); expire();
-      const current = latest(productId), stored = saved(productId);
+    async marketplaceState(ownerId: string, businessId: string, productId: string, fingerprint: string) {
+      await authorize(ownerId, businessId, productId); await expire();
+      const current = await latest(productId), stored = await saved(productId);
       const result = stored?.result_json ? marketplaceReportSchema.parse(JSON.parse(stored.result_json)) : null;
       return { report: result, stale: !!result && result.fingerprint !== fingerprint, running: current?.status === "running", error: current?.status === "failed" ? current.error : null };
     },
-    marketplaceRequest(ownerId: string, businessId: string, productId: string, requestKey: string, inputHash: string) {
-      authorize(ownerId, businessId, productId); expire();
-      const existing = database.prepare<[string, string], JobRow>("SELECT * FROM marketplace_research WHERE product_id = ? AND request_key = ?").get(productId, requestKey);
+    async marketplaceRequest(ownerId: string, businessId: string, productId: string, requestKey: string, inputHash: string) {
+      await authorize(ownerId, businessId, productId); await expire();
+      const existing = await database.prepare<[string, string], JobRow>("SELECT * FROM marketplace_research WHERE product_id = ? AND request_key = ?").get(productId, requestKey);
       if (existing && existing.input_hash !== inputHash) throw new AgentError(409, "This request key was used with different marketplace evidence.");
       return !!existing;
     },
-    beginMarketplace(ownerId: string, businessId: string, productId: string, fingerprint: string, requestKey: string, inputHash: string) {
-      return database.transaction(() => {
-        authorize(ownerId, businessId, productId); expire();
-        if (latest(productId)?.status === "running") throw new AgentError(409, "Marketplace research is already running for this product. Reload its saved status.");
+    async beginMarketplace(ownerId: string, businessId: string, productId: string, fingerprint: string, requestKey: string, inputHash: string): Promise<{ id: string; leaseUntil: number; started: boolean }> {
+      return database.transaction(async () => {
+        await authorize(ownerId, businessId, productId); await expire();
+        const existing = await database.prepare<[string, string], JobRow>("SELECT * FROM marketplace_research WHERE product_id = ? AND request_key = ?").get(productId, requestKey);
+        if (existing) {
+          if (existing.input_hash !== inputHash) throw new AgentError(409, "This request key was used with different marketplace evidence.");
+          return { id: existing.id, leaseUntil: existing.lease_until, started: false };
+        }
+        if ((await latest(productId))?.status === "running") throw new AgentError(409, "Marketplace research is already running for this product. Reload its saved status.");
         const id = randomUUID(), leaseUntil = Date.now() + marketplaceLimits.milliseconds + 5000;
-        database.prepare(`INSERT INTO marketplace_research (id, business_id, product_id, fingerprint, request_key, input_hash, status, lease_until)
+        await database.prepare(`INSERT INTO marketplace_research (id, business_id, product_id, fingerprint, request_key, input_hash, status, lease_until)
           VALUES (?, ?, ?, ?, ?, ?, 'running', ?)`).run(id, businessId, productId, fingerprint, requestKey, inputHash, leaseUntil);
-        return { id, leaseUntil };
+        return { id, leaseUntil, started: true };
       })();
     },
-    finishMarketplace(ownerId: string, businessId: string, productId: string, id: string, result: MarketplaceReport) {
-      authorize(ownerId, businessId, productId);
+    async finishMarketplace(ownerId: string, businessId: string, productId: string, id: string, result: MarketplaceReport) {
+      await authorize(ownerId, businessId, productId);
       const parsed = marketplaceReportSchema.parse(result);
       if (parsed.productId !== productId) throw new AgentError(409, "Marketplace evidence belongs to another product.");
-      const changed = database.prepare(`UPDATE marketplace_research SET status = 'completed', result_json = ?, error = NULL
+      const changed = await database.prepare(`UPDATE marketplace_research SET status = 'completed', result_json = ?, error = NULL
         WHERE id = ? AND product_id = ? AND fingerprint = ? AND status = 'running' AND lease_until >= ?`)
         .run(JSON.stringify(parsed), id, productId, parsed.fingerprint, Date.now());
       if (!changed.changes) throw new AgentError(409, "Marketplace research expired. Reload saved results before trying again.");
     },
-    failMarketplace(ownerId: string, businessId: string, productId: string, id: string, message: string) {
-      authorize(ownerId, businessId, productId);
-      database.prepare("UPDATE marketplace_research SET status = 'failed', error = ? WHERE id = ? AND product_id = ? AND status = 'running'")
+    async failMarketplace(ownerId: string, businessId: string, productId: string, id: string, message: string) {
+      await authorize(ownerId, businessId, productId);
+      await database.prepare("UPDATE marketplace_research SET status = 'failed', error = ? WHERE id = ? AND product_id = ? AND status = 'running'")
         .run(message.slice(0, 500), id, productId);
     },
-    updateMarketplace(ownerId: string, businessId: string, productId: string, expected: MarketplaceReport, next: MarketplaceReport) {
-      return database.transaction(() => {
-        authorize(ownerId, businessId, productId); expire();
-        if (latest(productId)?.status === "running") throw new AgentError(409, "Wait for marketplace research to finish before changing its reviewed matches.");
-        const current = saved(productId);
+    async updateMarketplace(ownerId: string, businessId: string, productId: string, expected: MarketplaceReport, next: MarketplaceReport) {
+      return database.transaction(async () => {
+        await authorize(ownerId, businessId, productId); await expire();
+        if ((await latest(productId))?.status === "running") throw new AgentError(409, "Wait for marketplace research to finish before changing its reviewed matches.");
+        const current = await saved(productId);
         if (!current || current.result_json !== JSON.stringify(expected)) throw new AgentError(409, "Marketplace evidence or reviewed matches changed. Reload before saving.");
-        database.prepare("UPDATE marketplace_research SET result_json = ? WHERE id = ?")
+        await database.prepare("UPDATE marketplace_research SET result_json = ? WHERE id = ?")
           .run(JSON.stringify(marketplaceReportSchema.parse(next)), current.id);
       })();
     },

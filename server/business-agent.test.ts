@@ -701,7 +701,7 @@ describe("business understanding API", () => {
     store = openStore(path); complete = model(); scanner.mockReset().mockResolvedValue(structuredClone(scan));
     app = createApp({ store, scanner, agent: createBusinessAgent({ complete }) });
   });
-  afterEach(() => { store.close(); rmSync(directory, { recursive: true, force: true }); });
+  afterEach(async () => { await store.close(); rmSync(directory, { recursive: true, force: true }); });
   async function owner(email = "owner@example.test", website = url) {
     const account = await request(app).post("/api/auth/register").set("Origin", origin).send({ name: "Private owner name", email, password: "private account password" }).expect(201);
     const cookie = String(account.headers["set-cookie"][0]).split(";")[0];
@@ -721,7 +721,7 @@ describe("business understanding API", () => {
   it.each([true, false])("streams provisional snapshots and persists only valid completed results (valid=%s)", async (valid) => {
     const user = await owner();
     complete.mockReset().mockResolvedValueOnce(tool("scan_website", {})).mockImplementationOnce(async (_input, _signal, onInput) => {
-      expect(store.latestUnderstanding(user.userId, user.business.id)).toBeNull();
+      expect(await store.latestUnderstanding(user.userId, user.business.id)).toBeNull();
       onInput?.({ briefing: { summary: briefing.summary } });
       onInput?.({ briefing: { summary: briefing.summary } });
       return tool("propose_business", valid ? referencedProposal : {
@@ -736,7 +736,7 @@ describe("business understanding API", () => {
     const events = response.text.trim().split("\n").map((line: string) => understandingStreamEventSchema.parse(JSON.parse(line)));
     expect(events.filter((event) => event.type === "phase").map((event) => event.phase)).toEqual(["connecting", "scanning", "analysing", "validating"]);
     expect(events.filter((event) => event.type === "briefing")).toEqual([{ type: "briefing", briefing: { summary: { text: briefing.summary.text } } }]);
-    const saved = store.latestUnderstanding(user.userId, user.business.id);
+    const saved = await store.latestUnderstanding(user.userId, user.business.id);
     if (valid) {
       expect(events.at(-1)).toEqual({ type: "complete", understanding: saved });
       expect(saved?.briefing).toEqual(briefing);
@@ -744,9 +744,9 @@ describe("business understanding API", () => {
       expect(events.at(-1)).toMatchObject({ type: "error", status: 502, message: expect.stringContaining("invalid or unsupported") });
       expect(saved).toBeNull();
     }
-    expect(store.getBusiness(user.userId, user.business.id)?.description).toBe("Private profile notes");
-    expect(store.listScans(user.userId, user.business.id)).toHaveLength(1);
-    expect(store.listProducts(user.userId, user.business.id)).toEqual([]);
+    expect((await store.getBusiness(user.userId, user.business.id))?.description).toBe("Private profile notes");
+    expect(await store.listScans(user.userId, user.business.id)).toHaveLength(1);
+    expect(await store.listProducts(user.userId, user.business.id)).toEqual([]);
     expect(complete).toHaveBeenCalledTimes(2);
   });
 
@@ -779,12 +779,12 @@ describe("business understanding API", () => {
         }
       } finally { reader.releaseLock(); }
       expect(providerSignal?.aborted).toBe(false);
-      expect(store.latestUnderstanding(user.userId, user.business.id)).toBeNull();
+      expect(await store.latestUnderstanding(user.userId, user.business.id)).toBeNull();
       controller.abort();
       await vi.waitFor(() => expect(providerSignal?.aborted).toBe(true));
-      expect(store.latestUnderstanding(user.userId, user.business.id)).toBeNull();
-      expect(store.listScans(user.userId, user.business.id)).toHaveLength(1);
-      expect(store.getBusiness(user.userId, user.business.id)?.description).toBe("Private profile notes");
+      expect(await store.latestUnderstanding(user.userId, user.business.id)).toBeNull();
+      expect(await store.listScans(user.userId, user.business.id)).toHaveLength(1);
+      expect((await store.getBusiness(user.userId, user.business.id))?.description).toBe("Private profile notes");
       expect(complete).toHaveBeenCalledTimes(2);
     } finally {
       controller.abort();
@@ -803,19 +803,19 @@ describe("business understanding API", () => {
     expect(result.briefing).toEqual(briefing);
     expect(result.productImportId).toBeTypeOf("string");
     expect(scanner).toHaveBeenCalledWith(url, expect.any(AbortSignal));
-    expect(store.getBusiness(user.userId, user.business.id)?.description).toBe("Private profile notes");
-    expect(store.listProducts(user.userId, user.business.id)).toEqual([]);
-    expect(store.getProductImport(user.userId, user.business.id, result.productImportId).committed).toBe(false);
+    expect((await store.getBusiness(user.userId, user.business.id))?.description).toBe("Private profile notes");
+    expect(await store.listProducts(user.userId, user.business.id)).toEqual([]);
+    expect((await store.getProductImport(user.userId, user.business.id, result.productImportId)).committed).toBe(false);
     const sent = JSON.stringify(complete.mock.calls);
     expect(sent).not.toContain("Private profile notes");
     expect(sent).not.toContain("Private owner name");
     expect(sent).not.toContain("owner@example.test");
     expect(sent).not.toContain("private account password");
-    store.close(); store = openStore(path);
+    await store.close(); store = openStore(path);
     app = createApp({ store, scanner });
     const restored = await request(app).get(`/api/businesses/${user.business.id}/understanding`).set("Cookie", user.cookie).expect(200);
     expect(restored.body).toEqual({ ...response.body, lastSuccessfulUnderstanding: result, job: null });
-    expect(store.getScan(user.userId, user.business.id, result.scanId)?.pages[0].text).toBe(quote);
+    expect((await store.getScan(user.userId, user.business.id, result.scanId))?.pages[0].text).toBe(quote);
     const database = new Database(path);
     try {
       database.prepare("UPDATE business_understandings SET result_json = json_remove(result_json, '$.briefing') WHERE id = ?").run(result.id);
@@ -835,7 +835,7 @@ describe("business understanding API", () => {
     expect(saved.briefing.insights).toEqual(briefing.insights);
     expect(saved.validationIssues).toContainEqual({ path: "briefing.summary.sources", code: "invalid_reference" });
     expect(saved.warnings).toContain(partialBriefingNotice);
-    store.close(); store = openStore(path); app = createApp({ store });
+    await store.close(); store = openStore(path); app = createApp({ store });
     const restored = await request(app).get(`/api/businesses/${user.business.id}/understanding`).set("Cookie", user.cookie).expect(200);
     expect(restored.body).toMatchObject({ understanding: saved, lastSuccessfulUnderstanding: saved });
     expect(complete).toHaveBeenCalledTimes(2);
@@ -846,39 +846,39 @@ describe("business understanding API", () => {
     complete.mockReset().mockResolvedValueOnce(tool("scan_website", {}))
       .mockResolvedValueOnce(tool("propose_business", { ...referencedProposal, briefing: null }));
     await start(user).expect(502);
-    expect(store.lastSuccessfulUnderstanding(user.userId, user.business.id)?.id).toBe(saved.id);
-    const latest = store.saveUnderstanding(user.userId, {
+    expect((await store.lastSuccessfulUnderstanding(user.userId, user.business.id))?.id).toBe(saved.id);
+    const latest = await store.saveUnderstanding(user.userId, {
       ...saved, id: randomUUID(), createdAt: new Date(Date.parse(saved.createdAt) + 1000).toISOString(),
       briefing: null, suggestions: [], productImportId: null,
     });
-    store.close(); store = openStore(path); app = createApp({ store });
+    await store.close(); store = openStore(path); app = createApp({ store });
     const restored = await request(app).get(`/api/businesses/${user.business.id}/understanding`).set("Cookie", user.cookie).expect(200);
     expect(restored.body).toEqual({ understanding: latest, lastSuccessfulUnderstanding: saved, job: null });
     await apply(user, saved.id).expect(409);
-    expect(store.getBusiness(user.userId, user.business.id)?.description).toBe("Private profile notes");
+    expect((await store.getBusiness(user.userId, user.business.id))?.description).toBe("Private profile notes");
     expect(complete).toHaveBeenCalledTimes(2);
   });
 
   it("scopes historical briefings to the owner, business, normalized current website and usable scan", async () => {
     const alice = await owner(), bob = await owner("bob@example.test");
     const saved = (await start(alice).expect(201)).body.understanding;
-    expect(store.lastSuccessfulUnderstanding(bob.userId, alice.business.id)).toBeNull();
-    expect(store.lastSuccessfulUnderstanding(alice.userId, bob.business.id)).toBeNull();
-    expect(store.lastSuccessfulUnderstanding(bob.userId, bob.business.id)).toBeNull();
-    store.saveBusiness(alice.userId, { ...alice.business, website: "https://SHOP.EXAMPLE.COM" }, alice.business.id);
-    expect(store.lastSuccessfulUnderstanding(alice.userId, alice.business.id)?.id).toBe(saved.id);
+    expect(await store.lastSuccessfulUnderstanding(bob.userId, alice.business.id)).toBeNull();
+    expect(await store.lastSuccessfulUnderstanding(alice.userId, bob.business.id)).toBeNull();
+    expect(await store.lastSuccessfulUnderstanding(bob.userId, bob.business.id)).toBeNull();
+    await store.saveBusiness(alice.userId, { ...alice.business, website: "https://SHOP.EXAMPLE.COM" }, alice.business.id);
+    expect((await store.lastSuccessfulUnderstanding(alice.userId, alice.business.id))?.id).toBe(saved.id);
     for (const website of ["https://different.example.com/", "https://shop.example.com/another-path", ""]) {
-      store.saveBusiness(alice.userId, { ...alice.business, website }, alice.business.id);
+      await store.saveBusiness(alice.userId, { ...alice.business, website }, alice.business.id);
       const response = await request(app).get(`/api/businesses/${alice.business.id}/understanding`).set("Cookie", alice.cookie).expect(200);
       expect(response.body.understanding).toBeNull();
       expect(response.body.lastSuccessfulUnderstanding).toBeNull();
     }
-    store.saveBusiness(alice.userId, alice.business, alice.business.id);
-    const failed = store.saveScan(alice.userId, alice.business.id, { ...scan, status: "failed", pages: [] })!;
-    store.saveUnderstanding(alice.userId, { ...saved, id: randomUUID(), scanId: failed.id,
+    await store.saveBusiness(alice.userId, alice.business, alice.business.id);
+    const failed = (await store.saveScan(alice.userId, alice.business.id, { ...scan, status: "failed", pages: [] }))!;
+    await store.saveUnderstanding(alice.userId, { ...saved, id: randomUUID(), scanId: failed.id,
       createdAt: new Date(Date.parse(saved.createdAt) + 1000).toISOString() });
-    expect(store.latestUnderstanding(alice.userId, alice.business.id)?.scanStatus).toBe("failed");
-    expect(store.lastSuccessfulUnderstanding(alice.userId, alice.business.id)?.id).toBe(saved.id);
+    expect((await store.latestUnderstanding(alice.userId, alice.business.id))?.scanStatus).toBe("failed");
+    expect((await store.lastSuccessfulUnderstanding(alice.userId, alice.business.id))?.id).toBe(saved.id);
     expect(complete).toHaveBeenCalledTimes(2);
   });
 
@@ -901,19 +901,19 @@ describe("business understanding API", () => {
     const saved = await apply(user, draft.id, { description }).expect(200);
     expect(saved.body.business).toMatchObject({ name: user.business.name, website: url, category: user.business.category, description });
     expect(saved.body.understanding.reviewedAt).toBeTypeOf("string");
-    const activityCount = store.listActivity(user.userId, user.business.id).length;
+    const activityCount = (await store.listActivity(user.userId, user.business.id)).length;
     await apply(user, draft.id, { description }).expect(200);
-    expect(store.listActivity(user.userId, user.business.id)).toHaveLength(activityCount);
+    expect(await store.listActivity(user.userId, user.business.id)).toHaveLength(activityCount);
     expect(complete).toHaveBeenCalledTimes(2);
     expect(scanner).toHaveBeenCalledOnce();
-    expect(store.listProducts(user.userId, user.business.id)).toEqual([]);
-    store.close(); store = openStore(path); app = createApp({ store });
+    expect(await store.listProducts(user.userId, user.business.id)).toEqual([]);
+    await store.close(); store = openStore(path); app = createApp({ store });
     const restored = await request(app).get(`/api/businesses/${user.business.id}/understanding`).set("Cookie", user.cookie).expect(200);
     expect(restored.body.understanding.reviewedAt).toBe(saved.body.understanding.reviewedAt);
-    store.saveBusiness(user.userId, { ...saved.body.business, description: "A later intentional owner edit." }, user.business.id);
-    expect(store.latestUnderstanding(user.userId, user.business.id)?.reviewedAt).toBe(saved.body.understanding.reviewedAt);
+    await store.saveBusiness(user.userId, { ...saved.body.business, description: "A later intentional owner edit." }, user.business.id);
+    expect((await store.latestUnderstanding(user.userId, user.business.id))?.reviewedAt).toBe(saved.body.understanding.reviewedAt);
     await apply(user, draft.id, { description }).expect(409);
-    expect(store.getBusiness(user.userId, user.business.id)?.description).toBe("A later intentional owner edit.");
+    expect((await store.getBusiness(user.userId, user.business.id))?.description).toBe("A later intentional owner edit.");
   });
 
   it("requires ownership and origin for approval and rejects browser-supplied profile identity fields", async () => {
@@ -924,7 +924,7 @@ describe("business understanding API", () => {
     await request(app).post(`/api/businesses/${alice.business.id}/understanding/${draft.id}/apply`).set("Origin", origin).send({}).expect(401);
     await request(app).post(`/api/businesses/${alice.business.id}/understanding/${draft.id}/apply`).set("Cookie", alice.cookie).send({}).expect(403);
     await apply(alice, draft.id, { name: "Browser override" }).expect(400);
-    expect(store.latestUnderstanding(alice.userId, alice.business.id)?.reviewedAt).toBeNull();
+    expect((await store.latestUnderstanding(alice.userId, alice.business.id))?.reviewedAt).toBeNull();
     expect(complete).toHaveBeenCalledTimes(2);
   });
 
@@ -932,10 +932,10 @@ describe("business understanding API", () => {
     const user = await owner();
     const draft = (await start(user).expect(201)).body.understanding;
     await apply(user, draft.id, { expectedUpdatedAt: "2000-01-01T00:00:00.000Z" }).expect(409);
-    const changed = store.saveBusiness(user.userId, { ...user.business, website: "https://different.example.com/" }, user.business.id)!;
+    const changed = (await store.saveBusiness(user.userId, { ...user.business, website: "https://different.example.com/" }, user.business.id))!;
     await apply({ ...user, business: changed }, draft.id).expect(409);
-    expect(store.getBusiness(user.userId, user.business.id)?.description).toBe(user.business.description);
-    expect(store.latestUnderstanding(user.userId, user.business.id)?.reviewedAt).toBeNull();
+    expect((await store.getBusiness(user.userId, user.business.id))?.description).toBe(user.business.description);
+    expect((await store.latestUnderstanding(user.userId, user.business.id))?.reviewedAt).toBeNull();
   });
 
   it("rolls back both profile changes and completion if activity recording fails", async () => {
@@ -947,22 +947,22 @@ describe("business understanding API", () => {
       database.exec("CREATE TRIGGER fail_review_activity BEFORE INSERT ON activities BEGIN SELECT RAISE(ABORT, 'Activity write failed'); END;");
       await apply(user, draft.id).expect(500);
       expect(log).toHaveBeenCalled();
-      expect(store.getBusiness(user.userId, user.business.id)?.description).toBe(user.business.description);
-      expect(store.latestUnderstanding(user.userId, user.business.id)?.reviewedAt).toBeNull();
+      expect((await store.getBusiness(user.userId, user.business.id))?.description).toBe(user.business.description);
+      expect((await store.latestUnderstanding(user.userId, user.business.id))?.reviewedAt).toBeNull();
     } finally { database.close(); log.mockRestore(); }
   });
 
   it.each([true, false])("upgrades old reviews without repeating already-applied suggestions (matches profile: %s)", async (matches) => {
     const user = await owner();
     await start(user).expect(201);
-    if (matches) store.saveBusiness(user.userId, { ...user.business, description: quote }, user.business.id);
-    store.close();
+    if (matches) await store.saveBusiness(user.userId, { ...user.business, description: quote }, user.business.id);
+    await store.close();
     const database = new Database(path);
     try {
       database.exec("ALTER TABLE business_understandings DROP COLUMN reviewed_at; DELETE FROM schema_migrations WHERE version = 5;");
     } finally { database.close(); }
     store = openStore(path);
-    const restored = store.latestUnderstanding(user.userId, user.business.id)!;
+    const restored = (await store.latestUnderstanding(user.userId, user.business.id))!;
     if (matches) expect(restored.reviewedAt).toBeTypeOf("string");
     else expect(restored.reviewedAt).toBeNull();
   });
@@ -974,7 +974,7 @@ describe("business understanding API", () => {
     expect(response.body.error).toContain("ANTHROPIC_API_KEY");
     await start(user).set("Accept", "application/x-ndjson").expect(503).expect("Content-Type", /application\/json/);
     expect(scanner).not.toHaveBeenCalled();
-    expect(store.getBusiness(user.userId, user.business.id)).toBeDefined();
+    expect(await store.getBusiness(user.userId, user.business.id)).toBeDefined();
   });
 
   it("reports provider failure after scanning without applying or persisting a fake completed review", async () => {
@@ -986,10 +986,10 @@ describe("business understanding API", () => {
       const response = await start(user).expect(502);
       expect(response.body.error).toContain("AI provider could not complete");
       expect(JSON.stringify(log.mock.calls)).not.toContain("private-provider-error-body");
-      expect(store.latestUnderstanding(user.userId, user.business.id)).toBeNull();
-      expect(store.listScans(user.userId, user.business.id)).toHaveLength(1);
-      expect(store.listProducts(user.userId, user.business.id)).toEqual([]);
-      expect(store.getBusiness(user.userId, user.business.id)?.description).toBe("Private profile notes");
+      expect(await store.latestUnderstanding(user.userId, user.business.id)).toBeNull();
+      expect(await store.listScans(user.userId, user.business.id)).toHaveLength(1);
+      expect(await store.listProducts(user.userId, user.business.id)).toEqual([]);
+      expect((await store.getBusiness(user.userId, user.business.id))?.description).toBe("Private profile notes");
     } finally { log.mockRestore(); }
   });
 
@@ -1007,9 +1007,9 @@ describe("business understanding API", () => {
       expect(events.some((event) => event.type === "briefing")).toBe(true);
       expect(events.at(-1)).toMatchObject({ type: "error", status: 502, message: expect.stringContaining("response limit") });
       expect(events.some((event) => event.type === "complete")).toBe(false);
-      expect(store.latestUnderstanding(user.userId, user.business.id)).toEqual(previous.body.understanding);
-      expect(store.listScans(user.userId, user.business.id)).toHaveLength(1);
-      expect(store.getBusiness(user.userId, user.business.id)?.description).toBe("Private profile notes");
+      expect(await store.latestUnderstanding(user.userId, user.business.id)).toEqual(previous.body.understanding);
+      expect(await store.listScans(user.userId, user.business.id)).toHaveLength(1);
+      expect((await store.getBusiness(user.userId, user.business.id))?.description).toBe("Private profile notes");
       expect(complete).toHaveBeenCalledTimes(4);
     } finally { log.mockRestore(); }
   });
@@ -1029,7 +1029,7 @@ describe("business understanding API", () => {
     expect(response.body.understanding.scanStatus).toBe("failed");
     expect(response.body.understanding.warnings.join(" ")).toContain("robots.txt");
     expect(complete).toHaveBeenCalledOnce();
-    expect(store.listScans(user.userId, user.business.id)[0].status).toBe("failed");
+    expect((await store.listScans(user.userId, user.business.id))[0].status).toBe("failed");
 
     const database = new Database(path);
     try {
@@ -1059,7 +1059,7 @@ describe("business understanding API", () => {
     const response = await start(user).expect(201);
     expect(response.body.understanding).toMatchObject({ scanStatus: "complete", suggestions: [], productImportId: null });
     expect(response.body.understanding.warnings.join(" ")).toContain("could not support");
-    expect(store.getBusiness(user.userId, user.business.id)?.description).toBe("Private profile notes");
+    expect((await store.getBusiness(user.userId, user.business.id))?.description).toBe("Private profile notes");
     await apply(user, response.body.understanding.id).expect(400);
   });
 

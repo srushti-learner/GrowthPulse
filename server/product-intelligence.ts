@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
-import type Database from "better-sqlite3";
+import type { SqlDatabase } from "./sql-database.js";
 import type { Product } from "../shared/products.js";
 import { productAnalysisOutputSchema, savedProductAnalysisSchema, type ProductAnalysisOutput, type ProductEvidence, type SavedProductAnalysis } from "../shared/product-intelligence.js";
 import { createAgentModel, AgentError, providerFailure, type AgentModel } from "./business-agent.js";
@@ -113,54 +113,56 @@ export function createProductAnalyst(options: { apiKey?: string; model?: string;
 }
 export type ProductAnalyst = ReturnType<typeof createProductAnalyst>;
 type AnalysisRow = { status: "running" | "completed" | "failed"; result_json: string | null; error: string | null; fingerprint: string; lease_until: number };
-export function productIntelligenceStore(database: Database.Database) {
-  function authorize(ownerId: string, businessId: string, productId?: string) {
-    if (!database.prepare("SELECT id FROM businesses WHERE id = ? AND owner_id = ?").get(businessId, ownerId)) throw new AgentError(404, "Business not found.");
-    if (productId && !database.prepare("SELECT id FROM products WHERE business_id = ? AND id = ?").get(businessId, productId)) throw new AgentError(404, "Product not found.");
+export function productIntelligenceStore(database: SqlDatabase) {
+  async function authorize(ownerId: string, businessId: string, productId?: string) {
+    if (!await database.prepare("SELECT id FROM businesses WHERE id = ? AND owner_id = ?").get(businessId, ownerId)) throw new AgentError(404, "Business not found.");
+    if (productId && !await database.prepare("SELECT id FROM products WHERE business_id = ? AND id = ?").get(businessId, productId)) throw new AgentError(404, "Product not found.");
   }
-  function expire() {
-    database.prepare("UPDATE product_analyses SET status = 'failed', error = ? WHERE status = 'running' AND lease_until < ?")
+  async function expire() {
+    await database.prepare("UPDATE product_analyses SET status = 'failed', error = ? WHERE status = 'running' AND lease_until < ?")
       .run("This product analysis was interrupted. No automatic retry was made. You can explicitly try again.", Date.now());
   }
   return {
-    productAnalysisSummaries(ownerId: string, businessId: string) {
-      authorize(ownerId, businessId);
+    async productAnalysisSummaries(ownerId: string, businessId: string) {
+      await authorize(ownerId, businessId);
       return database.prepare<[string], { productId: string; fingerprint: string; createdAt: string }>(
         "SELECT product_id AS productId, fingerprint, completed_at AS createdAt FROM product_analyses WHERE business_id = ? AND status = 'completed'").all(businessId);
     },
-    productAnalysisState(ownerId: string, businessId: string, productId: string, fingerprint: string) {
-      authorize(ownerId, businessId, productId); expire();
-      const current = database.prepare<[string, string], AnalysisRow>("SELECT * FROM product_analyses WHERE product_id = ? AND fingerprint = ?").get(productId, fingerprint);
-      const latest = current?.status === "completed" ? current : database.prepare<[string], AnalysisRow>(
+    async productAnalysisState(ownerId: string, businessId: string, productId: string, fingerprint: string) {
+      await authorize(ownerId, businessId, productId); await expire();
+      const current = await database.prepare<[string, string], AnalysisRow>("SELECT * FROM product_analyses WHERE product_id = ? AND fingerprint = ?").get(productId, fingerprint);
+      const latest = current?.status === "completed" ? current : await database.prepare<[string], AnalysisRow>(
         "SELECT * FROM product_analyses WHERE product_id = ? AND status = 'completed' ORDER BY completed_at DESC, rowid DESC LIMIT 1").get(productId);
       const analysis = latest?.result_json ? savedProductAnalysisSchema.parse(JSON.parse(latest.result_json)) : null;
-      const running = !!database.prepare("SELECT product_id FROM product_analyses WHERE product_id = ? AND status = 'running'").get(productId);
+      const running = !!await database.prepare("SELECT product_id FROM product_analyses WHERE product_id = ? AND status = 'running'").get(productId);
       return { analysis, stale: !!analysis && analysis.fingerprint !== fingerprint, running, error: current?.status === "failed" ? current.error : null };
     },
-    beginProductAnalysis(ownerId: string, businessId: string, productId: string, fingerprint: string) {
-      return database.transaction(() => {
-        authorize(ownerId, businessId, productId); expire();
-        if (database.prepare("SELECT product_id FROM product_analyses WHERE product_id = ? AND status = 'running'").get(productId)) {
+    async beginProductAnalysis(ownerId: string, businessId: string, productId: string, fingerprint: string) {
+      return database.transaction(async () => {
+        await authorize(ownerId, businessId, productId); await expire();
+        if (await database.prepare("SELECT product_id FROM product_analyses WHERE product_id = ? AND status = 'running'").get(productId)) {
           throw new AgentError(409, "This product already has an analysis running. Reload its saved status instead of starting another.");
         }
         const leaseUntil = Date.now() + productAnalysisTimeout + 5000;
-        database.prepare(`INSERT INTO product_analyses (business_id, product_id, fingerprint, status, lease_until)
-          VALUES (?, ?, ?, 'running', ?) ON CONFLICT(product_id, fingerprint) DO UPDATE SET status = 'running', error = NULL, lease_until = excluded.lease_until`)
+        await database.prepare(`INSERT INTO product_analyses (business_id, product_id, fingerprint, status, lease_until)
+          VALUES (?, ?, ?, 'running', ?) ${database.dialect === "mysql"
+            ? "ON DUPLICATE KEY UPDATE status = 'running', error = NULL, lease_until = VALUES(lease_until)"
+            : "ON CONFLICT(product_id, fingerprint) DO UPDATE SET status = 'running', error = NULL, lease_until = excluded.lease_until"}`)
           .run(businessId, productId, fingerprint, leaseUntil);
         return leaseUntil;
       })();
     },
-    finishProductAnalysis(ownerId: string, businessId: string, analysis: SavedProductAnalysis, leaseUntil: number) {
-      authorize(ownerId, businessId, analysis.productId);
+    async finishProductAnalysis(ownerId: string, businessId: string, analysis: SavedProductAnalysis, leaseUntil: number) {
+      await authorize(ownerId, businessId, analysis.productId);
       const result = savedProductAnalysisSchema.parse(analysis);
-      const changed = database.prepare(`UPDATE product_analyses SET status = 'completed', result_json = ?, completed_at = ?, error = NULL
+      const changed = await database.prepare(`UPDATE product_analyses SET status = 'completed', result_json = ?, completed_at = ?, error = NULL
         WHERE product_id = ? AND fingerprint = ? AND status = 'running' AND lease_until = ? AND lease_until >= ?`)
         .run(JSON.stringify(result), result.createdAt, result.productId, result.fingerprint, leaseUntil, Date.now());
       if (!changed.changes) throw new AgentError(409, "The product analysis lease expired. Reload saved results before trying again.");
     },
-    failProductAnalysis(ownerId: string, businessId: string, productId: string, fingerprint: string, message: string, leaseUntil: number) {
-      authorize(ownerId, businessId, productId);
-      database.prepare("UPDATE product_analyses SET status = 'failed', error = ? WHERE product_id = ? AND fingerprint = ? AND status = 'running' AND lease_until = ?")
+    async failProductAnalysis(ownerId: string, businessId: string, productId: string, fingerprint: string, message: string, leaseUntil: number) {
+      await authorize(ownerId, businessId, productId);
+      await database.prepare("UPDATE product_analyses SET status = 'failed', error = ? WHERE product_id = ? AND fingerprint = ? AND status = 'running' AND lease_until = ?")
         .run(message, productId, fingerprint, leaseUntil);
     },
   };
