@@ -1,0 +1,24 @@
+.marketplace-insights { min-width: 0; }
+.marketplace-insights > p, .marketplace-product > p { max-width: 78ch; }
+.marketplace-insights label { display: grid; gap: .5rem; }
+.marketplace-insights select, .marketplace-insights textarea, .marketplace-insights input[type="file"] { width: 100%; max-width: 100%; min-width: 0; }
+.marketplace-product, .marketplace-research-controls, .marketplace-results { display: grid; gap: 1rem; margin-top: 1rem; }
+.marketplace-research-controls > button { justify-self: start; }
+.marketplace-listings { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 1rem; }
+.marketplace-listing { min-width: 0; padding: 1.25rem; border: 1px solid var(--border); border-radius: 1rem; overflow-wrap: anywhere; }
+.marketplace-listing h3, .marketplace-listing h4 { margin: .8rem 0; }
+.marketplace-listing dl { display: grid; gap: .5rem; margin: 1rem 0; }
+.marketplace-listing dl > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .3rem .8rem; }
+.marketplace-listing dd { margin: 0; }
+.marketplace-listing fieldset { border: 0; padding: 0; min-width: 0; }
+.marketplace-match-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .6rem; }
+.marketplace-match-actions button { white-space: normal; height: auto; min-height: 2.5rem; text-align: left; }
+.marketplace-match-actions button[aria-pressed="true"] { color: #17161c; }
+.marketplace-listing blockquote { margin: 1rem 0; padding-left: 1rem; border-left: 2px solid var(--border); }
+.marketplace-product details > label { margin: 1rem 0; }
+.marketplace-results > section > .marketplace-listing { margin-top: 1rem; }
+.marketplace-customer-voice { display: grid; gap: 1rem; min-width: 0; overflow-wrap: anywhere; }
+.marketplace-customer-voice label { display: grid; gap: .5rem; }
+.marketplace-customer-voice select { width: 100%; min-width: 0; }
+.marketplace-customer-voice blockquote { margin: 1rem 0; padding-left: 1rem; border-left: 2px solid var(--border); }
+.marketplace-customer-voice .marketplace-listing { margin: 1rem 0; }

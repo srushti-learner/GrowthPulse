@@ -10,9 +10,54 @@ implemented features.
 
 ## Starting point and scope
 
-Checkpoint 1 is implemented: a responsive application shell, Express health API,
-environment validation, and development/build/start commands. Later checkpoints
-remain planned; no database or AI integration is implemented.
+Checkpoints 1, 2, 4, and 5 are implemented locally: the application shell, health API,
+SQLite persistence, signup/login/logout, owner-scoped business profiles, and
+activity/evidence references, plus manual public website scans with saved
+results, plus a manual catalogue and reviewed CSV/saved-website product imports.
+The full demo storefront (checkpoint 3) is deferred by owner choice; small
+isolated scanner fixtures remain. Later feature checkpoints and GoDaddy
+integration remain planned. A bounded agent-led onboarding layer now uses the
+official Anthropic SDK and scanner tool; live use requires a server-side key.
+The local research foundation now adds LangGraph orchestration and hosted,
+search-only Tavily MCP. This does not mark the remaining feature checkpoints
+complete.
+
+### Implemented local research foundation
+
+The existing SQLite queue and in-process worker now coordinate Store,
+Competitor, Customer, Pricing, Product Opportunity and Growth Strategy roles.
+Independent branches overlap; dependent analyses wait for their evidence.
+Specialist findings and usage are saved independently under the worker's lease,
+with official SQLite graph checkpoints and explicit retry/reuse of matching
+artifacts. Changed inputs invalidate downstream analyses. The interface exposes
+one specialist panel at a time and preserves findings across reload/cancellation.
+Suggestions never automatically modify the owner profile or catalogue.
+
+Tavily discovery is included in every new UI analysis under a combined
+business/competitor approval and requires a local server-side `TAVILY_API_KEY`.
+Automatic onboarding includes it after that approval; the initial public scan
+still makes no AI or Tavily requests, and existing reports are not rerun
+automatically. The hosted connection
+has not been live-verified. Search leads are rechecked with the existing safe
+scanner before becoming evidence. Current per-attempt caps allow six basic
+searches, six competitor sites, five importable products per site, fourteen model
+calls and ten minutes. Older jobs retain their original budgets. These are conservative implementation defaults, not
+account-wide free-tier or monthly billing guarantees. Competitor products remain
+research evidence, not merchant catalogue imports.
+
+Customer Intelligence deliberately reports evidence gaps until a permitted
+individual-review connector exists. Pricing is a deterministic GTIN/dated-offer
+observation, not a fully qualified price-advantage calculation. Opportunity and
+Growth propose experiments, not verified demand or performance. Remaining work
+includes live provider verification, review-source permissions/integration and
+production MySQL queue/journal/checkpoint compatibility on the selected GoDaddy
+host. See README for the implemented request flow and local configuration.
+
+**Approved local database adjustment:** use file-based SQLite now, without
+Docker or a database server. GoDaddy-managed MySQL remains the production target.
+Moving to MySQL requires explicit migrations and compatibility checks, not just
+a connection-string change. The local SQLite entry point blocks production
+startup until MySQL integration is implemented.
 
 **Required application host:** the selected GoDaddy Node.js hosting option.
 Express runs the backend and serves the built React frontend. Architecture and
@@ -23,14 +68,16 @@ Build the central experience:
 
 **Understand -> Discover -> Simulate -> Improve -> Approve -> Verify -> Learn**
 
-Use the controlled Urban Threads business and synthetic conversations for the
-demo. Defer live WhatsApp, marketplace, and analytics integrations. Keep website
+Use permitted public pages for read-only dry runs and small synthetic fixtures
+for repeatable tests instead of building the Urban Threads demo storefront now.
+Defer live WhatsApp, marketplace, and analytics integrations. Keep website
 scanning, product imports, and conversation imports usable independently.
 
 The main ordering changes from the overview are:
 
 - Establish database contracts and business ownership before private imports.
-- Build the controlled demo website and sample data before scanning it.
+- Test scanning with isolated synthetic transport fixtures and permitted public
+  targets; a complete demo website is not a scanner prerequisite.
 - Establish the reusable AI boundary before conversation analysis.
 - Record evidence and activity as features are built, not at the end.
 - Treat the simulator as independent of AI and improvement execution.
@@ -44,8 +91,10 @@ The main ordering changes from the overview are:
 | React | Components, props, state, forms, effects | Checkpoint 1 |
 | HTTP and Express | Requests, responses, methods, status codes, middleware | Checkpoint 1 |
 | Local development tools | Git, Node.js, npm, editor | Checkpoint 1 |
-| SQL and MySQL | Running MySQL server, tables, keys, joins, transactions, migrations | Checkpoint 2 |
+| SQL and local SQLite | Tables, keys, joins, transactions, versioned migrations; no separate server needed | Checkpoint 2 |
+| GoDaddy MySQL | Verify plan/access, connection pool, MySQL migrations, data transfer, and compatibility tests | Before production deployment |
 | Anthropic access | Server-side API key, available model, billing and spend limit | Real AI calls in checkpoint 6 |
+| Tavily access | Optional server-side key, current credit/billing controls and explicit public research consent | Live competitor discovery |
 | Browser verification | Playwright browser binaries and a supported execution environment | Checkpoint 11 |
 | Hosting capabilities | Verify the specific GoDaddy plan rather than assuming support | Investigate early; required for checkpoint 12 |
 
@@ -63,8 +112,8 @@ and simulated metrics.
 ```mermaid
 flowchart TD
     A["1. App skeleton"] --> B["2. Database and contracts"]
-    B --> C["3. Demo site and fixtures"]
-    C --> D["4. Safe scanner"]
+    B --> C["3. Optional demo site (deferred)"]
+    B --> D["4. Safe scanner + small fixtures"]
     B --> E["5. Product catalogue"]
     D -->|Website extraction| E
     B --> F["6. AI integration"]
@@ -73,7 +122,7 @@ flowchart TD
     D --> H["8. Profile and opportunities"]
     G --> H
     B --> I["9. Simulator"]
-    C --> J["10. Proposals and approval"]
+    B --> J["10. Proposals and approval"]
     F --> J
     H --> J
     J --> K["11. Apply, verify, rollback"]
@@ -105,11 +154,13 @@ and production builds succeed. No database or AI is required yet.
 
 ## Checkpoint 2: Database, business ownership, and shared contracts
 
-**Depends on:** checkpoint 1 and a running MySQL server.
+**Depends on:** checkpoint 1. SQLite runs inside the local Node.js application.
 
 ### Build
 
-- MySQL connection pool and versioned migrations.
+- Local SQLite storage and versioned, transactional migrations.
+- Signup, login, logout, hashed passwords, and expiring server-side sessions.
+- Protected business pages/APIs; leave the overview public for future account-free scanning.
 - Manual business creation, editing, and retrieval.
 - Zod request/response schemas and shared data shapes.
 - A consistent evidence-reference model, including source, record or page
@@ -117,18 +168,26 @@ and production builds succeed. No database or AI is required yet.
 - Business ownership checks before private imports.
 - Activity recording for important actions.
 
-A local demo may use a deliberately restricted demo identity. Real private data
-requires authentication and server-side authorization; a business ID supplied by
-the browser is not proof of ownership.
+Every saved business belongs to its authenticated owner; a business ID supplied
+by the browser is not proof of ownership. Use synthetic/test data locally.
+Email verification, password recovery, retention/deletion policies, production
+rate-limiter/proxy configuration, and MySQL integration remain pre-deployment work.
 
 **Learn:** SQL, migrations, runtime validation, authorization versus authentication.
 
 **Acceptance:** business data survives restart, invalid requests are rejected,
 and changing business or record identifiers cannot expose another owner's data.
+Logout/expiry revoke access, cross-origin writes are rejected, and business,
+evidence, and activity writes succeed or roll back together.
 
 ## Checkpoint 3: Controlled demo website and sample datasets
 
 **Depends on:** checkpoint 2.
+
+**Deferred by owner choice:** do not build the full storefront now. Use permitted
+public websites for read-only dry runs and isolated synthetic scanner fixtures
+for repeatable tests. Keep future product/conversation fixtures small and clearly
+synthetic. This checkpoint is not a prerequisite for checkpoint 4.
 
 ### Build
 
@@ -143,22 +202,50 @@ and changing business or record identifiers cannot expose another owner's data.
 **Acceptance:** the same starting business, dataset, and website can be restored
 reliably without deleting unrelated data.
 
-**Why now:** scanning, extraction, recommendations, and verification need a stable
-target before their implementation begins.
+Future website-change execution still requires an authorized, writable test or
+staging target. Permission to read a public page is not permission to change it.
 
 ## Checkpoint 4: Website onboarding and safe scanning
 
-**Depends on:** checkpoints 2 and 3.
+**Depends on:** checkpoint 2 and small isolated scan fixtures, not a full demo site.
+
+**Implemented locally:** the public Website screen supports account-free previews
+or owner-scoped saved scans. The separate business agent can now invoke this
+scanner automatically after a profile save with explicit scan/AI permission.
 
 ### Build
 
 - Website URL onboarding, while preserving manual onboarding.
-- Same-domain scanning limited to five pages.
+- Same-domain discovery limited to 20 page attempts, balancing business,
+  collection and product coverage using safe links and published sitemaps.
 - Extraction with Cheerio and persisted evidence with URLs and scan timestamps.
 - Loading, partial-result, and failure states.
 - Destination validation at connection time and for each redirect.
 - Blocking of private/local addresses and cloud metadata endpoints.
 - Request timeouts, response-size limits, and crawl limits.
+- Explicit scan permission, robots.txt/crawl-delay enforcement, and no credentials
+  forwarded to external sites.
+- Static title, description, headings, contact links, CTA labels, and text
+  extraction with truncation/JavaScript limitations made visible.
+- Immutable saved runs, per-page evidence, scan history, and atomic activity
+  recording without changing the owner-entered business profile.
+
+The implementation allows up to 20 same-host page attempts (apex/`www`
+redirects supported), three redirects per fetch, 50 total requests, 40 seconds
+per scan, five seconds per DNS/request operation, 5 MiB per HTML page, and
+256 KiB per robots file. Up to four 1 MiB sitemap files can discover up to
+500 distinct page URLs; XML entities and unsafe destinations are rejected.
+A shared 25 MiB response-body budget accounts for successful and failed reads
+up to each request's cap. Retained page evidence is capped at 1,500,000 UTF-8
+bytes, including at most 128 KiB / 50 Product JSON-LD records per page.
+It pins validated public DNS answers to each connection, rejects query/token
+URLs and custom ports, and never executes JavaScript. Only sitemap XML may
+use numeric `from`/`to` pagination; this does not relax ordinary page URLs.
+Sampling and coverage gaps are explicit. Advanced previews are not saved;
+first-visit previews are temporarily retained for authenticated claim.
+Signed-in business runs, including explicitly
+failed attempts, are saved in SQLite migration 2. See README for publisher
+directives, failure semantics, rate limits, API routes, and remaining limitations.
 
 Do not weaken the public scanner to reach localhost. Use an isolated fixture
 transport for tests or host the demo on an allowed public address. Cheerio
@@ -173,6 +260,11 @@ unsafe destinations and redirects are rejected; manual onboarding still works.
 
 **Depends on:** checkpoint 2; website extraction additionally depends on checkpoint 4.
 
+**Implemented locally:** the owner-only Products screen supports manual editing,
+UTF-8 CSV preview with row errors, and Product JSON-LD imports from owned saved
+scans. Migration 3 preserves earlier workspace and scan data. No scheduler,
+external inventory sync, or website writes are involved.
+
 ### Build
 
 - Manual product creation and editing.
@@ -186,6 +278,14 @@ Never silently merge products merely because their names are similar. Preserve
 source-specific price, currency, variants, and availability rather than inventing
 or overwriting values.
 
+Exact normalized identifiers suggest matches; ambiguous matches require an owner
+decision. Stable source identities refresh the same listing, older snapshots
+cannot overwrite newer observations, and committed imports can be retried
+without duplicate writes. The local limits are 200 products/business, 100
+rows/import, and 48 KiB/CSV. Website imports require explicit static Product
+JSON-LD; older saved scans need rescanning. Names/prices are never guessed from
+page text. See README for the CSV format, source identities, and retained drafts.
+
 **Learn:** parsing, normalization, relational modelling, deduplication.
 
 **Acceptance:** manual, CSV, and website products coexist with source attribution;
@@ -194,6 +294,87 @@ invalid rows have actionable errors; repeated imports behave predictably.
 ## Checkpoint 6: Reusable AI integration
 
 **Depends on:** checkpoint 2 and Anthropic credentials for real calls.
+
+**Implemented locally for business onboarding:** official Anthropic TypeScript
+SDK, a fixed-destination `scan_website` tool call followed by a validated
+`propose_business` call, server-issued evidence IDs resolved to original page
+URLs and exact supplied excerpts, and a briefing-first result
+with a sourced business summary, supported observations and their significance,
+explicit unknowns, and recommended next checks. The result separates marketing
+claims from verified facts and does not invent performance or checkout findings.
+The Overview first-visit journey is website URL plus scan permission, readable
+public-site findings without an account or AI, then a separate save/provider
+consent CTA and authentication. A bounded 30-minute server-side preview
+(migration 6; opaque HttpOnly cookie, 50 previews maximum, 2 MiB each) carries
+the exact captured scan across sign-in without accepting browser-submitted evidence.
+Authenticated, account-bound idempotent claiming creates or reuses the owner's
+profile without overwriting existing details. The agent reuses that saved scan:
+there is no second network scan. The briefing presents one card at a time:
+business snapshot, individual observations, evidence gaps, and recommended next
+moves. Readers control navigation; cards do not auto-advance. New streaming text
+and final validation preserve the selected card, and source quotes/reasons
+expand on demand. Subtle entry transitions respect reduced-motion preferences.
+Card navigation is local, with no additional provider calls. Context correction
+remains optional with one save.
+Refresh does not automatically start paid AI; failed or empty scans cannot proceed.
+Manual entry remains an alternative, not a prerequisite.
+Briefings persist in the existing owner-scoped review JSON (migration 4).
+Older profile-only results are labelled honestly and require an explicit new
+analysis for a briefing; there is no automatic paid backfill.
+New runs stream provisional briefing text from the SDK's eager tool-input stream,
+including unfinished strings, then validate citations and save only the final
+result. Real phase updates replace a silent wait; incomplete or failed streams
+are errors, not completed analyses, and are never automatically retried. Previous
+saved results remain available after failures. Technical scan notes are removed
+from the briefing; saved scan diagnostics remain in Website.
+Explicit provider/scan consent and a single-step
+editable profile approval with durable completion (migration 5), plus the existing
+reviewed product imports. Previously applied suggestions do not become pending
+again after reload or a later manual edit. Profiles save before AI starts;
+AI never silently overwrites owner fields or imports products. Missing keys,
+invalid outputs and blocked pages are reported honestly. At most two provider
+calls (256 output tokens for the scanner request and 4,096 for the briefing),
+no retries, 30-second provider timeouts and a
+120-second processing deadline bound work, excluding queue wait. Website/account
+authorization, all scanner restrictions, and shared scan limits remain enforced.
+No arbitrary tool execution is introduced.
+The response budget is reallocated within the previous 4,400-token total ceiling.
+Output-limit failures are explicit, log only safe completion metadata and never
+replace a prior saved briefing. An explicit onboarding retry reuses its saved scan.
+
+Local briefings now use a durable SQLite queue (migration 8) and a single worker
+inside the API process. Permissioned POST returns a job ID immediately; separate
+authenticated GET streams restore actual phases and provisional cards after
+navigation or refresh. Disconnecting a viewer does not cancel background work.
+Cancellation is explicit. Final briefing, optional import draft and job completion
+commit atomically; failed/cancelled work cannot replace a prior saved briefing.
+Request UUIDs bind retries to the original URL and input scan. One active job per
+business and one running worker job across SQLite connections prevent overlap;
+the worker shares the local process's two-operation foreground scan budget.
+Queue capacity is 50, queued work expires after 15 minutes when the worker checks,
+and running work uses renewable 30-second leases. Queued work survives restart;
+stopped/expired running work becomes interrupted, never automatically repeated
+at the AI provider. Explicit retries reuse saved matching scan checkpoints.
+Provider charges can precede crashes, so exactly-once billing is not guaranteed.
+GET viewers rotate every 20 seconds and reconnect without paid POST retries.
+This improves resilience, not generation speed or zero-wait guarantees.
+GoDaddy/MySQL queue storage and persistent-worker hosting verification remain
+deferred until that infrastructure exists; production SQLite startup stays blocked.
+
+The scanner tool now supplies up to 256 KiB of balanced page evidence and
+100 structured product records, including published offers, variants,
+materials, ratings claims, headings and CTAs. The agent is instructed to assess
+supported marketing positioning and buying confidence, not invent private
+performance data. Supplied/captured counts and clipping limitations accompany
+the evidence and appear in a collapsed saved-briefing summary. Exact-quote
+checks use only the evidence actually sent to the provider, not omitted scan
+content. The concise card/output limits are unchanged; larger captured
+catalogues may exceed the existing 100-row reviewed product-import limit
+without preventing a product-informed briefing.
+
+Automated validation uses injected scanner/provider fixtures. A live acceptance
+request and provider-side billing/spend configuration still require the owner's
+Anthropic credentials; this is not a claim that later AI modules are complete.
 
 ### Build
 
@@ -288,7 +469,9 @@ clearly labelled.
 
 ## Checkpoint 10: Proposed improvements and approval
 
-**Depends on:** checkpoints 3, 6, and 8. The simulator is not a technical prerequisite.
+**Depends on:** checkpoints 6 and 8, business ownership, and an authorized writable
+test/staging target. The optional checkpoint 3 storefront and simulator are not
+technical prerequisites.
 
 ### Build
 
@@ -313,7 +496,8 @@ preview alone never mutate the website; a changed proposal requires new approval
 
 ### Build
 
-- Execution restricted to approved proposals on the controlled demo website.
+- Execution restricted to approved proposals on an authorized, controlled
+  test/staging website, never arbitrary third-party scan targets.
 - Original configuration saved before mutation.
 - Stale-proposal rejection and duplicate-execution prevention.
 - Genuine before/after screenshots.
@@ -345,6 +529,10 @@ Technical checks do not prove increased sales or revenue.
 - Upload limits, retention/deletion handling, and safe production configuration.
 - End-to-end tests for the full demonstration and important failure paths.
 - Environment setup and demo/reset documentation.
+- Replace the approved local SQLite store with GoDaddy MySQL: implement the
+  connection pool and MySQL-specific migrations, explicitly transfer any needed
+  local data, and rerun ownership/persistence/transaction tests against MySQL.
+  Only then remove the local-only production-start guard.
 
 Verify the specific GoDaddy plan supports:
 
@@ -372,8 +560,9 @@ Add packages when their checkpoint needs them, not all at once.
 | Stage | Dependencies or tooling |
 |---|---|
 | Application skeleton | React, Vite, TypeScript, Tailwind, Express, Zod, development runner and test tooling |
-| Persistence | MySQL server, mysql2, a selected migration mechanism |
-| Website extraction | Cheerio and a bounded HTTP-fetch implementation |
+| Local persistence and identity | better-sqlite3, versioned SQLite migrations, Node scrypt, express-rate-limit |
+| Production persistence | GoDaddy MySQL, mysql2 connection pool, MySQL-specific migrations and integration checks |
+| Website extraction | Cheerio, ipaddr.js, robots-parser, and bounded DNS-pinned Node HTTP(S) requests |
 | Imports | A maintained CSV parser; JSON parsing with schema validation |
 | AI | Official Anthropic TypeScript SDK |
 | Verification | Playwright and its browser binaries |
@@ -393,6 +582,8 @@ record:
 - How to run and manually check the feature.
 - Remaining limitations and the next dependency-ready checkpoint.
 
-Start with checkpoint 1 only. The first meaningful milestone is a working
-UI-to-API-to-database flow. The next is importing and displaying evidence before
-asking AI to interpret it.
+The local UI-to-API-to-database and safe manual scanning milestones are
+implemented. The owner deferred the full demo storefront; isolated fixtures
+provide reproducible scanner checks. Continue with checkpoint 5's unified product
+catalogue and source-preserving imports, then checkpoint 6's AI boundary.
+GoDaddy MySQL integration is still required before production deployment.

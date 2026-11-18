@@ -797,8 +797,11 @@ This demonstrates a complete agentic business workflow rather than just an AI-ge
 
 ### Database
 
-- MySQL.
-- mysql2.
+- **Production target:** GoDaddy-managed MySQL, after confirming access and capabilities in the selected hosting plan.
+- mysql2 connection pool for the future production MySQL implementation.
+- **Approved local development choice:** SQLite through better-sqlite3, with versioned migrations and no separate database server. Local database files must not be committed.
+- SQLite-to-MySQL migration is explicit work: create MySQL migrations, transfer any required local data, and verify persistence, transactions, and owner isolation against MySQL before deployment. A connection-string change alone is not sufficient.
+- Signup, login, logout, hashed passwords, expiring server-side sessions, and server-side business ownership checks protect saved private records. The planned initial public website scan must remain available without requiring an account.
 - Tables for businesses, scans, products, conversations, insights, opportunities, simulations, improvements, approvals and verification reports.
 
 ### Browser verification

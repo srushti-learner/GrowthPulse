@@ -13,6 +13,7 @@ const paths = {
   shield: "m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3 M8 12l3 3 5-6",
   code: "m8 7-5 5 5 5 M16 7l5 5-5 5 M14 4l-4 16",
   plus: "M12 5v14 M5 12h14",
+  check: "m5 12 4 4L19 6",
 } as const;
 
 export type IconName = keyof typeof paths;

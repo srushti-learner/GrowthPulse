@@ -3,15 +3,24 @@ import request from "supertest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createApp } from "./app.js";
+import { createApp as createServerApp } from "./app.js";
 import { loadConfig } from "./config.js";
+import { openStore, type Store } from "./database.js";
+
+const stores: Store[] = [];
+function createApp(options: Omit<Parameters<typeof createServerApp>[0], "store"> = {}) {
+  const store = openStore(":memory:");
+  stores.push(store);
+  return createServerApp({ ...options, store });
+}
+afterAll(() => stores.forEach((store) => store.close()));
 
 describe("API", () => {
   const app = createApp();
 
-  it("reports actual application health without claiming dependent services", async () => {
+  it("reports health only after querying the local database", async () => {
     const response = await request(app).get("/api/health").expect(200);
-    expect(response.body).toEqual({ status: "ok", service: "growthpulse-api" });
+    expect(response.body).toEqual({ status: "ok", service: "growthpulse-api", database: { engine: "sqlite", status: "ok" } });
   });
 
   it("returns JSON for unknown API routes", async () => {
@@ -60,7 +69,9 @@ describe("production frontend", () => {
 
 describe("environment configuration", () => {
   it("uses a supplied hosting port", () => {
-    expect(loadConfig({ PORT: "8080", NODE_ENV: "production" })).toEqual({ PORT: 8080, NODE_ENV: "production" });
+    expect(loadConfig({ PORT: "8080", NODE_ENV: "production" })).toEqual({
+      PORT: 8080, NODE_ENV: "production", APP_ORIGIN: "http://127.0.0.1:5173", SQLITE_PATH: "./data/growthpulse.sqlite", ANTHROPIC_MODEL: "claude-haiku-4-5",
+    });
   });
 
   it.each(["", "0", "-1", "65536", "abc", "1.5"])("rejects invalid port %j", (PORT) => {
@@ -69,5 +80,9 @@ describe("environment configuration", () => {
 
   it("rejects an unsupported environment", () => {
     expect(() => loadConfig({ NODE_ENV: "staging" })).toThrow("NODE_ENV");
+  });
+
+  it.each(["https://example.com/", "https://example.com/path", "file:///tmp/app"])("rejects an invalid application origin %s", (APP_ORIGIN) => {
+    expect(() => loadConfig({ APP_ORIGIN })).toThrow("APP_ORIGIN");
   });
 });
