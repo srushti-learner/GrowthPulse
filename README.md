@@ -1282,6 +1282,8 @@ migration and ownership/count verification.
    `npm ci --omit=dev` therefore supports the hosted build/start flow; use
    `npm ci` locally for tests and development tools. Builds exclude frontend
    test-only files; `npm run typecheck` still checks those locally.
+   Recharts' required `react-is` peer is an explicit runtime dependency, so
+   hosted builds do not rely on automatic peer dependency installation.
    Express serves `dist/client` and starts the analysis worker. Build or startup
    failures stop the launcher without a Vite/SQLite fallback. Frontend builds
    do not need database credentials or AI keys.
