@@ -1,0 +1,138 @@
+// @vitest-environment jsdom
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { GrowthOpportunity, GrowthPlanItem, GrowthResponse } from "../shared/growth";
+import { GrowthIntelligence } from "./GrowthIntelligence";
+
+const business = {
+  id: "02a221ee-41f1-46c9-bc96-12401d8dcf73", name: "Fixture shop", website: "https://shop.example.com/",
+  category: "", description: "", createdAt: "2026-11-17T12:00:00.000Z", updatedAt: "2026-11-17T12:00:00.000Z",
+};
+const opportunity: GrowthOpportunity = {
+  id: "a".repeat(64), title: "Test clearer sizing guidance", detail: "Check sizing questions with shoppers.",
+  agents: ["growth"], sources: [{ id: "e_1111111111111111", url: business.website, quote: "Five sizes are available.", capturedAt: business.createdAt }],
+  reviewReason: "Saved Growth strategy recommendation. Source coverage is not predicted business impact.",
+  strategy: {
+    objective: "Make sizing easier to evaluate", actions: ["Validate sizing questions.", "Prepare a small approved test."],
+    metric: "Purchase conversion rate", hypothesis: "Check whether clearer guidance helps eligible shoppers.",
+    measurement: "Set a baseline and test duration before starting.",
+  },
+};
+const empty: GrowthResponse = { opportunities: [], plan: [], researchStatus: "unavailable", evidenceSavedAt: null };
+const snapshot: GrowthResponse = { ...empty, opportunities: [opportunity], researchStatus: "partial", evidenceSavedAt: business.createdAt };
+const planned: GrowthPlanItem = {
+  opportunity, status: "planned", impact: "unknown", effort: "unknown", timeToValue: "unknown", revision: 0,
+  createdAt: business.createdAt, updatedAt: business.createdAt,
+};
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+describe("growth decision workspace", () => {
+  let container: HTMLDivElement, root: Root;
+  const expired = vi.fn();
+  beforeEach(() => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); expired.mockReset();
+    window.history.replaceState(null, "", "/#growth");
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+  });
+  afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
+  async function render() { await act(async () => root.render(<GrowthIntelligence business={business} onSessionExpired={expired} />)); }
+  function button(text: string, scope: ParentNode = container) {
+    return Array.from(scope.querySelectorAll<HTMLButtonElement>("button")).find((item) => item.textContent?.includes(text))!;
+  }
+  async function click(text: string) { await act(async () => button(text).click()); }
+
+  it("shows a conclusion first, keeps strategy/evidence on demand and never starts research while browsing", async () => {
+    const fetch = vi.fn(async (_path: string) => json(snapshot)); vi.stubGlobal("fetch", fetch);
+    await render();
+    expect(container.querySelector(".growth-next-move h2")?.textContent).toBe(opportunity.title);
+    expect(container.querySelector(".growth-next-move")!.compareDocumentPosition(container.querySelector(".growth-summary")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(container.querySelector(".growth-map")?.getAttribute("open")).toBeNull();
+    expect(container.textContent).toContain("Partial evidence");
+    expect(container.textContent).toContain("not assessed");
+    expect(container.querySelector(".growth-footer .field-note")).toBeNull();
+    expect(button("Reload saved findings")).toBeDefined();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    await click("Explore strategy");
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain(opportunity.strategy.objective);
+    expect(dialog.textContent).toContain("not an executed change");
+    expect(dialog.textContent).toContain("There is no automatic outcome tracking");
+    expect(dialog.querySelector<HTMLAnchorElement>('a[href^="#simulator"]')?.getAttribute("href"))
+      .toBe(`#simulator?business=${business.id}&action=${opportunity.id}`);
+    const evidence = dialog.querySelector<HTMLDetailsElement>(".agent-sources")!;
+    expect(evidence.open).toBe(false);
+    await act(async () => evidence.querySelector("summary")!.click());
+    expect(evidence.querySelector("a")?.href).toBe(business.website);
+    expect(evidence.textContent).toContain(opportunity.sources[0].quote);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0][0]).toBe(`/api/businesses/${business.id}/growth`);
+  });
+
+  it("saves a plan, assesses its priority and focuses its action from the map without changing the app route", async () => {
+    let response: GrowthResponse = structuredClone(snapshot);
+    const fetch = vi.fn(async (_path: string, options?: RequestInit) => {
+      if (options?.method === "POST") { response = { ...response, plan: [planned] }; return json({ item: planned }, 201); }
+      if (options?.method === "PATCH") {
+        const next = { ...planned, ...JSON.parse(String(options.body)), revision: 1 };
+        response = { ...response, plan: [next] }; return json({ item: next });
+      }
+      return json(response);
+    });
+    vi.stubGlobal("fetch", fetch); await render(); await click("Add to my growth plan");
+    expect(container.querySelectorAll(".growth-plan-item")).toHaveLength(1);
+    expect(container.querySelectorAll(".opportunity-card")).toHaveLength(0);
+    expect(container.textContent).toContain("No website change or campaign has been made");
+    const details = container.querySelector<HTMLDetailsElement>(".growth-plan-item")!;
+    await act(async () => {
+      details.open = true;
+      for (const [name, value] of Object.entries({ status: "in_progress", impact: "high", effort: "low", timeToValue: "weeks" })) {
+        const select = details.querySelector<HTMLSelectElement>(`select[name="${name}"]`)!; select.value = value;
+      }
+      details.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(fetch.mock.calls.find(([, options]) => options?.method === "PATCH")?.[1]?.body)
+      .toBe(JSON.stringify({ status: "in_progress", impact: "high", effort: "low", timeToValue: "weeks", revision: 0 }));
+    expect(container.querySelector('.growth-matrix [aria-label="Quick wins"]')?.textContent).toContain(opportunity.title);
+    details.open = false;
+    await act(async () => container.querySelector<HTMLDetailsElement>(".growth-map")!.querySelector("summary")!.click());
+    await act(async () => button(opportunity.title, container.querySelector(".growth-matrix")!).click());
+    expect(details.open).toBe(true);
+    expect(document.activeElement).toBe(details.querySelector("summary"));
+    expect(window.location.hash).toBe("#growth");
+    await click("Reload saved findings");
+    expect(container.querySelectorAll(".growth-plan-item")).toHaveLength(1);
+  });
+
+  it("keeps earlier plans visible, handles stale edits and does not invent an assessment", async () => {
+    const fetch = vi.fn(async (_path: string, options?: RequestInit) =>
+      options?.method === "PATCH" ? json({ error: "This action changed in another view. Reload before updating it." }, 409)
+        : json({ ...empty, plan: [planned] }));
+    vi.stubGlobal("fetch", fetch); await render();
+    expect(container.textContent).toContain("Saved plan evidence, separate from the current business-wide research");
+    expect(container.querySelector(".growth-map")?.textContent).toContain("0 assessed actions");
+    const details = container.querySelector<HTMLDetailsElement>(".growth-plan-item")!;
+    await act(async () => { details.open = true; details.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Reload before updating");
+    expect(container.querySelector<HTMLSelectElement>('[name="impact"]')?.value).toBe("unknown");
+    await click("Reload saved findings");
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("offers a saved-data retry for loading errors and a truthful empty state", async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(json({ error: "Database unavailable." }, 503)).mockResolvedValueOnce(json(empty));
+    vi.stubGlobal("fetch", fetch); await render();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Database unavailable");
+    await click("Reload growth intelligence");
+    expect(container.textContent).toContain("Gather evidence before choosing a growth move");
+    expect(container.querySelector('a[href="#business"]')?.textContent).toContain("Manage website analysis");
+    expect(fetch.mock.calls.every(([, options]) => !options.method)).toBe(true);
+  });
+
+  it("distinguishes a completed plan from having no evidence", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => json({ ...snapshot, plan: [{ ...planned, status: "completed" }] })));
+    await render();
+    expect(container.querySelector(".growth-next-move h2")?.textContent).toBe("No pending growth actions.");
+    expect(container.textContent).not.toContain("No accepted growth suggestions are available");
+    expect(container.querySelector(".growth-summary")?.textContent).toContain("1/1");
+  });
+});

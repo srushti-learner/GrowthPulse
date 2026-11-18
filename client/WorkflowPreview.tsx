@@ -51,7 +51,7 @@ export function WorkflowPreview() {
   ][stage];
 
   return (
-    <section className="workflow-window" id="workflow-preview" aria-labelledby="workflow-heading">
+    <section className="workflow-window" aria-labelledby="workflow-heading">
       <div className="window-toolbar">
         <div className="window-name"><span className="window-dots" aria-hidden="true"><i /><i /><i /></span><span>growthpulse / how it works</span></div>
         <span className="preview-badge"><span /> Design preview</span>

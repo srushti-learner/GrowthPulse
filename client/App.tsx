@@ -1,40 +1,114 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { z } from "zod";
 import { Icon } from "./Icon";
 import { WorkflowPreview } from "./WorkflowPreview";
+import { healthSchema, sessionSchema, type User } from "../shared/contracts";
+import { api, ApiFailure, errorMessage } from "./api";
+import { AuthForm } from "./AuthForm";
+import { BusinessWorkspace } from "./BusinessWorkspace";
+import { WebsiteWorkspace } from "./WebsiteWorkspace";
+import { ProductsWorkspace } from "./ProductsWorkspace";
+import { FirstVisit } from "./FirstVisit";
+const AnalyticsWorkspace = lazy(() => import("./AnalyticsWorkspace").then((module) => ({ default: module.AnalyticsWorkspace })));
+import {
+  Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarInset,
+  SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger, useSidebar,
+} from "./components/ui/sidebar";
 
 const sections = [
   { id: "overview", label: "Overview", icon: "overview", description: "Your business, with a clearer direction." },
+  { id: "business", label: "Business Profile", icon: "box", description: "Meet your business agent. Review the evidence. Make it yours." },
   { id: "website", label: "Website", icon: "globe", description: "Understand your website's customer experience.", checkpoint: 4 },
-  { id: "products", label: "Products", icon: "box", description: "Bring your product information together.", checkpoint: 5 },
+  { id: "products", label: "Products", icon: "box", description: "Understand your products. Make every listing clearer.", checkpoint: 5 },
   { id: "whatsapp", label: "WhatsApp Insights", icon: "chat", description: "Discover what your customers are asking.", checkpoint: 7 },
-  { id: "opportunities", label: "Opportunities", icon: "spark", description: "Turn business evidence into a next step.", checkpoint: 8 },
-  { id: "simulator", label: "Growth Simulator", icon: "chart", description: "Explore possibilities, with transparent assumptions.", checkpoint: 9 },
+  { id: "growth", label: "Growth intelligence", icon: "spark", description: "Turn specialist research into your next growth decision." },
+  { id: "intelligence", label: "Market intelligence", icon: "chart", description: "Explore the evidence behind your next move." },
+  { id: "simulator", label: "Growth Simulator", icon: "chart", description: "Your sales history. Your assumptions. A separate what-if, for every sales channel." },
   { id: "improvements", label: "Improvements", icon: "sliders", description: "Review changes before anything is applied.", checkpoint: 10 },
   { id: "activity", label: "Activity History", icon: "history", description: "See what changed and why.", checkpoint: 2 },
 ] as const;
 
-const healthSchema = z.object({
-  status: z.literal("ok"),
-  service: z.literal("growthpulse-api"),
-});
 type Connection = { state: "checking" } | { state: "connected" } | { state: "error"; message: string };
+type Session = { state: "loading" } | { state: "anonymous" } | { state: "authenticated"; user: User } | { state: "error"; message: string };
+
+function WorkspaceNavigation({ active }: { active: typeof sections[number]["id"] }) {
+  const { setOpenMobile } = useSidebar();
+  const planned = new Set(["whatsapp", "improvements"]);
+  function links(ids: string[]) {
+    return <SidebarMenu>{ids.map((id) => {
+      const section = sections.find((item) => item.id === id)!;
+      return <SidebarMenuItem key={id}><SidebarMenuButton asChild isActive={active === id}>
+        <a href={`#${id}`} aria-current={active === id ? "page" : undefined} onClick={() => setOpenMobile(false)}>
+          <Icon name={section.icon} /><span>{section.label}</span>
+        </a>
+      </SidebarMenuButton></SidebarMenuItem>;
+    })}</SidebarMenu>;
+  }
+  return <nav className="dashboard-navigation" aria-label="Main navigation">
+    <p className="nav-caption">DISCOVER</p>{links(["overview", "growth", "intelligence", "simulator"])}
+    <p className="nav-caption">MANAGE</p>{links(["business", "products", "website", "activity"])}
+    <details className="planned-navigation" open={planned.has(active)}><summary>Planned tools</summary>{links(["whatsapp", "improvements"])}</details>
+  </nav>;
+}
 
 function sectionFromHash() {
-  return sections.find((section) => section.id === window.location.hash.slice(1)) ?? sections[0];
+  const hash = window.location.hash.replace(/^#opportunities(?=\?|$)/, "#growth");
+  return sections.find((section) => section.id === hash.slice(1).split("?")[0]) ?? sections[0];
 }
 
 export function App() {
   const [activeSection, setActiveSection] = useState(sectionFromHash);
   const [connection, setConnection] = useState<Connection>({ state: "checking" });
   const [attempt, setAttempt] = useState(0);
+  const [session, setSession] = useState<Session>({ state: "loading" });
+  const [sessionAttempt, setSessionAttempt] = useState(0);
+  const [logoutPending, setLogoutPending] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
+  const [startBriefing, setStartBriefing] = useState(false);
+  const [onboardingJourney, setOnboardingJourney] = useState(false);
+  const [useSavedOverview, setUseSavedOverview] = useState(false);
+  const [selectedBusinessId, setSelectedBusinessId] = useState<string>();
+  const onSessionExpired = useCallback(() => {
+    setSession({ state: "anonymous" }); setOnboardingJourney(false); setStartBriefing(false); setSelectedBusinessId(undefined); setUseSavedOverview(false);
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setSession({ state: "loading" });
+    void api("/api/auth/me", sessionSchema, { signal: controller.signal }).then(({ user }) => {
+      if (!controller.signal.aborted) setSession({ state: "authenticated", user });
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return;
+      setSession(error instanceof ApiFailure && error.status === 401 ? { state: "anonymous" } : { state: "error", message: errorMessage(error) });
+    });
+    return () => controller.abort();
+  }, [sessionAttempt]);
+
+  async function logout() {
+    setLogoutPending(true);
+    setLogoutError("");
+    try {
+      await api("/api/auth/logout", z.undefined(), { method: "POST" });
+      setSession({ state: "anonymous" });
+      setOnboardingJourney(false); setStartBriefing(false); setSelectedBusinessId(undefined);
+      setUseSavedOverview(false);
+    } catch (error) { setLogoutError(errorMessage(error)); }
+    finally { setLogoutPending(false); }
+  }
 
   useEffect(() => {
     const onHashChange = () => {
-      const section = sections.find((item) => item.id === window.location.hash.slice(1));
-      if (section) setActiveSection(section);
+      if (/^#opportunities(?:\?|$)/.test(window.location.hash)) {
+        window.history.replaceState(null, "", window.location.hash.replace("#opportunities", "#growth"));
+      }
+      const section = sections.find((item) => item.id === window.location.hash.slice(1).split("?")[0]);
+      if (section) {
+        setActiveSection(section);
+        if (section.id !== "overview") { setOnboardingJourney(false); setStartBriefing(false); }
+      }
     };
     window.addEventListener("hashchange", onHashChange);
+    onHashChange();
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
@@ -73,78 +147,99 @@ export function App() {
   }, [attempt]);
 
   return (
-    <div className="app-shell">
+    <SidebarProvider className="app-shell dashboard-shell">
       <a href="#main-content" className="skip-link">Skip to content</a>
-      <aside className="sidebar">
+      <Sidebar variant="inset" className="gp-sidebar">
+        <SidebarHeader>
         <a href="#overview" className="brand" aria-label="GrowthPulse overview">
           <span className="brand-mark"><Icon name="pulse" /></span>
           GrowthPulse
         </a>
-        <div className="workspace-identity"><span className="workspace-avatar">G</span><span>My workspace<small>Local development</small></span><span className="identity-chevron" aria-hidden="true">&#8964;</span></div>
-        <p className="nav-caption">WORKSPACE</p>
-        <nav aria-label="Main navigation">
-          {sections.map((section) => (
-            <a key={section.id} href={`#${section.id}`} aria-current={activeSection.id === section.id ? "page" : undefined}>
-              <Icon name={section.icon} />
-              {section.label}
-              {section.id === "overview" && <span className="active-nav-dot" />}
-            </a>
-          ))}
-        </nav>
+        <div className="workspace-identity"><span className="workspace-avatar">{session.state === "authenticated" ? session.user.name.slice(0, 1).toUpperCase() : "G"}</span><span>{session.state === "authenticated" ? session.user.name : "My workspace"}<small>Business workspace</small></span></div>
+        </SidebarHeader>
+        <SidebarContent><WorkspaceNavigation active={activeSection.id} /></SidebarContent>
+        <SidebarFooter>
+        <div className="session-actions">{session.state === "authenticated"
+          ? <button className="secondary-button" type="button" disabled={logoutPending} onClick={() => void logout()}>{logoutPending ? "Logging out..." : "Log out"}</button>
+          : <a className="secondary-button" href="#business">Log in / Sign up</a>}</div>
         <div className="sidebar-note">
           <Icon name="shield" />
-          <p>Your business.<br /><span>Your final call.</span></p>
-          <span>Nothing changes without you.</span>
+          <p>Your business. Your final call.</p>
+          <span>No changes without your approval.</span>
         </div>
-        <div className="sidebar-bottom"><Icon name="code" /><span>Development build</span><span>v0.1</span></div>
-      </aside>
-      <div className="workspace">
+        </SidebarFooter>
+      </Sidebar>
+      <SidebarInset className="workspace">
         <header className="topbar">
-          <span className="breadcrumbs"><Icon name={activeSection.icon} /><span>Workspace</span><span className="breadcrumb-divider">/</span><span className="breadcrumb">{activeSection.label}</span></span>
-          <span className="phase-label"><span /> PHASE 01 <span className="phase-divider">/</span> Foundation</span>
+          <div className="topbar-navigation"><SidebarTrigger /><span className="breadcrumbs"><span>Workspace</span><span className="breadcrumb-divider">/</span><span className="breadcrumb">{activeSection.label}</span></span></div>
+          <span className="workspace-promise"><Icon name="shield" />You stay in control</span>
         </header>
         <main id="main-content" tabIndex={-1}>
+          {logoutError && <p className="form-error" role="alert">{logoutError}</p>}
           <div className="page-heading">
             <div>
               <p className="section-eyebrow">LESS NOISE. MORE DIRECTION.</p>
-              <h1>{activeSection.id === "overview" ? <>Big picture.<br /><span>Better next move.</span></> : activeSection.label}</h1>
+              <h1>{activeSection.id === "overview" ? session.state === "authenticated" && !onboardingJourney ? "Your next move starts here." : <>Big picture.<br /><span>Better next move.</span></> : activeSection.label}</h1>
               <p className="page-description">{activeSection.id === "overview" ? "One place to understand your business. And what to do next." : activeSection.description}</p>
             </div>
-            {activeSection.id === "overview" && <a className="primary-link" href="#workflow-preview">Explore the workflow <Icon name="diagonal" /></a>}
           </div>
           {activeSection.id === "overview" ? (
             <>
-              <WorkflowPreview />
-              <div className="below-workflow">
-                <section className="next-card">
-                  <span className="next-icon"><Icon name="plus" /></span>
-                  <div><p className="section-eyebrow">UP NEXT / CHECKPOINT 02</p><h2>A home for your business.</h2><p>Business profiles, database persistence, and ownership come next. No account or business data is saved yet.</p></div>
-                  <span className="planned-tag">Planned</span>
-                </section>
-                <section className="principle-card"><Icon name="shield" /><h2>Intelligence, not autopilot.</h2><p>Evidence behind the idea.<br />Your approval before the change.</p></section>
-              </div>
+              {session.state === "loading" ? <p className="loading-message">Checking your session...</p>
+                : session.state === "error" ? <p role="alert" className="form-error">{session.message} <button className="text-button" onClick={() => setSessionAttempt((value) => value + 1)}>Retry session</button></p>
+                  : session.state === "authenticated" && !onboardingJourney && useSavedOverview
+                    ? <BusinessWorkspace key={session.user.id} activityOnly={false} researchOnly onSessionExpired={onSessionExpired}
+                      selectedBusinessId={selectedBusinessId} onBusinessSelected={setSelectedBusinessId} />
+                    : <FirstVisit key={session.state === "authenticated" ? session.user.id : "public"}
+                    authenticated={session.state === "authenticated"} startBriefing={startBriefing}
+                    onNoPreview={() => setUseSavedOverview(true)}
+                    onAuthenticated={(user, continueBriefing) => { setStartBriefing(continueBriefing); setOnboardingJourney(continueBriefing); setSession({ state: "authenticated", user }); }}
+                    onStarted={() => setStartBriefing(false)} onSessionExpired={onSessionExpired} />}
+              {session.state === "anonymous" && <details id="workflow-preview" className="workflow-explainer"><summary>Explore the wider workflow (illustrative preview)</summary><WorkflowPreview /></details>}
             </>
+          ) : activeSection.id === "website" ? (
+            session.state === "loading" ? <p className="loading-message">Checking your session...</p>
+              : session.state === "error" ? <p role="alert" className="form-error">{session.message} <button className="text-button" onClick={() => setSessionAttempt((value) => value + 1)}>Retry session</button></p>
+                : <WebsiteWorkspace key={session.state === "authenticated" ? session.user.id : "public"} authenticated={session.state === "authenticated"} onSessionExpired={onSessionExpired} />
+          ) : activeSection.id === "business" || activeSection.id === "activity" || activeSection.id === "products" || activeSection.id === "intelligence" || activeSection.id === "growth" || activeSection.id === "simulator" ? (
+            session.state === "loading" ? <p className="loading-message">Checking your session...</p>
+              : session.state === "error" ? <p role="alert" className="form-error">{session.message} <button className="text-button" onClick={() => setSessionAttempt((value) => value + 1)}>Retry session</button></p>
+                : session.state === "anonymous" ? <AuthForm onAuthenticated={(user) => setSession({ state: "authenticated", user })} />
+                  : activeSection.id === "simulator" ? <Suspense fallback={<p role="status">Loading your simulator...</p>}>
+                    <AnalyticsWorkspace key={session.user.id} studio onSessionExpired={onSessionExpired}
+                      selectedBusinessId={selectedBusinessId} onBusinessSelected={setSelectedBusinessId} />
+                  </Suspense>
+                  : activeSection.id === "products" ? <ProductsWorkspace key={session.user.id} onSessionExpired={onSessionExpired}
+                    selectedBusinessId={selectedBusinessId} onBusinessSelected={setSelectedBusinessId} />
+                    : <BusinessWorkspace key={session.user.id} activityOnly={activeSection.id === "activity"}
+                      profileOnly={activeSection.id === "business"}
+                      growthOnly={activeSection.id === "growth"}
+                      researchOnly={activeSection.id === "intelligence" || activeSection.id === "growth"}
+                      researchView={activeSection.id === "intelligence" ? "intelligence" : "overview"}
+                      selectedBusinessId={selectedBusinessId} onBusinessSelected={setSelectedBusinessId}
+                      onSessionExpired={onSessionExpired} />
           ) : (
             <section className="empty-state" aria-labelledby="upcoming-heading">
               <span className="empty-symbol"><Icon name={activeSection.icon} /></span>
-              <p className="section-eyebrow">PLANNED FOR CHECKPOINT {"checkpoint" in activeSection ? String(activeSection.checkpoint).padStart(2, "0") : ""}</p>
+              <p className="section-eyebrow">COMING SOON</p>
               <h2 id="upcoming-heading">The next piece of the picture.</h2>
-              <p>This module is not implemented yet. Phase 1 establishes navigation and the connection to the backend; no business data has been imported or analyzed.</p>
+              <p>This module is not implemented yet. Agent-led business onboarding, website evidence, and the product catalogue are available. Later analysis modules remain planned.</p>
+              <a href="#website" className="text-button">Open website scanner <Icon name="arrow" /></a><br />
               <a href="#overview" className="primary-link">Back to overview <Icon name="arrow" /></a>
             </section>
           )}
-          <section className="status-card" aria-labelledby="status-heading">
+          {connection.state === "error" && <section className="status-card" aria-labelledby="status-heading" role="alert">
             <div className="status-copy">
-              <span className={`status-dot ${connection.state}`} aria-hidden="true" />
-              <div><h2 id="status-heading">The foundation is {connection.state === "connected" ? "connected." : connection.state === "checking" ? "connecting." : "offline."}</h2>
-                <p role="status">{connection.state === "checking" ? "Checking the Express API..." : connection.state === "connected" ? "Connected to the Express API. No database or AI services are connected yet." : connection.message}</p>
+              <span className="status-dot error" aria-hidden="true" />
+              <div><h2 id="status-heading">Connection unavailable.</h2>
+                <p>{connection.message}</p>
               </div>
             </div>
-            <button type="button" onClick={() => setAttempt((value) => value + 1)} disabled={connection.state === "checking"}>Check again <Icon name="arrow" /></button>
-          </section>
+            <button type="button" onClick={() => setAttempt((value) => value + 1)}>Check again <Icon name="arrow" /></button>
+          </section>}
           <footer><span>GROWTHPULSE <span className="footer-divider">/</span> BUILT ON EVIDENCE.</span><span>A little clarity goes a long way.</span></footer>
         </main>
-      </div>
-    </div>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }
