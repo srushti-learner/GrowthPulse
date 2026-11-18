@@ -229,6 +229,14 @@ Open **http://127.0.0.1:5173** (use this exact origin with the default configura
 Vite proxies `/api` requests to Express on port 3001. Stop both processes with
 Ctrl+C. No database service needs starting or stopping.
 
+`npm run dev` keeps this local workflow unless the launching environment has
+`NODE_ENV=production` or a `DB_HOST` setting. GoDaddy's preview invokes that same
+script, so those hosted settings instead build the application and run the
+production Express server. A custom local `PORT` alone does not select hosting.
+The launcher does not read `.env` to make this choice; the local server still
+loads it normally. Use `npm run dev:local` to explicitly choose local development,
+including an intentional local MySQL experiment with exported `DB_*` settings.
+
 1. On **Overview**, enter a public website you own or have permission to read,
    confirm scan permission, and choose **Show my public-site findings**. No account
    or AI key is needed. Review readable page titles, published summaries and source
@@ -1265,10 +1273,18 @@ migration and ownership/count verification.
    explicitly requires and guarantees a trusted private network. Do not disable
    verification or guess the host's TLS configuration. Keep proxy trust at zero
    until the real forwarding topology is known.
-4. Install build tools with `npm ci --include=dev`, build with `npm run build`,
-   and run with `npm start`. Express serves `dist/client` and starts the analysis
-   worker. Do not run `npm run dev`, `vite` or `vite preview` as the hosted
-   application. Frontend builds do not need database credentials or AI keys.
+4. Build with `npm run build` and run with `npm start`. GoDaddy's preview
+   currently invokes `npm run dev`: the launcher recognizes production mode or
+   the injected `DB_HOST`, forces production mode, builds, then starts the same
+   compiled Express server. It never runs local Vite/concurrently in that mode.
+   The build tools and application type declarations are in `dependencies`
+   because GoDaddy installs only production dependencies before building.
+   `npm ci --omit=dev` therefore supports the hosted build/start flow; use
+   `npm ci` locally for tests and development tools. Builds exclude frontend
+   test-only files; `npm run typecheck` still checks those locally.
+   Express serves `dist/client` and starts the analysis worker. Build or startup
+   failures stop the launcher without a Vite/SQLite fallback. Frontend builds
+   do not need database credentials or AI keys.
 5. Keep provider keys server-side in the hosting secret store only when
    explicitly authorized. Local keys are not copied. Without provider keys,
    saved-data/manual flows remain usable and paid AI/research requests fail
@@ -1297,6 +1313,7 @@ the selected GoDaddy plan is established by local integration checks.
 
 ```text
 client/           React UI, authentication and business forms
+scripts/          Environment-aware local/hosted startup and launcher tests
 server/           Express, SQLite/MySQL persistence, migrations, authentication, tests
 shared/           Zod request/response and evidence/activity contracts
 data/             Ignored local SQLite database
