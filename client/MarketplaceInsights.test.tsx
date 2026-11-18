@@ -69,10 +69,28 @@ describe("product-focused Marketplace Insights", () => {
     expect(button("Analyse confirmed reviews").disabled).toBe(true);
     expect(button("Research again").disabled).toBe(false);
     expect(container.querySelector('.marketplace-insights input[type="checkbox"]')).toBeNull();
-    expect(container.textContent).toContain("product details to Anthropic and Tavily");
+    const options = container.querySelector<HTMLDetailsElement>(".marketplace-research-controls > details")!;
+    expect(options.open).toBe(false);
+    expect(options.querySelector("summary")?.textContent).toBe("Research options and details");
+    expect(options.textContent).toContain("product details to Anthropic and Tavily");
+    expect(options.textContent).toContain("Reopening saved results starts no paid research");
+    expect(container.querySelector(".marketplace-research-controls > .field-note")).toBeNull();
+    expect(container.querySelector(".marketplace-product > .field-note")).toBeNull();
     expect(fetcher.mock.calls.every(([, options]) => !options?.method)).toBe(true);
     expect(container.textContent).not.toContain("m_1111111111111111");
     expect(container.querySelectorAll("h1")).toHaveLength(0);
+  });
+  it("keeps disclosures and manual research options available without starting paid work", async () => {
+    state.report = null;
+    await render();
+    const options = container.querySelector<HTMLDetailsElement>(".marketplace-research-controls > details")!;
+    await act(async () => options.querySelector("summary")!.click());
+    expect(options.open).toBe(true);
+    expect(options.textContent).toContain("Provider charges may apply");
+    expect(options.querySelector("textarea")).not.toBeNull();
+    expect(options.querySelector('input[type="file"]')).not.toBeNull();
+    expect(button("Research marketplaces").disabled).toBe(false);
+    expect(fetcher.mock.calls.every(([, options]) => !options?.method)).toBe(true);
   });
   it("saves an explicit listing relationship before admitting review analysis", async () => {
     await render();

@@ -23,26 +23,48 @@ function quadrant(item: GrowthPlanItem) {
   return item.impact === "high" ? item.effort === "low" ? "Quick wins" : "Strategic bets"
     : item.effort === "high" ? "Reconsider" : "Incremental improvements";
 }
+function ActionPlan({ opportunity }: { opportunity: GrowthOpportunity }) {
+  const { strategy } = opportunity;
+  const normalize = (text: string) => text.trim().toLowerCase().replace(/\s+/g, " ").replace(/[.!?]+$/, "");
+  const shown = new Set([opportunity.title, opportunity.detail].map(normalize));
+  const objective = strategy.objective.trim() && !shown.has(normalize(strategy.objective)) ? strategy.objective : null;
+  if (objective) shown.add(normalize(objective));
+  const actions = strategy.actions.filter((action) => {
+    const key = normalize(action);
+    if (!key || shown.has(key)) return false;
+    shown.add(key);
+    return true;
+  });
+  return <div className="action-plan">
+    <section className="action-proposal"><h3>What to try</h3><p>{opportunity.detail}</p></section>
+    {objective && <section><h3>The goal</h3><p>{objective}</p></section>}
+    {!!actions.length && <section><h3>Your next steps</h3><ol className="action-next-steps">
+      {actions.map((action, index) => <li key={index}>{action}</li>)}
+    </ol></section>}
+    <section className="action-measurement"><h3>How to measure it</h3>
+      <p><strong>Suggested measure:</strong> {strategy.metric}</p><p>{strategy.measurement}</p>
+    </section>
+    <details className="agent-sources action-background"><summary>Why this was suggested and supporting evidence</summary>
+      <p>{opportunity.reviewReason}</p>
+      <p><strong>Assumption to test:</strong> {strategy.hypothesis}</p>
+      <SupportingEvidence sources={opportunity.sources} />
+      <p className="field-note">This is a saved recommendation, not work the agent has performed. Steps and results are not tracked automatically. Recheck the saved evidence, set a baseline and review costs before acting. Marking work complete does not establish improved sales.</p>
+    </details>
+  </div>;
+}
 function Strategy({ opportunity, businessId, planned = false }: { opportunity: GrowthOpportunity; businessId: string; planned?: boolean }) {
   return <Sheet><SheetTrigger asChild><Button variant="outline">Explore strategy<ArrowRight /></Button></SheetTrigger>
     <SheetContent className="research-drawer"><SheetHeader>
       <p className="section-eyebrow">GROWTH RECOMMENDATION</p><SheetTitle>{opportunity.title}</SheetTitle>
       <SheetDescription>A planning scaffold from saved AI findings, not an executed change or a promised outcome.</SheetDescription>
     </SheetHeader><div className="research-drawer-body growth-strategy">
-      <h3>Why consider it</h3><p>{opportunity.detail}</p>
-      <p className="field-note">{opportunity.reviewReason}</p>
-      <h3>Objective</h3><p>{opportunity.strategy.objective}</p>
-      <h3>Suggested action sequence</h3><ol>{opportunity.strategy.actions.map((action, index) => <li key={index}>{action}</li>)}</ol>
+      <ActionPlan opportunity={opportunity} />
       {planned && <Button asChild><a href={journeyLink("actions", businessId, opportunity.id)}>Work on this action<ArrowRight /></a></Button>}
       <h3>Optional catalogue work</h3>
       <p>For a catalogue-related action, choose the relevant product yourself. Research does not establish which product to change, and no edits are applied automatically.</p>
       <Button asChild><a href={journeyLink("products", businessId, opportunity.id)}>Work on a product with this context<ArrowRight /></a></Button>
-      <h3>Experiment proposal</h3><p>{opportunity.strategy.hypothesis}</p>
-      <p><strong>Suggested metric:</strong> {opportunity.strategy.metric}</p>
-      <p>{opportunity.strategy.measurement}</p>
       <p className="field-note">There is no automatic outcome tracking. Import sales or enter owner records in the Growth Simulator, then choose your own assumptions. Baseline, impact, effort and time to value still need owner validation. No experiment or campaign has been launched.</p>
       <Button asChild variant="outline"><a href={`#simulator?${new URLSearchParams({ business: businessId, action: opportunity.id })}`}>Explore in Growth Simulator<ArrowRight /></a></Button>
-      <h3>Supporting evidence</h3><SupportingEvidence sources={opportunity.sources} />
     </div></SheetContent>
   </Sheet>;
 }
@@ -190,19 +212,14 @@ export function GrowthIntelligence({ business, onSessionExpired, onPlanSaved, ac
         <Button asChild variant="outline"><a href={journeyLink("growth", business.id)}>Review opportunities<ArrowRight /></a></Button></CardContent></Card>}
       {visible.map((item, index) => <details className="agent-sources growth-plan-item" open={index === 0} key={item.opportunity.id} id={`growth-action-${item.opportunity.id}`}>
         <summary>{item.opportunity.title} <Badge variant="outline">{item.status === "completed" ? "Marked complete by you" : statusLabels[item.status]}</Badge></summary>
-        <p>{item.opportunity.detail}</p><h3>What you are working toward</h3><p>{item.opportunity.strategy.objective}</p>
-        <h3>Suggested next steps</h3><ol className="action-next-steps">{item.opportunity.strategy.actions.map((step, index) => <li key={index}>{step}</li>)}</ol>
-        <p className="field-note">These are saved suggestions to review, not work the agent has performed. Individual steps are not automatically tracked. Evidence is kept as it was when you chose this action; recheck it before acting.</p>
-        <details className="agent-sources"><summary>How to review results</summary><p><strong>Suggested metric:</strong> {item.opportunity.strategy.metric}</p>
-          <p>{item.opportunity.strategy.measurement}</p><p className="field-note">Choose and record your own baseline. This workspace does not measure outcomes automatically.</p></details>
-        <SupportingEvidence sources={item.opportunity.sources} />
+        <ActionPlan opportunity={item.opportunity} />
         <details className="agent-sources"><summary>Optional tools for this action</summary>
           <p>Only open a tool if it fits this action. You can also do the work outside GrowthPulse. No product has been selected or changed for you.</p>
           <div className="journey-actions"><Button asChild variant="outline"><a href={journeyLink("products", business.id, item.opportunity.id)}>Review a relevant product<ArrowRight /></a></Button>
             <Button asChild variant="ghost"><a href={journeyLink("simulator", business.id, item.opportunity.id)}>Explore a what-if<ArrowRight /></a></Button></div>
         </details>
         <ActionStatusForm key={`${item.opportunity.id}:${item.revision}`} item={item} saving={!!savingId} onSave={(event, item) => void save(item.opportunity, item, event)} />
-        <p className="field-note">Updated <time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleDateString()}</time>. Marking work complete is not proof of improved sales.</p>
+        <p className="field-note">Updated <time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleDateString()}</time></p>
       </details>)}
       <div className="journey-actions"><Button asChild variant="outline"><a href={journeyLink("progress", business.id)}>Review my progress<ArrowRight /></a></Button>
         <Button variant="ghost" disabled={loading || !!savingId} onClick={() => setReload((value) => value + 1)}>{loading ? "Loading..." : "Reload saved actions"}</Button></div>
@@ -223,7 +240,7 @@ export function GrowthIntelligence({ business, onSessionExpired, onPlanSaved, ac
         : primary.reviewReason}</p><Strategy opportunity={primary} businessId={business.id} planned={data.plan.some((item) => item.opportunity.id === primary.id)} /></>
         : <><p>{hasSavedActions ? "Review completed or dismissed actions below before choosing another move."
           : "No accepted growth suggestions are available. Missing evidence is not proof of a business problem."}</p>
-          <a className="text-button" href="#business">Manage website analysis<ArrowRight className="inline size-4" /></a></>}
+          <a className="text-button" href={`#overview?view=business&business=${business.id}`}>Manage website analysis<ArrowRight className="inline size-4" /></a></>}
       </CardContent>
     </Card></BlurFade>
     <div className="growth-summary" aria-label="Growth plan summary">

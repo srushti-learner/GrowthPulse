@@ -16,7 +16,6 @@ export function MarketplaceInsights({ businessId }: { businessId: string }) {
   return <section className="profile-card marketplace-insights" aria-label="Marketplace insights">
     <p className="section-eyebrow">MARKETPLACE INSIGHTS</p>
     <h2>Your product in the marketplace.</h2>
-    <p>Research your own product and comparable Amazon India / Flipkart listings. Confirm matches before analysing customer feedback.</p>
     {loading && <p role="status">Loading your saved products...</p>}
     {error && <p role="alert" className="form-error">{error} <Button variant="outline" onClick={reloadProducts}>Reload products</Button></p>}
     {!loading && !error && !products.length && <p>Add a reviewed product first. <a href={`#products?business=${businessId}`}>Open your catalogue</a>. A website is not required.</p>}
@@ -61,12 +60,15 @@ function MarketplaceProduct() {
     {data?.error && !data.running && <p className="field-note">The last research attempt failed. Select Retry marketplace research to start a new attempt. Reload saved status only refreshes this saved message.</p>}
     {data?.stale && <p className="dashboard-notice">Your catalogue product changed. These are previous marketplace results; research again before confirming matches or analysing reviews.</p>}
     <div className="marketplace-research-controls">
-      <p className="field-note">Starting research sends product details to Anthropic and Tavily. Provider charges may apply. Nothing will be published.</p>
       <Button disabled={locked || !data || !urls.trim() && (!data.configured || !data.discoveryConfigured)} onClick={() => void mutate("", {
         consent: true, requestKey: requestKey.current, urls: urls.split(/\r?\n/).map((value) => value.trim()).filter(Boolean), refresh: !!saved,
       })}>{data?.running ? "Researching..." : data?.error ? "Retry marketplace research" : saved ? "Research again" : "Research marketplaces"}</Button>
       {data && (!data.configured || !data.discoveryConfigured) && <p className="field-note">Automatic discovery is not configured on this server. You can still supply listing URLs or import an authorized CSV. AI review analysis requires the server's AI connection.</p>}
-      <details className="agent-sources"><summary>Supply listing URLs or an authorized review CSV</summary>
+      <details className="agent-sources"><summary>Research options and details</summary>
+        <p>Research your own product and comparable Amazon India / Flipkart listings. Confirm matches before analysing customer feedback.</p>
+        <p className="field-note">Starting research sends product details to Anthropic and Tavily. Provider charges may apply. Nothing will be published.</p>
+        <p className="field-note">Reopening saved results starts no paid research. No catalogue edits, publishing, order estimates or automatic monitoring.</p>
+        <h3>Add listing links or import reviews</h3>
         <p>Optional fallbacks when discovery finds the wrong item or a public page cannot be read. Supplying a URL does not bypass marketplace access restrictions.</p>
         <label>Product listing URLs (up to six, one per line)<textarea rows={3} value={urls} maxLength={12_294} disabled={locked} onChange={(event) => { setUrls(event.target.value); requestKey.current = crypto.randomUUID(); }} /></label>
         <label>Authorized review CSV<input type="file" accept=".csv,text/csv" disabled={locked} onChange={(event) => {
@@ -123,6 +125,5 @@ function MarketplaceProduct() {
       </section>
       <details className="agent-sources"><summary>Research scope and evidence gaps</summary><ul>{saved.limitations.map((text) => <li key={text}>{text}</li>)}</ul></details>
     </div>}
-    <p className="field-note">Reopening saved results starts no paid research. No catalogue edits, publishing, order estimates or automatic monitoring.</p>
   </div>;
 }

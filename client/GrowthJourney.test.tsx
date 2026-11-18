@@ -73,7 +73,44 @@ describe("connected growth journey", () => {
     expect(fetch).toHaveBeenCalledOnce();
     await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Add a business"]')!.click());
     expect(selected).toHaveBeenCalledWith("");
-    expect(window.location.hash).toBe("#business?new=1");
+    expect(window.location.hash).toBe("#overview?view=setup&new=1");
+  });
+  it("nests setup and profile views inside the journey instead of showing the dashboard", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => json({ businesses: [] })));
+    await act(async () => root.render(<GrowthJourney section="overview" selectedBusinessId=""
+      onBusinessSelected={selected} onSessionExpired={expired} setup={<div data-setup>Website setup</div>}
+      profile={<div data-profile>Business details</div>} />));
+    expect(container.querySelector("[data-setup]")).not.toBeNull();
+    expect(container.querySelector(".journey-next")).toBeNull();
+    expect(container.querySelector(".journey-summary")).toBeNull();
+    await act(async () => root.render(<GrowthJourney section="overview" selectedBusinessId="" view="business"
+      onBusinessSelected={selected} onSessionExpired={expired} setup={<div data-setup>Website setup</div>}
+      profile={<div data-profile>Business details</div>} />));
+    expect(container.querySelector("[data-profile]")).not.toBeNull();
+    expect(container.querySelector("[data-setup]")).toBeNull();
+    expect(container.querySelector(".journey-next")).toBeNull();
+  });
+  it("keeps the profile mounted through business selection and refetch so approved analysis survives saving", async () => {
+    let finish!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(async (path: string) => {
+      if (path === "/api/businesses") return new Promise<Response>((resolve) => { finish = resolve; });
+      if (path.endsWith("/products")) return json({ products: [] });
+      return json(empty);
+    }));
+    const profile = <input aria-label="Profile draft" defaultValue="Keep my analysis state" />;
+    await act(async () => root.render(<GrowthJourney section="overview" selectedBusinessId="" view="business"
+      onBusinessSelected={selected} onSessionExpired={expired} profile={profile} />));
+    const input = container.querySelector("input");
+    expect(input).not.toBeNull();
+    await act(async () => finish(json({ businesses: [] })));
+    await act(async () => root.render(<GrowthJourney section="overview" selectedBusinessId={business.id} view="business"
+      onBusinessSelected={selected} onSessionExpired={expired} profile={profile} />));
+    expect(container.querySelector("input")).toBe(input);
+    await act(async () => finish(json({ businesses: [business] })));
+    expect(container.querySelector("input")).toBe(input);
+    expect(container.querySelector(".journey-next")).toBeNull();
+    expect(container.querySelector(".journey-chapters")).toBeNull();
+    expect(container.querySelector(".journey-stages a")?.getAttribute("href")).toBe(`#overview?view=business&business=${business.id}`);
   });
   it("clears task-specific parameters when switching business, including the new-profile route", async () => {
     fetcher(); await render("products");

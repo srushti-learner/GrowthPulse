@@ -63,7 +63,10 @@ describe("growth decision workspace", () => {
       .toBe(`#simulator?business=${business.id}&action=${opportunity.id}`);
     expect(dialog.querySelector<HTMLAnchorElement>('a[href^="#products"]')?.getAttribute("href"))
       .toBe(`#products?business=${business.id}&action=${opportunity.id}`);
-    const evidence = dialog.querySelector<HTMLDetailsElement>(".agent-sources")!;
+    const background = dialog.querySelector<HTMLDetailsElement>(".action-background")!;
+    expect(background.open).toBe(false);
+    await act(async () => background.querySelector("summary")!.click());
+    const evidence = background.querySelector<HTMLDetailsElement>(".agent-sources")!;
     expect(evidence.open).toBe(false);
     await act(async () => evidence.querySelector("summary")!.click());
     expect(evidence.querySelector("a")?.href).toBe(business.website);
@@ -143,7 +146,7 @@ describe("growth decision workspace", () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("Database unavailable");
     await click("Reload growth intelligence");
     expect(container.textContent).toContain("Gather evidence before choosing a growth move");
-    expect(container.querySelector('a[href="#business"]')?.textContent).toContain("Manage website analysis");
+    expect(container.querySelector('a[href^="#overview?view=business"]')?.textContent).toContain("Manage website analysis");
     expect(fetch.mock.calls.every(([, options]) => !options.method)).toBe(true);
   });
 
@@ -199,6 +202,50 @@ describe("growth decision workspace", () => {
     });
     expect(container.querySelector(".growth-plan-item summary")?.textContent).toContain("Marked complete by you");
     expect(document.activeElement).toBe(container.querySelector(".growth-plan-item summary"));
+  });
+
+  it("makes older plans readable without repeating the recommendation as the goal or a task", async () => {
+    const legacy = {
+      ...opportunity, strategy: {
+        ...opportunity.strategy, objective: opportunity.title,
+        actions: ["Confirm the issue with shoppers.", opportunity.detail, "Prepare a small approved test.",
+          "  CONFIRM the issue with shoppers!  ", "Measure against a baseline."],
+      },
+    };
+    const fetch = vi.fn(async (_path: string) => json({ ...snapshot, plan: [{ ...planned, opportunity: legacy }] }));
+    vi.stubGlobal("fetch", fetch);
+    await render(true);
+    const action = container.querySelector(".growth-plan-item")!;
+    expect(action.querySelector(".action-proposal")?.textContent).toBe(`What to try${opportunity.detail}`);
+    expect(action.textContent?.split(opportunity.title)).toHaveLength(2);
+    expect(action.textContent?.split(opportunity.detail)).toHaveLength(2);
+    expect(action.querySelector(".action-plan")?.textContent).not.toContain("The goal");
+    expect(Array.from(action.querySelectorAll(".action-next-steps li"), (item) => item.textContent))
+      .toEqual(["Confirm the issue with shoppers.", "Prepare a small approved test.", "Measure against a baseline."]);
+    expect(action.querySelector(".action-measurement")?.textContent).toContain(opportunity.strategy.metric);
+    expect(action.querySelector(".action-measurement")?.textContent).toContain(opportunity.strategy.measurement);
+    expect(action.querySelector<HTMLDetailsElement>(".action-background")?.open).toBe(false);
+    expect(action.querySelector<HTMLSelectElement>('[name="status"]')?.value).toBe("planned");
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0][0]).toBe(`/api/businesses/${business.id}/growth`);
+  });
+
+  it("preserves a distinct goal and does not invent tasks when the saved action list only repeats the proposal", async () => {
+    const value = { ...opportunity, strategy: { ...opportunity.strategy, actions: [opportunity.detail] } };
+    vi.stubGlobal("fetch", vi.fn(async () => json({ ...snapshot, plan: [{ ...planned, opportunity: value }] })));
+    await render(true);
+    const plan = container.querySelector(".action-plan")!;
+    expect(plan.textContent).toContain(`The goal${opportunity.strategy.objective}`);
+    expect(plan.querySelector("ol")).toBeNull();
+    expect(plan.querySelector(".action-proposal")?.textContent).toContain(opportunity.detail);
+    expect(plan.querySelector(".action-measurement")).not.toBeNull();
+    await act(async () => plan.querySelector<HTMLDetailsElement>(".action-background")!.querySelector("summary")!.click());
+    expect(plan.querySelector<HTMLDetailsElement>(".action-background")?.open).toBe(true);
+    expect(plan.querySelector(".action-background")?.textContent).toContain(opportunity.strategy.hypothesis);
+    const evidence = plan.querySelector<HTMLDetailsElement>(".action-background .agent-sources")!;
+    await act(async () => evidence.querySelector("summary")!.click());
+    expect(evidence.querySelector("a")?.href).toBe(opportunity.sources[0].url);
+    expect(evidence.textContent).toContain(opportunity.sources[0].quote);
   });
 
   it("keeps Act empty until an action is chosen, and reports missing or conflicting actions explicitly", async () => {

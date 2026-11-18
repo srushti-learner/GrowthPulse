@@ -3,8 +3,11 @@ import { loginSchema, registerSchema, sessionSchema, type User } from "../shared
 import { api, errorMessage } from "./api";
 import { Icon } from "./Icon";
 
-export function AuthForm({ onAuthenticated }: { onAuthenticated: (user: User) => void }) {
-  const [register, setRegister] = useState(false);
+export function AuthForm({ onAuthenticated, mode, onModeChange }: {
+  onAuthenticated: (user: User, registered: boolean) => void;
+  mode: "login" | "register"; onModeChange: (mode: "login" | "register") => void;
+}) {
+  const register = mode === "register";
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
 
@@ -21,7 +24,7 @@ export function AuthForm({ onAuthenticated }: { onAuthenticated: (user: User) =>
     setError("");
     try {
       const { user } = await api(`/api/auth/${register ? "register" : "login"}`, sessionSchema, { method: "POST", body: JSON.stringify(input.data) });
-      onAuthenticated(user);
+      onAuthenticated(user, register);
     } catch (error) {
       setError(errorMessage(error));
     } finally {
@@ -46,7 +49,7 @@ export function AuthForm({ onAuthenticated }: { onAuthenticated: (user: User) =>
           <label>Password<input name="password" type="password" autoComplete={register ? "new-password" : "current-password"} required minLength={register ? 12 : 1} maxLength={128} />{register && <span className="field-note">At least 12 characters. Spaces and passphrases are welcome.</span>}</label>
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="primary-link" type="submit">{pending ? "Please wait..." : register ? "Create account" : "Log in"}<Icon name="arrow" /></button>
-          <button className="text-button" type="button" onClick={() => { setRegister(!register); setError(""); }}>{register ? "Already have an account? Log in" : "New here? Create an account"}</button>
+          <button className="text-button" type="button" onClick={() => { onModeChange(register ? "login" : "register"); setError(""); }}>{register ? "Already have an account? Log in" : "New here? Create an account"}</button>
         </fieldset>
       </form>
     </section>

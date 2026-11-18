@@ -72,6 +72,15 @@ describe("workspace foundation", () => {
     return vi.fn((path: string) => path === "/api/auth/me" ? Promise.resolve(json({ error: "Please log in to continue." }, 401))
       : path === "/api/onboarding/preview" ? Promise.resolve(json({ preview: null })) : checkHealth());
   }
+  function signedInFetch() {
+    return vi.fn(async (path: string) => {
+      if (path === "/api/auth/me") return json({ user: { id: "509e12ce-3028-4ed1-bdf7-329a26d470d8", name: "Test Owner", email: "owner@example.test" } });
+      if (path === "/api/health") return json(health);
+      if (path === "/api/businesses") return json({ businesses: [] });
+      if (path === "/api/onboarding/preview") return json({ preview: null });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+  }
 
   it.each(["sqlite", "mysql"])("accepts a healthy %s connection without exposing technical status controls", async (engine) => {
     const fetch = publicFetch(async () => json({ ...health, database: { engine, status: "ok" } }));
@@ -123,7 +132,7 @@ describe("workspace foundation", () => {
         expect(container.querySelector(".first-visit")).toBeNull();
       } else if (["growth", "opportunities", "intelligence"].includes(section)) {
         expect(container.querySelector(".business-profile-settings")).toBeNull();
-        expect(container.querySelector('.business-workspace a[href="#business"]')?.textContent)
+        expect(container.querySelector('.business-workspace a[href^="#overview?view=business"]')?.textContent)
           .toContain(section === "growth" || section === "opportunities" ? "Manage website analysis" : "Manage business profile");
       }
       expect(container.querySelector('nav[aria-label="Main navigation"] a[href^="#products"]')?.getAttribute("href"))
@@ -131,15 +140,13 @@ describe("workspace foundation", () => {
     }
     expect(fetch).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ method: "POST" }));
   });
-  it("makes Growth Simulator an available destination but requires authentication before loading sales", async () => {
-    window.history.replaceState(null, "", "/#simulator");
+  it.each(["website", "simulator", "products", "actions", "business"])("requires authentication on a direct %s link without exposing the workspace", async (section) => {
+    window.history.replaceState(null, "", `/#${section}`);
     const fetch = publicFetch(); vi.stubGlobal("fetch", fetch); await renderApp();
-    expect(container.querySelector('nav > [data-slot="sidebar-menu"] a[href="#simulator"]')).not.toBeNull();
-    expect(container.querySelector('.planned-navigation a[href="#simulator"]')).toBeNull();
-    expect(container.querySelector("h1")?.textContent).toBe("Growth Simulator");
-    expect(container.querySelector("form")).not.toBeNull();
-    expect(container.textContent).not.toContain("This module is not implemented yet");
-    expect(fetch.mock.calls.every(([path]) => !path.includes("/analytics"))).toBe(true);
+    expect(container.querySelector(".auth-form")).not.toBeNull();
+    expect(container.querySelector('nav[aria-label="Main navigation"]')).toBeNull();
+    expect(container.querySelector('input[type="url"]')).toBeNull();
+    expect(fetch.mock.calls.map(([path]) => path).sort()).toEqual(["/api/auth/me", "/api/health"]);
   });
 
   it("opens chosen steps rather than products from Act, and refreshes the journey after a status update", async () => {
@@ -195,7 +202,7 @@ describe("workspace foundation", () => {
 
   it("preserves the old Opportunities route as an alias for My growth plan", async () => {
     window.history.replaceState(null, "", "/#opportunities");
-    const fetch = publicFetch(); vi.stubGlobal("fetch", fetch);
+    const fetch = signedInFetch(); vi.stubGlobal("fetch", fetch);
     await renderApp();
     expect(window.location.hash).toBe("#growth");
     expect(container.querySelector('nav[aria-label="Main navigation"] a[href="#opportunities"]')).toBeNull();
@@ -205,7 +212,7 @@ describe("workspace foundation", () => {
 
   it("opens mobile navigation as a dismissable sheet and closes it after selecting a destination", async () => {
     vi.stubGlobal("innerWidth", 390);
-    vi.stubGlobal("fetch", publicFetch()); await renderApp();
+    vi.stubGlobal("fetch", signedInFetch()); await renderApp();
     const trigger = container.querySelector<HTMLButtonElement>('[data-slot="sidebar-trigger"]')!;
     await act(async () => { trigger.focus(); trigger.click(); });
     const dialog = document.querySelector('[role="dialog"]')!;
@@ -237,7 +244,7 @@ describe("workspace foundation", () => {
   });
 
   it("navigates to honest module placeholders and preserves the section on skip-to-content", async () => {
-    vi.stubGlobal("fetch", publicFetch());
+    vi.stubGlobal("fetch", signedInFetch());
     await renderApp();
     await act(async () => {
       window.history.replaceState(null, "", "/#whatsapp");
@@ -253,25 +260,35 @@ describe("workspace foundation", () => {
     expect(container.querySelector("h1")?.textContent).toBe("WhatsApp Insights");
   });
 
-  it("explores sample sources and workflow stages without triggering real analysis", async () => {
+  it("moves through animated story frames and signup without scans or workspace navigation", async () => {
     const fetch = publicFetch();
     vi.stubGlobal("fetch", fetch);
     await renderApp();
-    await act(async () => container.querySelector<HTMLElement>(".workflow-explainer > summary")!.click());
-    const sourceButtons = container.querySelectorAll<HTMLButtonElement>(".source-card");
-    await act(async () => sourceButtons[1].click());
-    expect(sourceButtons[1].getAttribute("aria-pressed")).toBe("true");
-    expect(sourceButtons[0].getAttribute("aria-pressed")).toBe("false");
-    expect(container.querySelector(".preview-detail")?.textContent).toContain("This sample catalogue");
-
-    const stages = container.querySelectorAll<HTMLButtonElement>(".pipeline button");
-    await act(async () => stages[2].click());
-    expect(stages[2].getAttribute("aria-pressed")).toBe("true");
-    expect(container.querySelector(".preview-detail")?.textContent).toContain("current and proposed descriptions");
-    await act(async () => stages[3].click());
-    expect(container.querySelector(".preview-detail")?.textContent).toContain("Nothing has been scanned, generated, approved, or applied");
-    expect(container.querySelector(".preview-disclaimer")?.textContent).toContain("No scans, AI calls, or business changes are running");
-    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(container.querySelector("h1")?.textContent).toBe("Running a business means juggling a lot.");
+    expect(container.querySelector(".auth-form")).toBeNull();
+    expect(container.querySelector('nav[aria-label="Main navigation"]')).toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>(".welcome-next")!.click());
+    expect(container.querySelector(".welcome-scene-1")).not.toBeNull();
+    expect(document.activeElement).toBe(container.querySelector("h1"));
+    await act(async () => container.querySelector<HTMLButtonElement>(".welcome-next")!.click());
+    expect(container.querySelector("h1")?.textContent).toBe("Find your next move.");
+    expect(container.querySelector('[aria-current="step"]')?.getAttribute("aria-label")).toContain("frame 3");
+    await act(async () => container.querySelector<HTMLButtonElement>(".welcome-pagination .welcome-back")!.click());
+    expect(container.querySelector(".welcome-scene-1")).not.toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>(".welcome-skip")!.click());
+    expect(container.querySelector("#auth-heading")?.textContent).toBe("Make room for clarity.");
+    expect(container.querySelector('[name="name"]')).not.toBeNull();
+    expect(container.querySelector('input[type="url"]')).toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>(".welcome-login")!.click());
+    expect(container.querySelector("#auth-heading")?.textContent).toBe("Welcome back.");
+    expect(container.querySelector('[name="name"]')).toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>(".auth-form .text-button")!.click());
+    expect(container.querySelector('[name="name"]')).not.toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>(".welcome-login")!.click());
+    expect(container.querySelector('[name="name"]')).toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label^="Show frame 1:"]')!.click());
+    expect(container.querySelector("h1")?.textContent).toBe("Running a business means juggling a lot.");
+    expect(fetch.mock.calls.map(([path]) => path).sort()).toEqual(["/api/auth/me", "/api/health"]);
   });
 
   it("requires login for business profiles while leaving the illustrative overview public", async () => {
@@ -283,14 +300,14 @@ describe("workspace foundation", () => {
     expect(container.querySelector(".business-workspace")).toBeNull();
   });
 
-  it("makes the website scanner available without requiring an account", async () => {
-    window.history.replaceState(null, "", "/#website");
+  it("lets a returning visitor bypass the story with a direct login link", async () => {
+    window.history.replaceState(null, "", "/#login");
     const fetch = publicFetch();
     vi.stubGlobal("fetch", fetch);
     await renderApp();
-    expect(container.querySelector(".scan-form")).not.toBeNull();
-    expect(container.querySelector(".auth-form")).toBeNull();
-    expect(container.textContent).toContain("Preview only");
+    expect(container.querySelector(".scan-form")).toBeNull();
+    expect(container.querySelector(".auth-form")).not.toBeNull();
+    expect(container.querySelector("#auth-heading")?.textContent).toBe("Welcome back.");
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
@@ -328,17 +345,22 @@ describe("workspace foundation", () => {
     expect(container.querySelector("form.profile-card")).not.toBeNull();
   });
 
-  it("signs up, creates a business without an owner supplied by the browser, and logs out", async () => {
-    window.history.replaceState(null, "", "/#business");
+  it.each(["#signup", "#products?business=00000000-0000-4000-8000-000000000001"])("registers from %s before website/manual setup, without retaining another account's business context", async (entry) => {
+    window.history.replaceState(null, "", `/${entry}`);
     const user = { id: "509e12ce-3028-4ed1-bdf7-329a26d470d8", name: "Test Owner", email: "owner@example.test" };
     const business = { id: "02a221ee-41f1-46c9-bc96-12401d8dcf73", name: "Local Shop", category: "", description: "", website: "", createdAt: "2026-11-16T12:00:00.000Z", updatedAt: "2026-11-16T12:00:00.000Z" };
     const updated = { ...business, name: "Updated Local Shop" };
+    let saved = false;
     const fetch = vi.fn(async (path: string, options?: RequestInit) => {
       if (path === "/api/health") return json(health);
       if (path === "/api/auth/me") return json({ error: "Please log in to continue." }, 401);
       if (path === "/api/auth/register") return json({ user }, 201);
       if (path === "/api/auth/logout") return new Response(null, { status: 204 });
-      if (path === "/api/businesses") return options?.method === "POST" ? json({ business }, 201) : json({ businesses: [] });
+      if (path === "/api/businesses" && options?.method === "POST") { saved = true; return json({ business }, 201); }
+      if (path === "/api/businesses") return json({ businesses: saved ? [business] : [] });
+      if (path === "/api/onboarding/preview") return json({ preview: null });
+      if (path.endsWith("/products")) return json({ products: [] });
+      if (path.endsWith("/growth")) return json({ opportunities: [], plan: [], researchStatus: "unavailable", evidenceSavedAt: null });
       if (path === `/api/businesses/${business.id}` && options?.method === "PUT") return json({ business: updated });
       if (path.endsWith("/activity")) return json({ activities: [] });
       if (path.endsWith("/evidence")) return json({ evidence: [] });
@@ -346,12 +368,20 @@ describe("workspace foundation", () => {
     });
     vi.stubGlobal("fetch", fetch);
     await renderApp();
-    await act(async () => container.querySelector<HTMLButtonElement>(".auth-form .text-button")?.click());
+    if (entry.startsWith("#products")) await act(async () => container.querySelector<HTMLButtonElement>(".auth-form .text-button")!.click());
     await act(async () => {
       setValue("name", user.name);
       setValue("email", user.email);
       setValue("password", "local test passphrase");
       container.querySelector(".auth-form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(container.querySelector(".business-workspace")).toBeNull();
+    expect(container.querySelector(".first-visit h2")?.textContent).toBe("What's your business website?");
+    expect(container.querySelector('nav[aria-label="Main navigation"]')?.textContent).not.toContain("My business");
+    expect(fetch.mock.calls.some(([, options]) => options?.method === "POST" && String(options.body).includes("permission"))).toBe(false);
+    await act(async () => {
+      window.history.replaceState(null, "", "/#overview?view=business&new=1");
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
     });
     expect(container.querySelector(".business-workspace")).not.toBeNull();
     await act(async () => setValue("businessName", business.name));
@@ -359,6 +389,7 @@ describe("workspace foundation", () => {
     expect(container.querySelector(".saved-profile h2")?.textContent).toBe("Business profile saved");
     expect(container.querySelector(".saved-profile-icon svg")).not.toBeNull();
     expect(container.querySelector(".saved-profile-details")?.textContent).toContain(business.name);
+    expect(window.location.hash).toBe(`#overview?view=business&business=${business.id}`);
     expect(container.querySelector("form.profile-card")).toBeNull();
     expect(document.activeElement).toBe(container.querySelector(".saved-profile h2"));
     const write = fetch.mock.calls.find(([path, options]) => path === "/api/businesses" && options?.method === "POST");
@@ -373,7 +404,8 @@ describe("workspace foundation", () => {
     expect(fetch).toHaveBeenCalledWith(`/api/businesses/${business.id}`, expect.objectContaining({ method: "PUT", body: JSON.stringify({ name: updated.name, category: "", description: "", website: "" }) }));
     await act(async () => container.querySelector<HTMLButtonElement>(".session-actions button")?.click());
     expect(container.querySelector(".business-workspace")).toBeNull();
-    expect(container.querySelector(".auth-form")).not.toBeNull();
+    expect(container.querySelector(".welcome-scene-0")).not.toBeNull();
+    expect(container.querySelector(".auth-form")).toBeNull();
   });
 
   it("opens existing profiles as saved cards, discards cancelled edits, and retains failed edits", async () => {
@@ -412,6 +444,7 @@ describe("workspace foundation", () => {
     expect(container.querySelector(".saved-profile-details")?.textContent).toContain(business.name);
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Add a business"]')?.click());
     expect(container.querySelector(".saved-profile")).toBeNull();
-    expect(container.querySelector<HTMLInputElement>('[name="businessName"]')?.value).toBe("");
+    expect(container.querySelector('[name="onboardingUrl"]')).not.toBeNull();
+    expect(window.location.hash).toBe("#overview?view=setup&new=1");
   });
 });

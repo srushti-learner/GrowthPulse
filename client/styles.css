@@ -550,14 +550,6 @@ footer > span:first-child { letter-spacing: 1.4px; font-size: 6px; }
 .optional-profile-details > div { display: grid; gap: 20px; padding-top: 12px; }
 .first-visit { display: grid; gap: 24px; margin-bottom: 30px; }
 .onboarding-steps { display: flex; flex-wrap: wrap; gap: 12px 24px; list-style: none; padding: 0; margin: 0; color: #c8bfea; font-size: 12px; }
-.public-findings { overflow-wrap: anywhere; }
-.public-findings > p, .public-finding p, .onboarding-continue > p { font-size: 14px; line-height: 1.8; color: #ccd0c4; }
-.public-finding { padding: 18px 0; border-top: 1px solid var(--line); }
-.public-finding h3, .onboarding-continue h3 { font-size: 18px; font-weight: 500; }
-.public-finding a { display: inline-flex; gap: 8px; align-items: center; color: #d3c7f5; font-size: 13px; }
-.public-finding a svg { width: 15px; height: 15px; }
-.onboarding-continue { padding: 22px; background: #ffffff06; border: 1px solid #675a91; border-radius: 8px; }
-.onboarding-continue .primary-link { margin-top: 12px; }
 .workflow-explainer > summary { cursor: pointer; color: #c8bfea; font-size: 13px; padding-block: 18px; }
 @media (max-width: 620px) {
   .scan-form select, .scan-picker select, .products-workspace select { font-size: 16px; }

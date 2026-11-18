@@ -260,7 +260,7 @@ export function ResearchReport({ report, businessName, briefing, evidence, brief
                 : "This saved analysis covered your store only. New analyses include competitor research automatically."}</p>
               <div className="market-upgrade-features"><span><Icon name="globe" />Brand landscape</span><span><Icon name="overview" />Visual comparisons</span><span><Icon name="shield" />Source-backed facts</span></div>
               <p>{renderResearchOptions ? "Approve a new analysis here to build your comparison."
-                : <>Open <a href="#business" className="text-button">Business Profile</a> and choose Manage website analysis to request a new comparison.</>} Refreshing this page does not regenerate the report.</p>
+                : <>Open <a href="#overview?view=business" className="text-button">Business details</a> in My growth journey and choose Manage website analysis to request a new comparison.</>} Refreshing this page does not regenerate the report.</p>
               {view === "overview" && renderResearchOptions?.(true)}
             </div>
           </section>

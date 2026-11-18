@@ -7,7 +7,8 @@ with reviewed imports**. Agent-led onboarding uses the official Anthropic SDK to
 call the scanner as a tool and prepare sourced business drafts for owner review.
 New UI analyses include a bounded LangGraph research team and competitor
 discovery through hosted Tavily MCP, with independently saved findings.
-The first visit starts with public website findings before account creation.
+The first visit starts with an animated story, then account creation or login,
+then website entry and explicit scan/analysis permission.
 Scheduled monitoring and website changes are not implemented.
 
 See [the product overview](project%20overview.md) and [the implementation
@@ -33,18 +34,30 @@ Act → Review** without restricting direct access to any workspace. Its labels
 describe saved records, partial research and owner-reported work, not a growth
 score or an assertion that the entire journey is complete.
 
-The shared **Active business** selector follows the owner across My business,
+The shared **Active business** selector follows the owner across My growth journey,
 Market intelligence, My growth plan, My actions, Products, Website evidence and sales tools.
 Sidebar and journey links retain the business ID; changing businesses clears
 product/import/action context rather than attaching it to another business.
-An empty account starts with a profile, and a website-less business can add
-products manually. Existing public website-first onboarding remains available.
+An empty signed-in account starts with website setup; a website-less business can
+add its details and products manually. Business details are nested inside
+**My growth journey**, not a separate sidebar tab. Legacy `#business` links still
+open that nested view. **Add business** starts the same guided setup.
+
+Before authentication, four manually advanced animated frames introduce the
+business, connected evidence, and a chosen next action, then show account creation.
+Back/Next controls, progress dots, Skip intro and immediate login are available.
+Reduced-motion preferences disable animations. The illustrations are not live
+analysis or growth results. No website form or workspace sidebar appears before login.
 
 Recommendations and plans live together in **My growth plan**; the former
 `#opportunities` URL still redirects to `#growth`.
 **Act → My actions** (`#actions`) is a separate execution workspace for the
 owner's saved plan: suggested next steps, original evidence, and revision-checked
 status updates. Active, completed and dismissed actions remain reviewable.
+Action details separate **What to try**, distinct next steps and **How to measure
+it**. Repeated titles and recommendation paragraphs are not shown again as goals
+or tasks, including in older saved plans. Evidence and planning caveats remain in
+a closed disclosure; this presentation does not rewrite saved plans or run AI.
 Products is a separate tool, not the Act destination. Catalogue and simulator
 links are optional within each action; they never infer a product match or
 perform the work. Completion is owner-reported, not measured uplift.
@@ -58,14 +71,18 @@ The website report does not collect customer reviews. Product-specific
 **Marketplace Insights** now provides a separate, explicitly approved research path
 described below. External trend datasets, continuous Market Radar alerts, price history
 and manual independent-brand submission are **not implemented**.
+The marketplace research button has no surrounding explanatory paragraphs by
+default. **Research options and details** holds provider/charge disclosures,
+scope, listing URLs and the authorized review CSV fallback. Browsing or opening
+these details never starts paid research; errors remain visible.
 Full explanations and original evidence open on demand. The Store briefing and
 original specialist outputs remain under **At a glance → Store briefing and saved
 specialist details**, not on the Market landing page. The active business is
 retained across these views.
-**My business** opens profile management rather than duplicating the dashboard;
+**My growth journey → Your business** opens nested profile management;
 an approved website-profile save still starts the agent.
 Research views omit the extra profile, product-review, rerun and technical footer
-sections. Use **My business → Manage website analysis** for an optional new
+sections. Use **My growth journey → Your business → Manage website analysis** for an optional new
 analysis or profile suggestions; opening these controls does not start a paid run.
 Connection failures and analysis errors remain visible, with explicit recovery.
 **Products** retains the active business. Valid, unambiguous website discoveries
@@ -268,20 +285,24 @@ The launcher does not read `.env` to make this choice; the local server still
 loads it normally. Use `npm run dev:local` to explicitly choose local development,
 including an intentional local MySQL experiment with exported `DB_*` settings.
 
-1. On **Overview**, enter a public website you own or have permission to read,
-   confirm scan permission, and choose **Show my public-site findings**. No account
-   or AI key is needed. Review readable page titles, published summaries and source
-   links before deciding whether to continue. Partial and failed scans are labelled;
-   failed/empty scans cannot start AI.
-2. Choose **Sign in for my AI briefing** to approve saving the findings and a combined
+1. Advance or skip the welcome story, then create an account or log in using
+   disposable test credentials (new passwords need at least 12 characters).
+   In **My growth journey**, enter a public website you own or have permission to read
+   and choose **Start AI analysis**. There is no separate permission checkbox;
+   scope, provider and charge notices are collapsed under **Analysis details**. This single action
+   approves reading the website, saving the findings and a combined
    business and competitor analysis: public research queries go to Tavily and
    captured public merchant/competitor evidence goes to Anthropic. The notice
-   includes the bounded provider budget and possible charges. Log in or create an account
-   using disposable test credentials and a password of at least 12 characters.
-   The findings carry across authentication: the server saves a basic hostname-named
+   includes the bounded provider budget and possible charges.
+2. The agent reads permitted pages and continues directly into AI analysis,
+   without a separate scan-results review or confirmation screen. A matching,
+   usable, unexpired setup scan is reused; a changed website or expired scan is read again.
+   Failed/empty scans stop with an explicit error and cannot start AI.
+   The server saves a basic hostname-named
    business profile and the existing scan, then starts the briefing without scanning
    again. An existing profile with the same website is reused without overwriting its
-   name or owner details. You can rename the new profile in **Business Profile**.
+   name or owner details. You can rename the new profile under **Review business details**
+   in **My growth journey**.
 3. The profile saves first; the agent starts automatically in the same workspace.
    Start with the short **At a glance** view, then open **Growth intelligence**
    to review recommendations and plan work, or **Market intelligence** for external
@@ -333,26 +354,27 @@ sources; accepted research summaries remain readable as cards if a run stops
 before the final briefing is saved. Switching specialists preserves the selected
 Store card. Older briefings from another attempt stay separately collapsed.
 
-Open **Website** for advanced, explicit scanner access without AI. The scanner
-is also available without an account.
+Open **Website** after login for advanced, explicit scanner access without AI.
 Signing in and selecting a business saves future scan results to that business;
 **Preview only** does not save them. Saving a profile with a website starts the
 business and competitor analysis without a separate checkbox. The save button
 and adjacent notice explain that action; provider/data-use details are expandable.
-It never silently imports products or applies suggestions.
-Without a website, use **No website? Sign in to add information manually** or
-**Business Profile**. Profiles without a website remain manual.
+Usable scanned products are saved to the catalogue; optional profile suggestions
+still require review.
+Without a website, use **I don't have a website. Add my business manually**.
+Profiles without a website remain manual.
 
-The public-first preview is a temporary database record, not browser-supplied AI
+The website-setup preview is a temporary database record, not browser-supplied AI
 evidence. Migration 6 stores at most 50 previews of at most 2 MiB each, with a
 30-minute lifetime. An opaque HttpOnly, SameSite=Lax cookie carries only its lookup
 token; the database retains the token hash. Expired previews are inaccessible and
 pruned on preview access and API startup, not by a scheduled deletion worker.
 Reading another website replaces this browser's preview; logout discards it.
-Signing in alone does not consent to AI. Claiming after the explicit briefing CTA
+Signing in alone does not consent to AI. Claiming after **Start AI analysis**
 is authenticated, account-bound, atomic and idempotent. Owned profiles/scans remain
-saved after preview expiry or logout. Refresh restores public findings without
-automatically starting a paid request; continuing an already completed same-scan
+saved after preview expiry or logout. Refresh restores the website URL and retains
+reusable evidence without displaying a scan-results step or automatically starting
+a paid request; continuing an already completed same-scan
 briefing loads it without rerunning AI.
 
 ## Business agent setup
@@ -363,8 +385,8 @@ available to your Anthropic account. Enable billing and configure provider-side 
 Never put the key in browser code or a `VITE_*` variable.
 
 Without a key, the profile still saves, but the agent shows a setup error and
-does not start an AI-driven scan or pretend AI ran. The public-first scan already
-happened before sign-in and remains available. Manual profiles, products, CSV, and advanced
+does not start an AI-driven scan or pretend AI ran. The approved public scan already
+happened during signed-in setup and remains available. Manual profiles, products, CSV, and advanced
 website scanning continue working without AI. Provider errors and invalid
 citations leave the owner profile unchanged. Valid captured website products
 are saved with the scan even if later AI analysis fails.
@@ -633,7 +655,7 @@ as part of this implementation.
 
 Every new UI analysis includes competitor research under one combined approval;
 there is no separate market-research checkbox. Both signed-in profile creation
-and public-first continuation disclose Tavily queries, public evidence sent to
+and guided website-setup continuation disclose Tavily queries, public evidence sent to
 Anthropic, bounded provider usage and possible charges before automatic analysis.
 The initial public scan remains free of AI/Tavily requests, and profiles without
 a website can still be saved manually without external analysis. Existing reports and
@@ -775,9 +797,10 @@ research can inform a next check but does not automatically resolve these cards.
 The research journal/checkpointer now supports MySQL. Production still requires
 verification of GoDaddy's persistent-worker behavior and deployment configuration.
 
-The overview's first-visit form is a real public scan-to-briefing flow.
-Its collapsed Fleet-inspired interactive workflow uses explicitly illustrative data:
-those controls do not scan, call AI, save business data, or apply changes.
+The public landing page is an animated, illustrative welcome and account flow.
+After login, My growth journey offers real website setup and explicit approval
+before saving findings and starting the agent. Welcome frames never scan, call
+AI, save business data, or apply changes.
 
 ## Website scanning (Checkpoint 4)
 
@@ -952,8 +975,8 @@ explicit and may incur another provider charge.
 3. **Website:** save a permitted scan to a business and open **Products**.
    Valid, unambiguous Product JSON-LD records are added to the catalogue immediately,
    with source listings, images, offers and individual product workspaces. There
-   is no website import/confirmation step. This also applies when public-first
-   findings are claimed after sign-in and when the business agent saves a scan,
+   is no website import/confirmation step. This also applies when website-setup
+   findings are saved after approval and when the business agent saves a scan,
    even if the later AI analysis fails. Account-free previews remain temporary
    until claimed. Product AI analysis still requires an explicit paid action.
 
