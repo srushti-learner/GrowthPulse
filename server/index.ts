@@ -10,10 +10,11 @@ import { openMysqlStore } from "./mysql-store.js";
 async function main() {
   const config = loadConfig();
   const store = config.mysql ? await openMysqlStore(config.mysql) : openStore(config.SQLITE_PATH);
+  const search = createTavilySearch({ apiKey: config.TAVILY_API_KEY });
   try {
     const agent = createResearchAgent({
       apiKey: config.ANTHROPIC_API_KEY, model: config.ANTHROPIC_MODEL,
-      search: createTavilySearch({ apiKey: config.TAVILY_API_KEY }),
+      search,
     });
     const productAnalyst = createProductAnalyst({ apiKey: config.ANTHROPIC_API_KEY, model: config.ANTHROPIC_MODEL });
     const app = createApp({
@@ -40,6 +41,11 @@ async function main() {
         console.error("Unable to stop background work:", result.reason instanceof Error ? result.reason.name : "unknown");
         process.exitCode = 1;
       }
+      try { await search.close(); }
+      catch (error) {
+        console.error("Unable to close search connections:", error instanceof Error ? error.name : "unknown");
+        process.exitCode = 1;
+      }
       try { await store.close(); }
       catch (error) {
         console.error("Unable to close database:", error instanceof Error ? error.name : "unknown");
@@ -55,6 +61,7 @@ async function main() {
     process.on("SIGTERM", () => { void shutdown(); });
     process.on("SIGINT", () => { void shutdown(); });
   } catch (error) {
+    await search.close();
     await store.close();
     throw error;
   }

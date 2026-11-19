@@ -7,6 +7,7 @@ import { SupportingEvidence } from "./BusinessBriefing";
 import { Button } from "./components/ui/button";
 import { Badge } from "./components/ui/badge";
 import { useMarketplaceResearch } from "./MarketplaceResearchContext";
+import { WorkflowActivity } from "./WorkflowActivity";
 import "./marketplace.css";
 
 export function MarketplaceInsights({ businessId }: { businessId: string }) {
@@ -26,7 +27,7 @@ export function MarketplaceInsights({ businessId }: { businessId: string }) {
   </section>;
 }
 
-function FeedbackProgress({ data }: { data: MarketplaceResponse }) {
+function FeedbackProgress({ data, customerVoice }: { data: MarketplaceResponse; customerVoice: boolean }) {
   const saved = data.report;
   const stage = data.progress?.stage;
   const captured = saved?.listings.filter((item) => item.status === "captured") ?? [];
@@ -38,7 +39,7 @@ function FeedbackProgress({ data }: { data: MarketplaceResponse }) {
     ? stage === "collecting" ? `Collecting review evidence: ${data.progress!.completed} of ${data.progress!.total} listings checked.`
       : stage === "analysing" ? "Analysing confirmed review excerpts."
       : stage === "discovering" ? "Finding product listings on Amazon India and Flipkart."
-      : "Customer feedback research is running. Reconnecting to saved progress."
+      : `${customerVoice ? "Customer feedback" : "Marketplace"} research is running. Reconnecting to saved progress.`
     : data.error ? "The last attempt did not finish. Previous saved evidence remains available."
     : data.stale ? "Product details changed. Find fresh feedback before using previous matches."
     : !saved ? "Ready to look for customer feedback for this product."
@@ -47,12 +48,21 @@ function FeedbackProgress({ data }: { data: MarketplaceResponse }) {
     : !hasReviews ? "Listings were captured, but individual review text is still missing."
     : unconfirmed ? "Check the captured product, variant and seller before using its reviews."
     : "Sources checked. Review the evidence gaps or analyse a sufficient confirmed sample.";
+  if (data.running) return <WorkflowActivity title={customerVoice ? "Customer feedback research" : "Marketplace research"} message={message}
+    startedAt={data.progress?.startedAt} updatedAt={data.progress?.updatedAt}
+    counts={stage === "collecting" ? [{ label: "Listings checked", value: `${data.progress!.completed} of ${data.progress!.total}` }]
+      : stage === "analysing" ? [{ label: "Confirmed review excerpts", value: captured.filter((item) =>
+        !["unconfirmed", "excluded"].includes(item.relation)).reduce((count, item) => count + item.reviews.length, 0) }] : []}
+    guidance="You can leave and return; no new work starts when you reopen it. Previously saved sources remain available below. Blocked pages stay unknown; marketing copy is never a substitute for review text.">
+    <div className="feedback-progress"><ol>{["Find listings", "Collect reviews", "Confirm matches", "Analyse feedback"].map((label, index) =>
+      <li key={label} data-state={index === active ? "current" : index < active ? "done" : "pending"}
+        aria-current={index === active ? "step" : undefined}>{label}{index === active ? " - In progress" : index === 2 && active < 3 ? " - Owner review required" : ""}</li>)}</ol></div>
+  </WorkflowActivity>;
   return <section className="feedback-progress" aria-label="Customer feedback progress">
     <ol>{["Find listings", "Collect reviews", "Confirm matches", "Analyse feedback"].map((label, index) =>
       <li key={label} data-state={index < active ? "done" : index === active ? "current" : "pending"}
         aria-current={index === active ? "step" : undefined}>{label}</li>)}</ol>
     <p role="status">{message}</p>
-    {data.running && <p className="field-note">You can leave and return. Reopening this page does not start another run.</p>}
   </section>;
 }
 
@@ -87,8 +97,8 @@ export function MarketplaceProduct({ customerVoice = false }: { customerVoice?: 
   }
   return <div className="marketplace-product">
     {loading && <p role="status">{customerVoice ? "Loading saved customer feedback..." : "Loading saved marketplace research..."}</p>}
-    {customerVoice && data && <FeedbackProgress data={data} />}
-    {!customerVoice && data?.running && <p role="status">Marketplace research is running. You can leave this page and return; no new work starts when you reopen it.</p>}
+    {data && (customerVoice || data.running) && <FeedbackProgress data={data} customerVoice={customerVoice} />}
+    {busy && !data?.running && <p role="status">Submitting your request. Waiting for the server to confirm saved status; no extra AI call is started by checking status.</p>}
     {(fileError || error || data?.error) && <p role="alert" className="form-error">{fileError || error || data?.error} <Button variant="outline" disabled={busy} onClick={() => { setFileError(""); reloadStatus(); }}>Reload saved status</Button></p>}
     {data?.error && !data.running && <p className="field-note">The last research attempt failed. Use an explicit research or review-analysis action to try again. Reload saved status only refreshes this saved message.</p>}
     {data?.stale && <p className="dashboard-notice">Your catalogue product changed. These are previous marketplace results; research again before confirming matches or analysing reviews.</p>}

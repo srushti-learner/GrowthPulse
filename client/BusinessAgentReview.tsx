@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { Business } from "../shared/contracts";
-import { businessAnalysisDisclosure, partialBriefingNotice, understandingResponseSchema, understandingReviewInputSchema, understandingReviewResponseSchema, understandingTimeoutMs, type BriefingPreview, type Understanding, type UnderstandingUpdate } from "../shared/understanding";
+import { businessAnalysisDisclosure, partialBriefingNotice, understandingResponseSchema, understandingReviewInputSchema, understandingReviewResponseSchema, type BriefingPreview, type Understanding, type UnderstandingUpdate } from "../shared/understanding";
 import { api, ApiFailure, errorMessage } from "./api";
 import { followAnalysisJob, streamUnderstanding } from "./understanding-stream";
 import { activeAnalysis, analysisJobResponseSchema, analysisJobSchema, type AnalysisJob } from "../shared/analysis";
@@ -9,7 +9,7 @@ import { BusinessBriefing, SupportingEvidence } from "./BusinessBriefing";
 import { ResearchReport } from "./ResearchReport";
 import { researchLimits, type ResearchReport as SavedResearch } from "../shared/research";
 import type { ResearchView } from "./ResearchDashboard";
-const phaseLabels = { connecting: "Connecting to your business agent...", scanning: "Gathering your permitted public website evidence...", analysing: "Writing your business briefing...", validating: "Checking sources and saving your briefing..." };
+import { AnalysisProgress } from "./AnalysisProgress";
 
 export function BusinessAgentReview({ business, autoStart, scanId, scanCapturedAt, onSaved, onRecorded, onSessionExpired, initialView = "overview", mode = "full", showProgressDetails = true }: {
   business: Business; autoStart: boolean; scanId?: string; scanCapturedAt?: string;
@@ -229,10 +229,11 @@ export function BusinessAgentReview({ business, autoStart, scanId, scanCapturedA
         <p className="field-note">{resumable ? "Reconnecting does not start a new analysis or incur another AI charge."
           : forMarketComparison ? "Competitor research is included; nothing runs until you click Start visual market research."
           : "Saved usable website evidence is reused by default. To capture changes, read the website again in Website first. You approve all changes. AI charges may apply."}</p>
+        {!resumable && <p className="field-note">Eligible saved Customer voice themes and their original review excerpts may also inform business recommendations. This does not collect new reviews or start an extra customer-analysis call.</p>}
       </div>
     </details>;
   }
-  return <section className="profile-card agent-review workspace-form" aria-labelledby="agent-heading" aria-busy={busy}>
+  return <section className="profile-card agent-review workspace-form" aria-labelledby="agent-heading" aria-busy={busy && !live}>
     <div className={`card-heading${displayedResearch && !managementOnly ? " compact-agent-heading" : ""}${displayedResearch && !managementOnly && !busy && !error && !failed ? " sr-only" : ""}`}><p className="section-eyebrow"><Icon name="spark" /> YOUR BUSINESS AGENT</p><h2 id="agent-heading">{managementOnly && !busy && !error ? "Website analysis" : displayedResearch && !busy && !error && !failed ? business.name : heading}</h2>
       {managementOnly && !busy && <p>Review optional profile changes or explicitly approve another analysis. Saved findings remain in Overview and Market intelligence.</p>}
       {!managementOnly && !live && !displayedResearch && <p>{completed ? "Your profile changes are saved. The analysis stays available below; no need to approve the same suggestions again."
@@ -241,18 +242,14 @@ export function BusinessAgentReview({ business, autoStart, scanId, scanCapturedA
       : "With your permission, I'll read your public website and explain what I understand about your business, what is uncertain, and useful next checks."}</p>}</div>
     {!live && !completed && !draft?.briefing && <p className="field-note">Website: {business.website}</p>}
     {state === "loading" && <p role="status">Loading your latest business review...</p>}
-    {live && <><div className="agent-progress"><p role="status">{job?.status === "queued" ? "Waiting to start..." : phaseLabels[phase]}</p>
-      {job && activeAnalysis(job) && <button className="text-button" type="button" onClick={() => void cancel()}>Cancel analysis</button>}</div>
-      {showProgressDetails && <details className="agent-sources agent-progress-details"><summary>Analysis details</summary>
-        <p>{reusingScan ? "Using saved website information." : "Reading public website information."} This can take up to {(job ? researchLimits.milliseconds : understandingTimeoutMs) / 60_000} minutes once started. Your profile and catalogue will not change.</p>
-        {job && <p>You can leave this page and return; background work continues.</p>}
-      </details>}</>}
+    {live && <AnalysisProgress key={job?.id ?? briefingKey} job={job} phase={phase} reusingScan={reusingScan}
+      showDetails={showProgressDetails} onCancel={() => void cancel()} />}
     {error && <p className="form-error" role="alert">{error}</p>}
     {coolingDown && <p className="field-note" role="status">No new analysis started. Retry available in {Math.ceil((retryAt - now) / 1000)} seconds. Saved findings remain available.</p>}
     {saveError && <p className="form-error" role="alert">{saveError}</p>}
     {researchOnly && !live && draft && (partial || !!draft.validationIssues?.length) && <p className="field-note" role="status">This saved analysis has limited evidence. Some pages or proposed findings could not be verified.</p>}
     {live && !job?.research && retainedResearch && <p className="field-note">Previously saved findings remain below while the new attempt starts.</p>}
-    {displayedResearch && !managementOnly && <ResearchReport report={displayedResearch} businessName={business.name} briefing={researchBriefing}
+    {displayedResearch && !managementOnly && (!live || !!researchBriefing || displayedResearch.steps.some((step) => step.findings.length || step.profile)) && <ResearchReport report={displayedResearch} businessName={business.name} briefing={researchBriefing}
       initialView={initialView}
       evidence={!live && researchBriefing ? draft?.briefing ?? undefined : undefined} briefingKey={briefingKey}
       previousBriefing={lastSuccessful}

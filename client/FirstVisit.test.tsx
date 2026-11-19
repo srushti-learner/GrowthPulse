@@ -119,7 +119,7 @@ describe("signed-in website onboarding", () => {
     expect(container.querySelector(".public-findings")).toBeNull();
     expect(container.querySelector(".onboarding-continue")).toBeNull();
     expect(analyses(fetch)).toHaveLength(1);
-    expect(JSON.parse(String(analyses(fetch)[0][1]?.body))).toEqual({ permission: true, scanId: review.scanId, research: true, researchVersion: 2 });
+    expect(JSON.parse(String(analyses(fetch)[0][1]?.body))).toEqual({ permission: true, scanId: review.scanId, research: true, researchVersion: 2, reuseCustomerEvidence: true });
     expect(fetch.mock.calls.filter(([path]) => path.endsWith("/onboarding/scan"))).toHaveLength(1);
     expect(JSON.parse(String(fetch.mock.calls.find(([path]) => path.endsWith("/onboarding/scan"))![1]?.body))).toEqual({ url: business.website, permission: true });
     expect(JSON.parse(String(fetch.mock.calls.find(([path]) => path.endsWith("/claim"))![1]?.body))).toEqual({ permission: true });
@@ -232,7 +232,7 @@ describe("signed-in website onboarding", () => {
     expect(analyses(fetch)).toHaveLength(1);
     await click(".agent-controls button");
     expect(analyses(fetch)).toHaveLength(2);
-    expect(JSON.parse(String(analyses(fetch)[1][1]?.body))).toEqual({ permission: true, scanId: review.scanId, research: true, researchVersion: 2 });
+    expect(JSON.parse(String(analyses(fetch)[1][1]?.body))).toEqual({ permission: true, scanId: review.scanId, research: true, researchVersion: 2, reuseCustomerEvidence: true });
     expect(container.textContent).toContain("Your business, explained.");
     expect(fetch.mock.calls.some(([path]) => path.endsWith("/onboarding/scan"))).toBe(false);
   });

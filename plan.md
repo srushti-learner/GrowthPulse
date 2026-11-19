@@ -49,9 +49,25 @@ the research button remains an explicit action and errors stay visible.
 
 Products can carry an exact growth recommendation and its cited evidence into
 and out of a chosen product workspace; the app does not infer a product match.
-The progress view records owner-marked action statuses, not measured uplift.
-Sales records and simulations stay separate. This interface work adds no new
-execution automation, schemas, provider calls or hosting prerequisites.
+The progress view distinguishes owner-marked action statuses from observed sales
+outcomes; neither proves causal uplift. Sales records and simulations stay
+separate.
+
+### Weekly Growth Review pilot
+
+The approved CSV/manual pilot adds reviewed flexible sales-column mapping, a
+downloadable order-line template, immutable accepted-sales snapshots and
+deterministic complete-week comparisons. Returning Home and My progress show
+coverage/freshness, evidence caveats, saved weekly reports and in-app reminders.
+Saved actions can carry a fixed seven-day baseline, review date and an
+owner-recorded Continue/Revise/Stop decision against seven supplied outcome
+dates. Snapshot/report identity deduplicates equivalent sales data; corrections
+do not rewrite previously saved reports, baselines or decisions. Sales CSVs
+still replace the active imported baseline rather than silently appending.
+SQLite migration 18 / additive MySQL migration 3 persist this pilot. See README
+for coverage rules, source semantics and limits. Live integrations, scheduled
+research/email, automatic execution and causal campaign attribution remain
+outside this pilot; browsing starts no paid AI calls.
 
 ### Implemented local research foundation
 

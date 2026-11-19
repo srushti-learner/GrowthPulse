@@ -13,9 +13,9 @@ type JobRow = {
   status: AnalysisJob["status"]; phase: AnalysisJob["phase"]; preview_json: string | null;
   understanding_id: string | null; error: string | null; revision: number;
   created_at: string; updated_at: string; lease_token: string | null; lease_until: number | null;
-  research_enabled: number; research_version: number; resume_job_id: string | null;
+  research_enabled: number; research_version: number; resume_job_id: string | null; reuse_customer_evidence: number;
 };
-export type ClaimedAnalysis = { id: string; ownerId: string; businessId: string; url: string; scanId: string | null; lease: string; research: boolean };
+export type ClaimedAnalysis = { id: string; ownerId: string; businessId: string; url: string; scanId: string | null; lease: string; research: boolean; reuseCustomerEvidence: boolean };
 
 export function analysisStore(database: SqlDatabase) {
   function row(id: string) { return database.prepare<[string], JobRow>("SELECT * FROM analysis_jobs WHERE id = ?").get(id); }
@@ -31,6 +31,7 @@ export function analysisStore(database: SqlDatabase) {
       research: await readResearchReport(database, record.id, !!record.research_enabled, ["queued", "running"].includes(record.status)),
       researchEnabled: !!record.research_enabled,
       researchVersion: record.research_version,
+      reuseCustomerEvidence: !!record.reuse_customer_evidence,
     });
   }
   async function leased(id: string, lease: string) {
@@ -71,7 +72,7 @@ export function analysisStore(database: SqlDatabase) {
       `).get(ownerId, businessId, url);
       return record ? view(record) : null;
     },
-    async matchingAnalysisJob(ownerId: string, businessId: string, key: string, url: string, scanId?: string, research = false, resumeJobId?: string) {
+    async matchingAnalysisJob(ownerId: string, businessId: string, key: string, url: string, scanId?: string, research = false, resumeJobId?: string, reuseCustomerEvidence = false) {
       return database.transaction(async () => {
         const record = await database.prepare<[string, string, string, string], JobRow>(
           `SELECT j.* FROM analysis_jobs j WHERE j.owner_id = ? AND j.business_id = ?
@@ -80,7 +81,8 @@ export function analysisStore(database: SqlDatabase) {
         ).get(ownerId, businessId, key, key);
         if (record) {
           if (record.requested_url !== url || record.input_scan_id !== (scanId ?? null)
-            || !!record.research_enabled !== research || record.resume_job_id !== (resumeJobId ?? null)) {
+            || !!record.research_enabled !== research || record.resume_job_id !== (resumeJobId ?? null)
+            || !!record.reuse_customer_evidence !== reuseCustomerEvidence) {
             throw new AnalysisError(409, "This request key was already used for a different analysis.");
           }
           return view(record);
@@ -90,7 +92,8 @@ export function analysisStore(database: SqlDatabase) {
         ).get(ownerId, businessId);
         if (!active) return null;
         if (active.requested_url === url && active.input_scan_id === (scanId ?? null)
-          && !!active.research_enabled === research && active.resume_job_id === (resumeJobId ?? null)) {
+          && !!active.research_enabled === research && active.resume_job_id === (resumeJobId ?? null)
+          && !!active.reuse_customer_evidence === reuseCustomerEvidence) {
           await database.prepare("INSERT INTO analysis_request_aliases (owner_id, business_id, request_key, job_id) VALUES (?, ?, ?, ?)")
             .run(ownerId, businessId, key, active.id);
           return view(active);
@@ -98,9 +101,10 @@ export function analysisStore(database: SqlDatabase) {
         throw new AnalysisError(409, "An analysis is already queued or running for this business. Reload to reconnect, or cancel it before starting a new one.");
       }).immediate();
     },
-    enqueueAnalysis(ownerId: string, businessId: string, key: string, url: string, scanId?: string, research = false, resumeJobId?: string, evidenceScanId = scanId) {
+    enqueueAnalysis(ownerId: string, businessId: string, key: string, url: string, scanId?: string, research = false, resumeJobId?: string, evidenceScanId = scanId, reuseCustomerEvidence = false) {
       return database.transaction(async () => {
-        const existing = await this.matchingAnalysisJob(ownerId, businessId, key, url, scanId, research, resumeJobId);
+        if (reuseCustomerEvidence && !research) throw new AnalysisError(400, "Saved customer evidence requires wider research permission.");
+        const existing = await this.matchingAnalysisJob(ownerId, businessId, key, url, scanId, research, resumeJobId, reuseCustomerEvidence);
         if (existing) return existing;
         if (!await database.prepare("SELECT id FROM businesses WHERE id = ? AND owner_id = ?").get(businessId, ownerId)) {
           throw new AnalysisError(404, "Business not found.");
@@ -120,9 +124,9 @@ export function analysisStore(database: SqlDatabase) {
         if (count >= analysisLimits.queued) throw new AnalysisError(429, "The analysis queue is full. Please try again later.");
         const id = randomUUID(), now = new Date().toISOString();
         await database.prepare(`INSERT INTO analysis_jobs
-          (id, owner_id, business_id, requested_url, request_key, input_scan_id, scan_id, status, phase, created_at, updated_at, research_enabled, resume_job_id, research_version)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 'connecting', ?, ?, ?, ?, 2)`)
-          .run(id, ownerId, businessId, url, key, scanId ?? null, evidenceScanId ?? null, now, now, Number(research), resumeJobId ?? null);
+          (id, owner_id, business_id, requested_url, request_key, input_scan_id, scan_id, status, phase, created_at, updated_at, research_enabled, resume_job_id, research_version, reuse_customer_evidence)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 'connecting', ?, ?, ?, ?, 2, ?)`)
+          .run(id, ownerId, businessId, url, key, scanId ?? null, evidenceScanId ?? null, now, now, Number(research), resumeJobId ?? null, Number(reuseCustomerEvidence));
         if (resumeJobId) {
           const status = database.dialect === "mysql" ? "JSON_UNQUOTE(JSON_EXTRACT(result_json, '$.status'))" : "json_extract(result_json, '$.status')";
           const reused = database.dialect === "mysql"
@@ -153,7 +157,8 @@ export function analysisStore(database: SqlDatabase) {
         const lease = randomUUID();
         await database.prepare(`UPDATE analysis_jobs SET status = 'running', lease_token = ?, lease_until = ?,
           revision = revision + 1, updated_at = ? WHERE id = ?`).run(lease, now + analysisLimits.leaseMs, new Date(now).toISOString(), next.id);
-        return { id: next.id, ownerId: next.owner_id, businessId: next.business_id, url: next.requested_url, scanId: next.scan_id, lease, research: !!next.research_enabled };
+        return { id: next.id, ownerId: next.owner_id, businessId: next.business_id, url: next.requested_url, scanId: next.scan_id, lease,
+          research: !!next.research_enabled, reuseCustomerEvidence: !!next.reuse_customer_evidence };
       }).immediate();
     },
     async renewAnalysisLease(id: string, lease: string) {

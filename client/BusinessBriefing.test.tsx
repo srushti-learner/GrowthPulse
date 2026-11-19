@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BriefingPreview, Understanding } from "../shared/understanding";
-import { BusinessBriefing } from "./BusinessBriefing";
+import { BusinessBriefing, SupportingEvidence } from "./BusinessBriefing";
 
 const sources = [{ url: "https://shop.example.com/", quote: "Cotton clothing for everyday wear." }];
 const briefing = {
@@ -36,6 +36,22 @@ describe("guided business briefing cards", () => {
   async function section(label: string) {
     await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>(".briefing-sections button")).find((button) => button.textContent?.startsWith(label))!.click());
   }
+
+  it("keeps exported review text verbatim and labels product relation, provenance and publication date", async () => {
+    const quote = '{"description":"A review excerpt, not structured product evidence.","feedback":"The seal leaked."}';
+    await act(async () => root.render(<SupportingEvidence sources={[{
+      url: "https://www.amazon.in/dp/B000000001", quote, capturedAt: "2026-10-04T12:00:00.000Z",
+      customerReview: { productId: "11111111-1111-4111-8111-111111111111", productName: "Fixture oil",
+        reportId: "22222222-2222-4222-8222-222222222222", method: "owner_export", relation: "other_seller",
+        reviewDate: "2026-10-01", analysedAt: "2026-10-04T12:00:00.000Z" },
+    }]} />));
+    expect(container.querySelector("blockquote > p")?.textContent).toBe(quote);
+    expect(container.textContent).toContain("My product, another seller");
+    expect(container.textContent).toContain("Owner-supplied export, not independently fetched or verified");
+    expect(container.textContent).toContain("Review dated 2026-10-01");
+    expect(container.textContent).toContain("not representative current sentiment");
+    expect(container.querySelector("a")?.href).toBe("https://www.amazon.in/dp/B000000001");
+  });
 
   it("shows one card, keeps details secondary, and makes every finding reachable in reading order", async () => {
     await render();

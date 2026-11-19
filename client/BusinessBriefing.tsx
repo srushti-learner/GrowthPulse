@@ -2,8 +2,10 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { BriefingPreview, Understanding } from "../shared/understanding";
 import { Icon } from "./Icon";
 import { EvidenceExcerpt, sourcePage } from "./SourceDetails";
+import type { ResearchSource } from "../shared/research";
+import { marketplaceRelationLabels } from "../shared/marketplace";
 
-type Sources = (Understanding["suggestions"][number]["sources"][number] & { capturedAt?: string })[];
+type Sources = (Understanding["suggestions"][number]["sources"][number] & Partial<Pick<ResearchSource, "capturedAt" | "customerReview">>)[];
 export type BriefingEvidence = { summary?: { sources: Sources }; insights?: { sources: Sources }[] };
 type Section = "snapshot" | "findings" | "unknowns" | "next";
 type Card = { id: string; section: Section; title: string; text?: string; detail?: string; sources?: Sources };
@@ -18,7 +20,13 @@ export function SupportingEvidence({ sources }: { sources: Sources }) {
   if (!sources.length) return null;
   return <details className="agent-sources"><summary>View supporting evidence</summary>{sources.map((source, index) => {
     const page = sourcePage(source.url);
-    return <blockquote key={index}><EvidenceExcerpt quote={source.quote} />
+    return <blockquote key={index}>{source.customerReview ? <p>{source.quote}</p> : <EvidenceExcerpt quote={source.quote} />}
+      {source.customerReview && <p className="field-note">
+        {source.customerReview.productName} / {marketplaceRelationLabels[source.customerReview.relation]} /{" "}
+        {source.customerReview.method === "owner_export" ? "Owner-supplied export, not independently fetched or verified" : "Captured public review excerpt"}.
+        {" "}{source.customerReview.reviewDate ? `Review dated ${source.customerReview.reviewDate}.` : "Review publication date unknown."}
+        {" "}A selected, dated sample, not representative current sentiment.
+      </p>}
       {page ? <a href={page.href} target="_blank" rel="noreferrer">View source · {page.hostname}</a> : <p className="field-note">Source page unavailable</p>}
       {source.capturedAt && <p className="field-note">Captured <time dateTime={source.capturedAt}>{new Date(source.capturedAt).toLocaleString()}</time></p>}
     </blockquote>;

@@ -40,6 +40,7 @@ export const marketplaceProgressSchema = z.object({
   stage: z.enum(["discovering", "collecting", "analysing"]),
   completed: z.number().int().min(0).max(marketplaceLimits.listings),
   total: z.number().int().min(0).max(marketplaceLimits.listings),
+  startedAt: z.iso.datetime().optional(), updatedAt: z.iso.datetime().optional(),
 }).strict();
 export type MarketplaceProgress = z.infer<typeof marketplaceProgressSchema>;
 export const marketplaceResponseSchema = z.object({

@@ -54,6 +54,20 @@ export const scanResultSchema = z.object({
   catalogue: scannedCatalogueSchema.optional(),
 });
 export const savedScanSchema = scanResultSchema.extend({ id: z.uuid(), businessId: z.uuid() });
+export const scanProgressSchema = z.object({
+  stage: z.enum(["robots", "discovering", "reading", "saving"]),
+  startedAt: z.iso.datetime(), updatedAt: z.iso.datetime(), url: z.url().max(2048),
+  pages: z.number().int().min(0).max(scanLimits.pages),
+  products: z.number().int().min(0).max(scanLimits.pages * 50),
+  failures: z.number().int().min(0).max(scanLimits.pages),
+  lastFailure: z.string().max(500).optional(),
+}).strict();
+export const scanStreamEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("progress"), progress: scanProgressSchema }),
+  z.object({ type: z.literal("complete"), scan: savedScanSchema.or(scanResultSchema) }),
+  z.object({ type: z.literal("error"), status: z.number().int().min(400).max(599), message: z.string() }),
+]);
+export type ScanProgress = z.infer<typeof scanProgressSchema>;
 export const scanSummarySchema = savedScanSchema.pick({
   id: true, businessId: true, requestedUrl: true, status: true, startedAt: true, completedAt: true,
 }).extend({ pageCount: z.number().int().min(0).max(scanLimits.pages) });

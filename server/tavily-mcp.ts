@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
+import { CallToolResultSchema, ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { publicUrl, ScanError } from "./public-http.js";
 
@@ -11,6 +11,12 @@ const candidateSchema = z.object({
   title: z.string().max(1000), url: z.string().max(2048), content: z.string().max(20_000).optional(),
 });
 const searchResponseSchema = z.object({ results: z.array(candidateSchema).max(10) });
+function validatedResponse(raw: unknown) {
+  if (Buffer.byteLength(JSON.stringify(raw)) > 128 * 1024) throw new ResearchToolError("search_size", "Tavily returned more search data than this run permits.");
+  const parsed = searchResponseSchema.safeParse(raw);
+  if (!parsed.success) throw new ResearchToolError("search_format", "Tavily returned an unsupported search result format.");
+  return parsed.data;
+}
 export type SearchCandidate = { title: string; url: string; snippet: string };
 export type TavilyCall = (arguments_: Record<string, unknown>, signal: AbortSignal) => Promise<unknown>;
 export type ResearchSearch = ReturnType<typeof createTavilySearch>;
@@ -45,35 +51,89 @@ function approvedArguments(inputSchema: unknown, arguments_: Record<string, unkn
 }
 
 export function createTavilySearch({ apiKey, call }: { apiKey?: string; call?: TavilyCall } = {}) {
-  const invoke: TavilyCall = call ?? (async (arguments_, signal) => {
-    const client = new Client({ name: "growthpulse-research", version: "1.0.0" });
-    const transport = new StreamableHTTPClientTransport(new URL("https://mcp.tavily.com/mcp"), {
-      requestInit: { headers: { Authorization: `Bearer ${apiKey}` } },
-      reconnectionOptions: { maxRetries: 0, initialReconnectionDelay: 1000, maxReconnectionDelay: 1000, reconnectionDelayGrowFactor: 1 },
+  type Session = {
+    client: Client; tool?: { name: string; inputSchema: unknown };
+    timer?: ReturnType<typeof setTimeout>; closed: boolean; invalidated?: boolean; closing?: Promise<void>;
+  };
+  const sessions = new Set<Session>(), idle: Session[] = [];
+  let closed = false;
+  function removeIdle(session: Session) {
+    clearTimeout(session.timer);
+    const index = idle.indexOf(session);
+    if (index >= 0) idle.splice(index, 1);
+  }
+  function closeSession(session: Session) {
+    removeIdle(session);
+    session.closed = true;
+    return session.closing ??= session.client.close().finally(() => { sessions.delete(session); });
+  }
+  function closeIdle(session: Session) {
+    void closeSession(session).catch((error: unknown) => {
+      console.warn("Unable to close idle search connection:", error instanceof Error ? error.name : "unknown");
     });
+  }
+  const invoke: TavilyCall = call ?? (async (arguments_, signal) => {
+    signal.throwIfAborted();
+    const session: Session = idle.pop() ?? {
+      client: new Client({ name: "growthpulse-research", version: "1.0.0" }), closed: false,
+    };
+    removeIdle(session);
+    const { client } = session;
+    sessions.add(session);
+    client.onclose = () => { session.closed = true; removeIdle(session); sessions.delete(session); };
+    client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+      session.invalidated = true;
+      if (idle.includes(session)) closeIdle(session);
+    });
+    let reusable = false;
     try {
-      await client.connect(transport, { signal, timeout: 15_000 });
-      const { tools } = await client.listTools({}, { signal, timeout: 15_000 });
-      const tool = tools.find(({ name }) => name === "tavily_search" || name === "tavily-search");
-      if (!tool) throw new ResearchToolError("search_unavailable", "The Tavily MCP server did not expose its approved search tool.");
+      if (!session.tool) {
+        const transport = new StreamableHTTPClientTransport(new URL("https://mcp.tavily.com/mcp"), {
+          requestInit: { headers: { Authorization: `Bearer ${apiKey}` } },
+          reconnectionOptions: { maxRetries: 0, initialReconnectionDelay: 1000, maxReconnectionDelay: 1000, reconnectionDelayGrowFactor: 1 },
+        });
+        await client.connect(transport, { signal, timeout: 15_000 });
+        const { tools } = await client.listTools({}, { signal, timeout: 15_000 });
+        const tool = tools.find(({ name }) => name === "tavily_search" || name === "tavily-search");
+        if (!tool) throw new ResearchToolError("search_unavailable", "The Tavily MCP server did not expose its approved search tool.");
+        session.tool = tool;
+      }
+      const tool = session.tool;
       const response = CallToolResultSchema.parse(await client.callTool({
         name: tool.name, arguments: approvedArguments(tool.inputSchema, arguments_),
       }, undefined, { signal, timeout: 15_000 }));
       if (response.isError) throw new ResearchToolError("search_rejected", "Tavily rejected the search. Check its credentials, free-credit balance and rate limits.");
-      if (response.structuredContent) return response.structuredContent;
-      const text = response.content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
-      if (Buffer.byteLength(text) > 128 * 1024) throw new ResearchToolError("search_size", "Tavily returned more search data than this run permits.");
-      return decodeSearchText(text);
+      let raw: unknown = response.structuredContent;
+      if (!raw) {
+        const text = response.content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
+        if (Buffer.byteLength(text) > 128 * 1024) throw new ResearchToolError("search_size", "Tavily returned more search data than this run permits.");
+        raw = decodeSearchText(text);
+      }
+      const result = validatedResponse(raw);
+      reusable = true;
+      return result;
     } finally {
-      await client.close();
+      // Lease each client exclusively: cancelling one search never closes another search's connection.
+      if (reusable && !signal.aborted && !session.closed && !session.invalidated && !closed && idle.length < 2) {
+        idle.push(session);
+        session.timer = setTimeout(() => { closeIdle(session); }, 30_000);
+        session.timer.unref();
+      } else await closeSession(session);
     }
   });
   return {
     configured: !!apiKey || !!call,
+    async close() {
+      closed = true;
+      const results = await Promise.allSettled([...sessions].map(closeSession));
+      const failure = results.find((result) => result.status === "rejected");
+      if (failure?.status === "rejected") throw failure.reason;
+    },
     async search(query: string, cancellation: AbortSignal, options: {
       deduplicateBy?: "host" | "url"; normalizeUrl?: (url: string) => string | null;
     } = {}): Promise<SearchCandidate[]> {
       if (!this.configured) throw new ResearchToolError("search_not_configured", "Competitor discovery needs a server-side TAVILY_API_KEY. No search was made.");
+      if (closed) throw new ResearchToolError("search_closed", "The search service is shutting down. No search was made.");
       const signal = AbortSignal.any([cancellation, AbortSignal.timeout(20_000)]);
       let raw: unknown;
       try {
@@ -87,11 +147,9 @@ export function createTavilySearch({ apiKey, call }: { apiKey?: string; call?: T
         if (error instanceof ResearchToolError) throw error;
         throw new ResearchToolError("search_failed", "Tavily search failed or timed out. Check the server-side connection, key and free-credit balance; no automatic retry was made.");
       }
-      if (Buffer.byteLength(JSON.stringify(raw)) > 128 * 1024) throw new ResearchToolError("search_size", "Tavily returned more search data than this run permits.");
-      const parsed = searchResponseSchema.safeParse(raw);
-      if (!parsed.success) throw new ResearchToolError("search_format", "Tavily returned an unsupported search result format.");
+      const parsed = validatedResponse(raw);
       const candidates: SearchCandidate[] = [];
-      for (const result of parsed.data.results) {
+      for (const result of parsed.results) {
         let url: URL;
         try {
           const normalized = options.normalizeUrl ? options.normalizeUrl(result.url) : result.url;

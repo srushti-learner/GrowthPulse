@@ -54,7 +54,11 @@ describe("additive MySQL migration sequencing without a database connection", ()
       query.mockClear();
       await migrateMysql(pool, "fictional-test");
       expect(rows.find((row) => row.version === 1)).toEqual(original);
-      expect(query.mock.calls.filter(([sql]) => sql.startsWith("ALTER TABLE"))).toHaveLength(1);
+      expect(query.mock.calls.filter(([sql]) => sql.startsWith("ALTER TABLE")).map(([sql]) => sql)).toEqual([
+        "ALTER TABLE marketplace_research ADD COLUMN progress_json LONGTEXT CHECK(progress_json IS NULL OR JSON_VALID(progress_json))",
+        "ALTER TABLE product_analyses ADD COLUMN progress_json LONGTEXT CHECK(progress_json IS NULL OR JSON_VALID(progress_json))",
+        "ALTER TABLE analysis_jobs ADD COLUMN reuse_customer_evidence INTEGER NOT NULL DEFAULT 0 CHECK(reuse_customer_evidence IN (0,1))",
+      ]);
       expect(query.mock.calls.some(([sql]) => sql.startsWith("CREATE TABLE businesses"))).toBe(false);
       expect(rows.find((row) => row.version === 2)?.completed).toBe(1);
       query.mockClear();
@@ -71,6 +75,23 @@ describe("additive MySQL migration sequencing without a database connection", ()
       expect(query.mock.calls.some(([sql]) => /^(?:ALTER|INSERT|UPDATE)/.test(sql))).toBe(false);
       expect(query.mock.calls.some(([sql]) => sql.includes("RELEASE_LOCK"))).toBe(true);
       expect(release).toHaveBeenCalledOnce();
+    });
+  });
+  it("adds weekly review persistence to a v2 database without replaying prior migrations", async () => {
+    await fixture(async ({ pool, rows, query }) => {
+      await migrateMysql(pool, "fictional-test");
+      const applied = structuredClone(rows.slice(0, 2));
+      rows.splice(2); query.mockClear();
+      await migrateMysql(pool, "fictional-test");
+      expect(rows.slice(0, 2)).toEqual(applied);
+      expect(rows[2].completed).toBe(1);
+      expect(query.mock.calls.filter(([sql]) => /^CREATE TABLE (?!IF NOT EXISTS )/.test(sql)).map(([sql]) => sql.match(/^CREATE TABLE (\w+)/)?.[1]))
+        .toEqual(["sales_observations", "weekly_reviews", "action_measurements"]);
+      expect(query.mock.calls.filter(([sql]) => sql.startsWith("ALTER TABLE")).map(([sql]) => sql))
+        .toEqual([
+          "ALTER TABLE product_analyses ADD COLUMN progress_json LONGTEXT CHECK(progress_json IS NULL OR JSON_VALID(progress_json))",
+          "ALTER TABLE analysis_jobs ADD COLUMN reuse_customer_evidence INTEGER NOT NULL DEFAULT 0 CHECK(reuse_customer_evidence IN (0,1))",
+        ]);
     });
   });
   it("validates all applied checksums before attempting any missing migration", async () => {

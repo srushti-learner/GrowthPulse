@@ -145,6 +145,23 @@ export async function migrateMysql(pool: Pool, databaseName: string) {
     const migrations = [
       { version: 1, statements },
       { version: 2, statements: ["ALTER TABLE marketplace_research ADD COLUMN progress_json LONGTEXT CHECK(progress_json IS NULL OR JSON_VALID(progress_json))"] },
+      { version: 3, statements: [
+        table("sales_observations", `business_id ${key} NOT NULL, version ${key} NOT NULL,
+          captured_at ${timestamp} NOT NULL, snapshot_json ${json} NOT NULL,
+          PRIMARY KEY(business_id,version), CHECK(JSON_VALID(snapshot_json)),
+          FOREIGN KEY(business_id) REFERENCES businesses(id)`),
+        table("weekly_reviews", `id ${key} PRIMARY KEY, business_id ${key} NOT NULL, version ${key} NOT NULL,
+          period_end VARCHAR(10) NOT NULL, created_at ${timestamp} NOT NULL, review_json ${json} NOT NULL,
+          UNIQUE weekly_reviews_version(business_id,version,period_end), CHECK(JSON_VALID(review_json)),
+          FOREIGN KEY(business_id) REFERENCES businesses(id), INDEX weekly_reviews_business(business_id,created_at)`),
+        table("action_measurements", `id ${key} PRIMARY KEY, business_id ${key} NOT NULL, opportunity_id ${key} NOT NULL,
+          created_at ${timestamp} NOT NULL, decided_at ${timestamp}, measurement_json ${json} NOT NULL,
+          CHECK(JSON_VALID(measurement_json)), FOREIGN KEY(business_id) REFERENCES businesses(id),
+          FOREIGN KEY(business_id,opportunity_id) REFERENCES growth_plan(business_id,opportunity_id),
+          INDEX action_measurements_business(business_id,created_at)`),
+      ] },
+      { version: 4, statements: ["ALTER TABLE product_analyses ADD COLUMN progress_json LONGTEXT CHECK(progress_json IS NULL OR JSON_VALID(progress_json))"] },
+      { version: 5, statements: ["ALTER TABLE analysis_jobs ADD COLUMN reuse_customer_evidence INTEGER NOT NULL DEFAULT 0 CHECK(reuse_customer_evidence IN (0,1))"] },
     ];
     if (applied.some((row) => !migrations.some((migration) => migration.version === row.version))) throw new Error("MySQL schema is newer than this application.");
     if (applied.some((row) => !row.completed)) throw new Error("A MySQL migration was interrupted. Verify the database and repair the incomplete migration before restarting; no tables were deleted.");

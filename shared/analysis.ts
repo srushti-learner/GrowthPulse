@@ -14,6 +14,7 @@ export const analysisJobSchema = z.object({
   research: researchReportSchema.optional(),
   researchEnabled: z.boolean().optional(),
   researchVersion: z.number().int().min(1).max(2).optional(),
+  reuseCustomerEvidence: z.boolean().optional(),
 });
 export const analysisJobResponseSchema = z.object({ job: analysisJobSchema });
 export const analysisJobEventSchema = z.object({ type: z.literal("job"), job: analysisJobSchema }).strict();

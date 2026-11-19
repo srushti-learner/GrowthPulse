@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebsiteWorkspace } from "./WebsiteWorkspace";
-import type { SavedScan, ScanResult } from "../shared/website";
+import type { SavedScan, ScanResult, ScanProgress } from "../shared/website";
 
 const businessId = "02a221ee-41f1-46c9-bc96-12401d8dcf73";
 const originalId = "4c54b43b-8191-4f3d-af8f-607937219267";
@@ -105,6 +105,58 @@ describe("website workspace", () => {
     expect(container.querySelector("#scan-result-heading")).toBeNull();
     expect(container.querySelector(".scan-form [role=alert]")?.textContent).toContain("Scan limit");
     expect(container.querySelector<HTMLFieldSetElement>("fieldset")?.disabled).toBe(false);
+  });
+  it("renders streamed captures and limitations before the final scan is ready", async () => {
+    let wire!: ReadableStreamDefaultController<Uint8Array>;
+    const encoder = new TextEncoder();
+    const fetch = vi.fn(async () => new Response(new ReadableStream<Uint8Array>({ start(controller) { wire = controller; } }),
+      { headers: { "Content-Type": "application/x-ndjson" } }));
+    vi.stubGlobal("fetch", fetch);
+    await render(); await setUrl(business.website); await permit(); await submit();
+    expect(container.querySelector(".workflow-activity")?.textContent).toContain("Keep this page open");
+    const progress: ScanProgress = { stage: "reading", startedAt: timestamp, updatedAt: timestamp,
+      url: business.website, pages: 1, products: 2, failures: 1, lastFailure: "robots.txt does not allow this page." };
+    const frame = JSON.stringify({ type: "progress", progress }) + "\n";
+    await act(async () => wire.enqueue(encoder.encode(frame.slice(0, 25))));
+    expect(container.querySelector(".analysis-counts")).toBeNull();
+    await act(async () => wire.enqueue(encoder.encode(frame.slice(25))));
+    expect([...container.querySelectorAll(".analysis-counts dd")].map((node) => node.textContent)).toEqual(["1", "2", "1"]);
+    expect(container.querySelector(".workflow-activity")?.textContent).toContain("robots.txt does not allow");
+    expect(container.querySelector("#scan-result-heading")).toBeNull();
+    await act(async () => {
+      wire.enqueue(encoder.encode(JSON.stringify({ type: "complete", scan: preview }) + "\n"));
+      wire.close();
+    });
+    expect(container.querySelector(".workflow-activity")).toBeNull();
+    expect(container.querySelector("#scan-result-heading")?.textContent).toBe("Scan complete");
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+  it("makes a truncated live scan explicitly retryable without showing a fabricated result", async () => {
+    const fetch = vi.fn(async () => new Response(new ReadableStream({ start(controller) { controller.close(); } }),
+      { headers: { "Content-Type": "application/x-ndjson" } }));
+    vi.stubGlobal("fetch", fetch);
+    await render(); await setUrl(business.website); await permit(); await submit();
+    expect(container.querySelector("[role=alert]")?.textContent).toContain("ended before a result");
+    expect(container.querySelector("#scan-result-heading")).toBeNull();
+    expect(container.querySelector<HTMLFieldSetElement>("fieldset")?.disabled).toBe(false);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+  it("cancels the request-scoped scan and restores controls without retrying", async () => {
+    let signal!: AbortSignal;
+    const fetch = vi.fn(async (_url: string, options?: RequestInit) => {
+      signal = options!.signal!;
+      return new Response(new ReadableStream({
+        start(controller) { signal.addEventListener("abort", () => controller.error(signal.reason), { once: true }); },
+      }), { headers: { "Content-Type": "application/x-ndjson" } });
+    });
+    vi.stubGlobal("fetch", fetch);
+    await render(); await setUrl(business.website); await permit(); await submit();
+    await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Cancel scan")!.click());
+    expect(signal.aborted).toBe(true);
+    expect(container.querySelector("[role=alert]")?.textContent).toContain("Scan cancelled");
+    expect(container.querySelector<HTMLFieldSetElement>("fieldset")?.disabled).toBe(false);
+    expect(container.querySelector("#scan-result-heading")).toBeNull();
+    expect(fetch).toHaveBeenCalledOnce();
   });
 
   it("loads saved runs, saves a rescan to the selected business, and reopens older evidence", async () => {

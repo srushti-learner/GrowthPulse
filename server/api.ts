@@ -21,7 +21,8 @@ import { growthOpportunities } from "./growth-store.js";
 import { growthOpportunityId, growthOpportunitySchema, growthPlanInputSchema, growthResponseSchema } from "../shared/growth.js";
 import { productAnalysisConsentSchema, productPlanInputSchema, productRewriteInputSchema } from "../shared/product-intelligence.js";
 import { createProductAnalyst, productAnalysisTimeout, productFingerprint, type ProductAnalyst } from "./product-intelligence.js";
-import { readSalesFile, salesFileHash } from "./sales-imports.js";
+import { readSalesFile, readSalesHeaders, salesFileHash } from "./sales-imports.js";
+import { salesMappingSchema } from "../shared/sales-mapping.js";
 import { analyticsCurrency } from "../shared/analytics.js";
 import { trafficSourceSchema } from "../shared/traffic.js";
 import { readTrafficFile } from "./traffic-imports.js";
@@ -141,14 +142,36 @@ export function createApi(store: Store, origin: string, production: boolean, sca
   async function runScan(request: Request, response: Response, owned?: Awaited<ReturnType<typeof ownedBusiness>>) {
     const input = scanInputSchema.parse(request.body);
     const url = publicUrl(input.url);
-    await withScanSlot(response, async (signal) => {
-      const result = await scan(url.href, signal);
-      if (owned) {
-        const saved = await store.saveScan(owned.user.id, owned.business.id, result);
-        if (!saved) throw new ApiError(404, "Business not found.");
-        response.status(201).json({ scan: saved });
-      } else response.json({ scan: result });
-    });
+    const live = request.get("Accept") === "application/x-ndjson";
+    const send = (event: unknown) => { if (!response.destroyed && !response.writableEnded) response.write(`${JSON.stringify(event)}\n`); };
+    try {
+      await withScanSlot(response, async (signal) => {
+        if (live) {
+          response.set({ "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store", "X-Accel-Buffering": "no" });
+          response.flushHeaders();
+        }
+        const result = live ? await scan(url.href, signal, { onProgress: (progress) => send({ type: "progress", progress }) }) : await scan(url.href, signal);
+        signal.throwIfAborted();
+        if (owned) {
+          if (live) send({ type: "progress", progress: {
+            stage: "saving", startedAt: result.startedAt, updatedAt: new Date().toISOString(), url: result.requestedUrl,
+            pages: result.pages.length, products: result.pages.reduce((count, page) => count + (page.productJson?.length ?? 0), 0),
+            failures: result.failures.length,
+          } });
+          const saved = await store.saveScan(owned.user.id, owned.business.id, result);
+          if (!saved) throw new ApiError(404, "Business not found.");
+          if (live) { send({ type: "complete", scan: saved }); response.end(); }
+          else response.status(201).json({ scan: saved });
+        } else if (live) { send({ type: "complete", scan: result }); response.end(); }
+        else response.json({ scan: result });
+      });
+    } catch (error) {
+      if (!live || !response.headersSent) throw error;
+      console.warn("Website scan stream stopped:", error instanceof Error ? error.name : "unknown");
+      send({ type: "error", status: error instanceof ApiError ? error.status : 502,
+        message: error instanceof ApiError ? error.message : "The scan could not finish. Check saved scans before explicitly trying again." });
+      response.end();
+    }
   }
   api.post("/website/scan", scanLimit, async (request, response) => { await runScan(request, response); });
   api.get("/onboarding/preview", async (request, response) => {
@@ -221,8 +244,21 @@ export function createApi(store: Store, origin: string, production: boolean, sca
       importing = true;
       try {
         const format = request.is("text/csv") ? "csv" : "xlsx";
-        const snapshot = await readSalesFile(request.body, format, currency);
-        response.status(201).json({ draft: await store.previewSales(user.id, business.id, filename, salesFileHash(request.body), snapshot) });
+        const mode = z.enum(["headers", "preview"]).default("preview").parse(request.query.mode);
+        if (mode === "headers") {
+          response.json(await readSalesHeaders(request.body, format));
+          return;
+        }
+        let mapping;
+        if (request.query.mapping !== undefined) {
+          const serialized = z.string().max(1000).parse(request.query.mapping);
+          let parsed: unknown;
+          try { parsed = JSON.parse(serialized); }
+          catch { throw new ApiError(400, "Column mapping must be a JSON array of fields or null for skipped columns."); }
+          mapping = salesMappingSchema.parse(parsed);
+        }
+        const snapshot = await readSalesFile(request.body, format, currency, mapping);
+        response.status(201).json({ draft: await store.previewSales(user.id, business.id, filename, salesFileHash(request.body, { format, currency, mapping }), snapshot) });
       } finally { importing = false; }
     });
   const salesVersion = z.string().regex(/^[a-f0-9]{24}$/);
@@ -282,6 +318,22 @@ export function createApi(store: Store, origin: string, production: boolean, sca
   }
   api.get("/businesses/:id/growth", async (request, response) => {
     response.json((await growthSnapshot(request)).snapshot);
+  });
+  api.get("/businesses/:id/weekly-review", async (request, response) => {
+    const { user, business } = await ownedBusiness(request);
+    response.json(await store.weeklyReview(user.id, business.id));
+  });
+  api.post("/businesses/:id/weekly-review", async (request, response) => {
+    const { user, business } = await ownedBusiness(request);
+    response.status(201).json(await store.saveWeeklyReview(user.id, business.id, request.body));
+  });
+  api.post("/businesses/:id/action-measurements", async (request, response) => {
+    const { user, business } = await ownedBusiness(request);
+    response.status(201).json(await store.startActionMeasurement(user.id, business.id, request.body));
+  });
+  api.post("/businesses/:id/action-measurements/:measurementId/decision", async (request, response) => {
+    const { user, business } = await ownedBusiness(request);
+    response.json(await store.decideActionMeasurement(user.id, business.id, z.uuid().parse(request.params.measurementId), request.body));
   });
   api.post("/businesses/:id/growth/:opportunityId/plan", async (request, response) => {
     z.object({}).strict().parse(request.body);
@@ -387,7 +439,7 @@ export function createApi(store: Store, origin: string, production: boolean, sca
     const { user, business, input, url } = await analysisInput(request);
     if (request.get("Prefer") === "respond-async") {
       const key = z.uuid().parse(request.get("Idempotency-Key"));
-      const existing = await store.matchingAnalysisJob(user.id, business.id, key, url.href, input.scanId, input.research, input.resumeJobId);
+      const existing = await store.matchingAnalysisJob(user.id, business.id, key, url.href, input.scanId, input.research, input.resumeJobId, input.reuseCustomerEvidence);
       if (existing) { queued(response, existing); return; }
     }
     if (!agent.configured) throw new AgentError(503, "Your profile is saved. To enable your business agent, set ANTHROPIC_API_KEY on the server and restart it. Manual entry and CSV remain available.");
@@ -399,7 +451,7 @@ export function createApi(store: Store, origin: string, production: boolean, sca
     const { user, business, input, url, existingScan } = await analysisInput(request);
     if (!agent.configured) throw new AgentError(503, "Your profile is saved. To enable your business agent, set ANTHROPIC_API_KEY on the server and restart it. Manual entry and CSV remain available.");
     if (request.get("Prefer") === "respond-async") {
-      queued(response, await store.enqueueAnalysis(user.id, business.id, z.uuid().parse(request.get("Idempotency-Key")), url.href, input.scanId, input.research, input.resumeJobId, existingScan?.id));
+      queued(response, await store.enqueueAnalysis(user.id, business.id, z.uuid().parse(request.get("Idempotency-Key")), url.href, input.scanId, input.research, input.resumeJobId, existingScan?.id, input.reuseCustomerEvidence));
       return;
     }
     const streaming = request.accepts(["application/json", "application/x-ndjson"]) === "application/x-ndjson";
@@ -490,10 +542,12 @@ export function createApi(store: Store, origin: string, production: boolean, sca
     }
     response.locals.productAnalysisAdmitted = true;
     const signal = AbortSignal.any([marketplaceCancellation.signal, AbortSignal.timeout(marketplaceLimits.milliseconds)]);
+    const startedAt = new Date().toISOString();
     // Persist status before returning; browser disconnects never restart paid work.
     const pending = Promise.resolve().then(async () => {
       try {
-        const progress = (value: MarketplaceProgress) => store.updateMarketplaceProgress(user.id, business.id, product.id, task.id, value);
+        const progress = (value: MarketplaceProgress) => store.updateMarketplaceProgress(user.id, business.id, product.id, task.id,
+          { ...value, startedAt, updatedAt: new Date().toISOString() });
         await progress({ stage, completed: 0, total: 0 });
         const result = await work(signal, progress);
         signal.throwIfAborted();
@@ -596,7 +650,10 @@ export function createApi(store: Store, origin: string, production: boolean, sca
     const current = await productSnapshot(request);
     if (current.analysis && !current.stale) { response.json(current); return; }
     const pending = activeProductAnalyses.get(`${product.id}:${productFingerprint(product)}`);
-    if (pending) { await pending; response.json(await productSnapshot(request)); return; }
+    if (pending) {
+      if (request.get("Prefer") !== "respond-async") await pending;
+      response.status(request.get("Prefer") === "respond-async" ? 202 : 200).json(await productSnapshot(request)); return;
+    }
     if (!productAnalyst.configured) throw new ApiError(503, "Product AI analysis is not configured on this server. Your catalogue remains available.");
     if (current.running) throw new ApiError(409, "This product already has an analysis running. Reload its saved status instead of starting another.");
     next();
@@ -606,8 +663,8 @@ export function createApi(store: Store, origin: string, production: boolean, sca
     const existing = activeProductAnalyses.get(key), current = await productSnapshot(request);
     if (existing || current.analysis && !current.stale) {
       response.locals.productAnalysisReused = true;
-      if (existing) await existing;
-      response.json(await productSnapshot(request)); return;
+      if (existing && request.get("Prefer") !== "respond-async") await existing;
+      response.status(existing && request.get("Prefer") === "respond-async" ? 202 : 200).json(await productSnapshot(request)); return;
     }
     const release = claimWorkSlot();
     if (!release) throw new ApiError(429, "Analysis capacity is busy. Saved results are still available; try again shortly.");
@@ -619,7 +676,8 @@ export function createApi(store: Store, origin: string, production: boolean, sca
       try {
         const signal = AbortSignal.any([marketplaceCancellation.signal, AbortSignal.timeout(productAnalysisTimeout)]);
         signal.throwIfAborted();
-        const analysis = await productAnalyst.run(product, signal);
+        const analysis = await productAnalyst.run(product, signal, (progress) =>
+          store.updateProductAnalysisProgress(user.id, business.id, product.id, fingerprint, leaseUntil, progress));
         signal.throwIfAborted();
         if (analysis.productId !== product.id || analysis.fingerprint !== fingerprint) throw new AgentError(502, "The AI returned an analysis for different product evidence. Nothing was changed.");
         await store.finishProductAnalysis(user.id, business.id, analysis, leaseUntil);
@@ -631,6 +689,10 @@ export function createApi(store: Store, origin: string, production: boolean, sca
       }
     }).finally(() => { release(); activeProductAnalyses.delete(key); });
     activeProductAnalyses.set(key, pending);
+    if (request.get("Prefer") === "respond-async") {
+      void pending.catch((error: unknown) => console.warn("Background product analysis stopped:", error instanceof Error ? error.name : "unknown"));
+      response.status(202).json(await productSnapshot(request)); return;
+    }
     await pending;
     response.json(await productSnapshot(request));
   });

@@ -98,6 +98,22 @@ describe("durable local analysis jobs", () => {
     return { release: () => release(), signal: () => signal };
   }
 
+  it("persists disclosed review-reuse permission and fences request keys and active-job aliases by that permission", async () => {
+    const user = await owner(), key = randomUUID();
+    const input = { permission: true, research: true, researchVersion: 2, reuseCustomerEvidence: true };
+    const accepted = await start(user, key, input).expect(202);
+    const first = analysisJobEventSchema.parse(JSON.parse(accepted.text)).job;
+    expect(first.reuseCustomerEvidence).toBe(true);
+    expect(JSON.parse((await start(user, randomUUID(), input).expect(202)).text).job.id).toBe(first.id);
+    await start(user, key, { ...input, reuseCustomerEvidence: false }).expect(409);
+    await start(user, randomUUID(), { ...input, reuseCustomerEvidence: false }).expect(409);
+    await start(user, randomUUID(), { ...input, research: false }).expect(400);
+    await worker.stop(); await store.close(); store = openStore(path);
+    expect((await store.latestAnalysisJob(user.id, user.business.id))?.reuseCustomerEvidence).toBe(true);
+    expect((await store.claimAnalysis())?.reuseCustomerEvidence).toBe(true);
+    expect(complete).not.toHaveBeenCalled(); expect(scanner).not.toHaveBeenCalled();
+  });
+
   it("accepts immediately, survives reopening, then saves the worker result with website products already available", async () => {
     const user = await owner(), key = randomUUID();
     const accepted = await start(user, key).expect(202);

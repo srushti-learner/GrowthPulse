@@ -1,10 +1,18 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { businessesSchema, type Business } from "../shared/contracts";
-import { savedScanResponseSchema, scanResponseSchema, scansResponseSchema, scanLimits, type SavedScan, type ScanResult, type ScanSummary } from "../shared/website";
+import { savedScanResponseSchema, savedScanSchema, scansResponseSchema, scanLimits, type SavedScan, type ScanResult, type ScanSummary, type ScanProgress } from "../shared/website";
 import { api, ApiFailure, errorMessage } from "./api";
 import { Icon } from "./Icon";
+import { scanWebsite } from "./scan-stream";
+import { WorkflowActivity } from "./WorkflowActivity";
 
 const statusLabels = { complete: "Scan complete", partial: "Partial scan", failed: "Scan failed" } as const;
+const scanMessages = {
+  robots: "Checking the publisher's robots rules before reading allowed pages.",
+  discovering: "Discovering public pages through the website's sitemaps.",
+  reading: "Reading permitted public HTML and extracting website evidence.",
+  saving: "Saving the captured evidence and checking website product records.",
+};
 export function WebsiteWorkspace({ authenticated, onSessionExpired, selectedBusinessId, onBusinessSelected, businessManaged = false }: {
   authenticated: boolean; onSessionExpired: () => void; selectedBusinessId?: string;
   onBusinessSelected?: (id: string) => void; businessManaged?: boolean;
@@ -18,6 +26,7 @@ export function WebsiteWorkspace({ authenticated, onSessionExpired, selectedBusi
   const [historyError, setHistoryError] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<ScanProgress | null>(null);
   const [reading, setReading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [result, setResult] = useState<ScanResult | SavedScan | null>(null);
@@ -84,26 +93,28 @@ export function WebsiteWorkspace({ authenticated, onSessionExpired, selectedBusi
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (busy) return;
     if (!permission) { setError("Confirm that you have permission to scan these public pages."); return; }
     const controller = new AbortController();
     running.current = controller;
     setBusy(true);
+    setProgress(null);
     setResult(null);
     setScanId("");
     setError("");
     try {
-      const options = { method: "POST", body: JSON.stringify({ url, permission }), signal: controller.signal };
+      const result = await scanWebsite(businessId ? `/api/businesses/${businessId}/scans` : "/api/website/scan",
+        { url, permission }, controller.signal, (progress) => { if (!controller.signal.aborted) setProgress(progress); });
+      if (controller.signal.aborted) return;
       if (businessId) {
-        const { scan } = await api(`/api/businesses/${businessId}/scans`, savedScanResponseSchema, options, scanLimits.milliseconds + 10_000);
-        if (controller.signal.aborted) return;
+        const scan = savedScanSchema.parse(result);
         setResult(scan);
         setScans((current) => [{
           id: scan.id, businessId: scan.businessId, requestedUrl: scan.requestedUrl, status: scan.status,
           startedAt: scan.startedAt, completedAt: scan.completedAt, pageCount: scan.pages.length,
         }, ...current].slice(0, 20));
       } else {
-        const { scan } = await api("/api/website/scan", scanResponseSchema, options, scanLimits.milliseconds + 10_000);
-        if (!controller.signal.aborted) setResult(scan);
+        setResult(result);
       }
     } catch (error) { if (!controller.signal.aborted) report(error, setError); }
     finally { if (!controller.signal.aborted) setBusy(false); }
@@ -136,7 +147,19 @@ export function WebsiteWorkspace({ authenticated, onSessionExpired, selectedBusi
           <p className="field-note">{businessId ? "This run and its evidence will be saved to the selected business. Valid, unambiguous website products are added to your catalogue automatically. Your profile and manual product edits will not be overwritten." : "Preview only: this result will not be saved to a business."}</p>
           <button type="submit" className="primary-link">{busy ? "Scanning public pages..." : result ? "Rescan website" : "Scan website"}<Icon name="arrow" /></button>
         </fieldset>
-        {busy && <p role="status" className="loading-message">Reading allowed pages and checking robots rules. This may take up to {scanLimits.milliseconds / 1000} seconds.</p>}
+        {busy && <WorkflowActivity title="Website scan"
+          message={progress ? scanMessages[progress.stage] : "Requesting the public scan. Waiting for the first recorded update."}
+          startedAt={progress?.startedAt} updatedAt={progress?.updatedAt}
+          counts={progress ? [{ label: "Pages captured", value: progress.pages }, { label: "Product records found", value: progress.products },
+            { label: "Pages unavailable", value: progress.failures }] : []}
+          guidance={`Keep this page open: this scan is request-scoped, not a background AI job. Reading is limited to ${scanLimits.milliseconds / 1000} seconds; saving may take longer. You can review the safety details alongside while it works.`}>
+          {progress && <p className="field-note">Current source: {progress.url}</p>}
+          {progress?.lastFailure && <p className="field-note">Latest page limitation: {progress.lastFailure}</p>}
+          <button type="button" className="text-button" onClick={() => {
+            running.current?.abort(); setBusy(false); setProgress(null);
+            setError("Scan cancelled. Check saved scans before retrying in case saving had already completed.");
+          }}>Cancel scan</button>
+        </WorkflowActivity>}
         {error && <p role="alert" className="form-error">{error}</p>}
       </form>
       <aside className="ownership-card"><Icon name="shield" /><h2>Your agent's evidence tool.</h2><p>Review saved website findings without AI interpretation. Prefer a guided review? Your business agent can use this same safe scanner for you.</p><hr /><p>Robots restrictions, private networks, and unsafe redirects are blocked. No login, JavaScript execution, website changes, or background monitoring. A blocked page stays unknown, not invented.</p><p><a href="#overview?view=business" className="text-button">{authenticated ? "Open your business agent" : "Create a profile to meet your business agent"} <Icon name="arrow" /></a></p></aside>

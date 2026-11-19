@@ -7,6 +7,7 @@ import { buildAgentEvidence } from "./agent-evidence.js";
 import { ResearchLimit, type ResearchJournal } from "./research-store.js";
 import { modelInputSchema } from "./model-schema.js";
 import type { MarketplaceResearch } from "./marketplace-research.js";
+import type { CustomerEvidence } from "./customer-evidence.js";
 
 export class AgentError extends Error {
   constructor(public status: number, message: string, public code?: string) { super(message); }
@@ -39,7 +40,7 @@ export type AgentMessage = Pick<Anthropic.Message, "content" | "stop_reason"> & 
 };
 export type AgentModel = (input: Anthropic.MessageCreateParamsNonStreaming, signal: AbortSignal, onInput?: (snapshot: unknown) => void) => Promise<AgentMessage>;
 export type AgentProposal = Proposal & Pick<Understanding, "evidenceCoverage" | "research">;
-export type ResearchContext = { research: boolean; journal: ResearchJournal };
+export type ResearchContext = { research: boolean; journal: ResearchJournal; customerEvidence?: CustomerEvidence };
 export type BusinessAgent = {
   configured: boolean;
   timeoutMs?: number;

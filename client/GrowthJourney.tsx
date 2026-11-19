@@ -6,6 +6,7 @@ import { productsResponseSchema, type Product } from "../shared/products";
 import { api, ApiFailure, errorMessage } from "./api";
 import { Button } from "./components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
+import { WeeklyGrowthReview } from "./WeeklyGrowthReview";
 import "./journey.css";
 
 const stages = [
@@ -134,6 +135,8 @@ export function GrowthJourney({ section, selectedBusinessId, onBusinessSelected,
     {(home || progress) && !loading && !loadError && <>
       {reading && <p role="status">Reading saved catalogue and plan...</p>}
       {showSetup && !loadError && setup}
+      {(dashboard || progress) && business && saved && !error && <WeeklyGrowthReview key={business.id}
+        businessId={business.id} plan={saved.growth.plan} expanded={progress} onSessionExpired={onSessionExpired} />}
       {dashboard && nextMove && !error && <Card className="journey-next">
         <CardHeader><CardDescription><Compass /> YOUR NEXT STEP{business ? ` / ${business.name}` : ""}</CardDescription>
           <CardTitle><h2>{nextMove.title}</h2></CardTitle></CardHeader>

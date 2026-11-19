@@ -133,6 +133,10 @@ export function catalogueStore(database: SqlDatabase) {
       })();
     },
     async listProducts(ownerId: string, businessId: string) { await owned(ownerId, businessId); return products(businessId); },
+    async getProduct(ownerId: string, businessId: string, productId: string) {
+      await owned(ownerId, businessId);
+      return (await products(businessId, productId))[0];
+    },
     async saveProduct(ownerId: string, businessId: string, input: ProductInput, existingId?: string) {
       const data = productInputSchema.parse(input);
       return database.transaction(async () => {

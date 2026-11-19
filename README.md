@@ -127,15 +127,15 @@ opening a product and returning to the catalogue, and a return link reopens the
 exact saved plan action. Non-product recommendations can still be managed as
 plan actions; no content/campaign execution capability is implied.
 
-**My progress** (`#progress`) reviews saved action statuses and their update
-dates. Sales-record links open the existing sales view, while Growth Simulator
-remains a separate what-if tool. Neither a completed task nor a simulation is
-presented as measured uplift or campaign attribution. The redesign adds no
-schema migration, provider calls, integration requirement or hosting change.
+**My progress** (`#progress`) reviews saved action statuses, dates and the
+Weekly Growth Review pilot described below. Sales-record links open the existing
+sales view, while Growth Simulator remains a separate what-if tool. Neither a
+completed task nor a simulation is presented as measured uplift or attribution.
 The existing LangGraph research workflow and durable SQL checkpointer still run inside
 the analysis worker; the saved-result Market and Growth views do not replace them.
-Live analytics connectors, experiment execution and automatic recommendation-outcome
-tracking are not implemented. Earlier plans retain their evidence snapshots when research
+Live analytics connectors and experiment execution are not implemented. Outcome
+reviews require explicitly supplied sales records and an owner decision; they are
+not automatic campaign attribution. Earlier plans retain their evidence snapshots when research
 or the website changes; review that evidence again before acting. Concurrent stale
 edits are rejected instead of silently overwriting another view.
 
@@ -227,12 +227,18 @@ A business profile and sales records are required; a website and AI key are not.
 The single workspace contains **My sales**, **Forecast** and **What if?**, retaining
 the business selected elsewhere in the dashboard.
 
-- Import CSV/XLSX sales, review accepted/rejected rows, then explicitly confirm.
+- Import CSV/XLSX sales, review/correct the suggested column mapping, approve it,
+  review accepted/rejected rows, then explicitly confirm.
   Confirmation **replaces the imported baseline**, not appends to it. Previous
   imports remain saved; owner-entered dates cannot be overwritten by an import.
-  Required CSV headers are `order_id,date,quantity,unit_price`; optional headers
-  include `sku,product,discount,currency,status`. Download the template in Import
-  sales. Use historical ISO dates and explicitly select the file's currency.
+  The template uses `order_id,date,quantity,unit_price`, with optional
+  `sku,product,discount,currency,status`. These exact headings are not required:
+  deterministic suggestions recognize common names, and owners can map each
+  required field explicitly. Download the template in Import sales. Rows must
+  represent order lines, with stable order IDs, historical ISO dates, quantities
+  and per-unit prices; daily summaries belong in Owner entry. Currency is chosen
+  explicitly. Mapping does not infer a price from a row total, invent quantities,
+  guess ambiguous dates, or use paid AI. Ignored fields are not imported.
 - Alternatively, record daily owner-reported sales, orders and their source.
   Mark estimates honestly; leave unknown costs and traffic blank. One currency
   per business is supported, without automatic currency conversion.
@@ -273,6 +279,53 @@ The analytics engine is selectively adapted from
 application or conflicting migrations. Migration 13 adds sales/traffic tables
 after the current agent migrations. SQLite remains the local default; production
 uses the shared asynchronous repositories through a MySQL connection pool.
+
+### Weekly Growth Review pilot
+
+The returning **Home** and **My progress** views show a sales pulse, reminders
+for due action reviews and saved weekly reports. This is a **CSV/manual pilot**:
+there is no automatic sales connection, unattended research, email reminder or
+paid AI call on read. Refreshing a review only reads saved records.
+
+The pulse compares the last two completed Monday-Sunday weeks using a UTC
+calendar, keeping source dates as supplied. Every date in each week must be
+recorded; missing dates are unknown, not zero. It reports deterministic net
+sales, orders and booked average order value (before reversals), using the
+same formulas as My sales. Percentages require a positive baseline. A change
+of at least 10%, or a changed value without a positive baseline, gets an
+attention flag, **not** a statistical-significance or causal-growth claim.
+Small samples, owner estimates and source/rejected-row caveats are disclosed.
+The date covered through is shown separately from the recorded update time.
+
+Each confirmed sales import or manual addition retains an immutable, dated
+aggregate snapshot. Equivalent accepted sales/quality state is deduplicated;
+traffic, scenario changes and renaming an identical export do not create new
+sales observations. Previews and reads do not write monitoring history.
+**Imports still replace the active imported baseline**, not append to it.
+Include both reporting weeks in replacement exports for weekly comparisons.
+Past snapshots, saved reports and action baselines are retained separately,
+not silently combined or double-counted. Saving a weekly report is explicit,
+idempotent for the same sales version/week and does not rewrite older reports.
+The UI shows the latest 12 saved reports; older reports remain stored.
+Existing local history is captured on the next confirmed sales change or
+explicit review/baseline save, not migrated by reading a dashboard.
+
+To measure an action, choose a saved, non-dismissed Growth plan item, a
+business-level metric and its actual start date (today or within the past
+year). Seven recorded dates immediately before that date establish an immutable
+baseline. The review becomes due seven days after the start; all seven outcome
+dates and the same currency are required. Owner-entered estimates are labeled;
+unmeasurable AOV is not turned into zero. A replacement export containing only
+the outcome week can support the action review because its earlier baseline is
+already frozen. Record **Continue**, **Revise** or **Stop** and a learning note
+to freeze the observed outcome and decision. This does not execute the action,
+change its task status, infer product/campaign ROI, or establish causal uplift.
+Source references and caveats remain attached to baseline/outcome records.
+Later source corrections do not rewrite a recorded decision. An open review
+must finish before a follow-up on the same action; the pilot allows 100 action
+review records per business. An owner can explicitly stop an incomplete
+experiment with a reason; this closes it **without** inventing an outcome or
+percentage and permits a follow-up. Stale/foreign-owner writes are rejected.
 
 The interface uses the sidebar/inset layout and components from
 [shadcn/ui Dashboard 01](https://ui.shadcn.com/blocks#dashboard-01), with
@@ -365,9 +418,38 @@ request counts, and product-source metadata expand on demand. Product prices and
 review decisions remain visible; validation failures and connection errors stay
 explicit. **Connection status** is collapsed when healthy and opens on a connection
 error, with a retry control. The sign-in screen retains the local-development and
-test-password warning. Running analyses show one compact progress message and a
-cancel control; runtime and background-work explanations live under **Analysis
-details** instead of repeating above the research cards.
+test-password warning. Running analyses show **Live agent activity**: recorded
+specialist statuses, recent steps, actual search queries and candidate captures,
+accepted-finding/source counts, and explicit evidence gaps or failures. Active
+research steps take precedence over a Store specialist's phase message, so market
+research is not mislabeled as final saving. Empty report placeholders wait until
+a draft or accepted findings arrive. Elapsed time is not an ETA or a fabricated
+completion percentage; a quiet-update notice does not claim the job has stopped.
+Cancellation and the ability to leave and return stay visible. Additional scope
+and runtime information expands under **Analysis details**. This view consumes
+existing job events, exposes no private model reasoning, and starts no extra AI
+or search calls. Decorative animation respects reduced-motion preferences.
+
+The same truthful activity treatment covers **Product analysis** (including its
+listing drafts), **Customer voice**, **Marketplace insights**, and the standalone
+**Website scan**. Product analysis records evidence preparation, its single AI
+request, structural/citation checks, and saving in its leased SQL record.
+The UI requests asynchronous admission, then polls saved status; leaving or
+reopening does not start another paid call. Existing synchronous API clients
+remain supported. Listing rewrites are part of that one product-analysis call,
+not separate invented AI stages.
+
+Marketplace and customer-feedback views share the same saved collection stages,
+checked-listing counts, timestamps and explicit failure reasons. Confirming
+matches remains an owner decision, not an automated progress step. Prior saved
+sources and results stay readable while a fresh run works. Website scanning
+instead streams actual robots checks, sitemap discovery, captured-page/product
+counts and page limitations. **Keep the scan page open**: it is request-scoped,
+with a cancel action, not a durable background job. On a lost connection, check
+saved scans before explicitly retrying. JSON scan responses remain available for
+existing API clients. None of these panels fabricates a percentage, changes
+provider prompts, or starts additional AI/search work.
+
 Store Intelligence uses the guided briefing cards rather than a second long-form
 report. The completed briefing supplies its full text, questions, next steps, and
 sources; accepted research summaries remain readable as cards if a run stops
@@ -514,9 +596,12 @@ counts, plus validation issue codes, evidence-reference failure reasons and fiel
 quotes, account details or credentials. Onboarding retries reuse their
 saved public findings; an optional refresh after success still requests new evidence.
 
-Only public website URLs, bounded public evidence, public candidate search leads
-and bounded accepted research findings go to Anthropic, not account credentials,
-private owner profile notes, or the database.
+Business research sends public website URLs, bounded public evidence, public
+candidate search leads and bounded accepted research findings to Anthropic.
+Opportunity and growth recommendations can also reuse eligible saved Customer
+voice themes and original review excerpts, including owner-authorized exports.
+This reuse is disclosed before analysis. Account credentials, private owner
+profile notes and the database itself are not sent.
 The scanner tool provides up to 256 KiB of evidence divided across captured
 pages, including at most 100 structured product records: names, descriptions,
 SKUs, brands, categories, materials, variants, published offers/currencies,
@@ -631,7 +716,8 @@ flowchart TD
     Scan --> Coordinate["Research Orchestrator"]
     Coordinate --> Store["Store Intelligence"]
     Store --> Discovery["Optional multi-query Tavily discovery"]
-    Coordinate --> Customer["Customer Intelligence: evidence gaps"]
+    Coordinate --> Customer["Customer Intelligence: eligible saved review evidence"]
+    SavedReviews["Same owner's confirmed Customer voice reports"] --> Customer
     Discovery --> Verify["Safe scans + independent-brand verification"]
     Verify --> Competitor["Sourced competitor comparison"]
     Competitor --> Pricing["Deterministic Pricing Intelligence"]
@@ -658,7 +744,43 @@ occur in merchant quotes before generating varied category, alternative-brand
 and direct-to-consumer searches. Only these public anchors go into Tavily
 queries; private profile notes and unanswered Store questions do not.
 
-The customer evidence-gap branch can overlap Store Intelligence. Competitor scans run in parallel only when the
+The customer branch can overlap Store Intelligence. It deterministically checks
+the latest saved report for at most six products with the most recent saved reports
+belonging to this owner and business, and reuses up to three themes with two distinct original
+review excerpts each. Reports must be analysed, match the current reviewed product
+fingerprint and have no active refresh. Review references must resolve uniquely
+to captured, owner-confirmed same-product or alternative listings; these scopes
+remain separate. Unconfirmed/excluded listings, stale catalogue matches,
+duplicate review text and unsupported references are omitted explicitly.
+No new review collection or customer-analysis call is made.
+The updated UI explicitly submits `reuseCustomerEvidence: true` under the analysis
+disclosure. SQL jobs persist that permission independently of the public-research
+budget version; omitted permission defaults to false. Older queued/running jobs
+do not read or forward saved review excerpts. Idempotency keys and active-job
+aliases cannot change a job's permission. SQLite migration 20 / additive MySQL
+migration 5 add the default-off flag without rewriting existing migration checksums.
+
+The saved themes remain **prior AI interpretations**, not independent observations.
+Opportunity and growth receive the original excerpts alongside their product,
+listing relation, capture/analysis dates and public-page/owner-export provenance.
+Their bounded prior-findings handoff interleaves specialists so Store findings
+cannot crowd out customer feedback. Review-based observations are rejected;
+supported hypotheses and suggestions can survive independently. Historical
+samples are not representative current sentiment, owner exports are not
+independently verified, and another seller's delivery/service feedback does not
+establish a physical product defect. An empty eligible sample records the gap,
+not feedback invented from brand marketing. Saved reports are unchanged until an
+explicit analysis/retry; this is not automatic monitoring.
+
+Model-derived cache inputs include the configured model and a server policy
+version. Model changes invalidate those stages without refetching unchanged
+scan/search artifacts. Evidence changes invalidate dependent synthesis, and
+same-job cache hits are marked reused without clearing their saved artifacts.
+Pricing remains limited even for matching GTINs: published offers do not establish
+equivalent pack sizes, taxes, shipping or markets. Its coverage explanation
+distinguishes missing product inputs, no supported exact match and matched pairs.
+
+Competitor scans run in parallel only when the
 shared two-operation scan budget has room; otherwise they run sequentially.
 The orchestrator controls dependencies and tool budgets deterministically.
 Models propose bounded, cited findings; they cannot choose arbitrary MCP tools.
@@ -672,6 +794,15 @@ The application uses the official MCP SDK against the fixed hosted endpoint
 `https://mcp.tavily.com/mcp`, with bearer authentication. No Docker or separate
 MCP server process is needed. The hosted connection has not been live-verified
 as part of this implementation.
+
+Each search leases an exclusive MCP client. Up to two idle successful connections
+are retained for thirty seconds, reusing the handshake and validated search-tool
+metadata, not search results. Concurrent cancellation never closes another search's
+connection. Failures, cancellation, provider tool-list changes, idle expiry and
+shutdown discard connections; changed tool contracts are discovered and validated
+again before another call. No failed paid request is replayed automatically.
+This removes repeated connection setup; real-provider latency has not been
+benchmarked.
 
 Every new UI analysis includes competitor research under one combined approval;
 there is no separate market-research checkbox. Both signed-in profile creation
@@ -1144,6 +1275,14 @@ automatic synchronisation, stock monitoring, or retention/deletion UI yet.
   transactionally, including older writes without task paths. Original tables
   are retained; a recorded import marker prevents deleted threads reappearing.
   Stop the old application before upgrading; do not run old and new savers together.
+- SQLite migration 18 / additive MySQL migration 3 add immutable accepted-sales
+  observations, saved weekly reports and owner-reviewed action outcomes. Prior
+  MySQL migrations/checksums are unchanged. Back up before upgrading; production
+  database and hosting verification remain separate from this local pilot.
+- SQLite migration 19 / additive MySQL migration 4 add nullable product-analysis
+  progress without changing previous migration statements or checksums. Updates
+  are fenced to the active, unexpired attempt; late workers cannot replace a new
+  attempt's activity. Existing product analyses and source data are preserved.
 - Production uses `server/mysql-store.ts`, `mysql2`, and the shared asynchronous
   repositories. `server/mysql-migrations.ts` maintains a separate, checksummed
   MySQL schema. Startup validates MySQL 8.0.16+ (not MariaDB), acquires a named

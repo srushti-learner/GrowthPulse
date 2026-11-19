@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { createApp } from "./app.js";
 import { openStore, type Store } from "./database.js";
 import { migrations } from "./migrations.js";
-import type { ScanResult } from "../shared/website.js";
+import { scanStreamEventSchema, type ScanResult } from "../shared/website.js";
+import type { WebsiteScanner } from "./website-scanner.js";
 
 const origin = "http://127.0.0.1:5173";
 const input = { url: "https://shop.example.com/", permission: true };
@@ -27,7 +28,7 @@ describe("scan API, persistence and ownership", () => {
   let path: string;
   let store: Store;
   let app: ReturnType<typeof createApp>;
-  const scanner = vi.fn(async (_url: string, _signal?: AbortSignal) => structuredClone(complete));
+  const scanner = vi.fn<WebsiteScanner>(async () => structuredClone(complete));
   beforeEach(() => {
     directory = mkdtempSync(join(tmpdir(), "growthpulse-scans-"));
     path = join(directory, "test.sqlite");
@@ -52,6 +53,32 @@ describe("scan API, persistence and ownership", () => {
     expect(scanner).toHaveBeenCalledWith(input.url, expect.any(AbortSignal));
     expect(await store.listScans(user.userId, user.id)).toEqual([]);
     expect(await store.listEvidence(user.userId, user.id)).toHaveLength(1);
+  });
+
+  it.each([false, true])("streams actual scan updates and a validated final result (saved: %s)", async (save) => {
+    const user = await owner();
+    scanner.mockImplementationOnce(async (_url, _signal, options) => {
+      options?.onProgress?.({ stage: "reading", startedAt: capturedAt, updatedAt: capturedAt,
+        url: input.url, pages: 1, products: 0, failures: 0 });
+      return structuredClone(complete);
+    });
+    const response = await request(app).post(save ? `/api/businesses/${user.id}/scans` : "/api/website/scan")
+      .set("Origin", origin).set("Cookie", user.cookie).set("Accept", "application/x-ndjson").send(input).expect(200);
+    expect(response.headers["content-type"]).toContain("application/x-ndjson");
+    const events = response.text.trim().split("\n").map((line: string) => scanStreamEventSchema.parse(JSON.parse(line)));
+    expect(events[0]).toMatchObject({ type: "progress", progress: { stage: "reading", pages: 1 } });
+    expect(events.at(-1)).toMatchObject({ type: "complete", scan: { requestedUrl: input.url, pages: complete.pages } });
+    expect(events.some((event) => event.type === "progress" && event.progress.stage === "saving")).toBe(save);
+    expect(await store.listScans(user.userId, user.id)).toHaveLength(save ? 1 : 0);
+    expect(scanner).toHaveBeenCalledOnce();
+  });
+
+  it("streams a clear terminal failure rather than a success-shaped empty scan", async () => {
+    scanner.mockRejectedValueOnce(new Error("Private transport diagnostics"));
+    const response = await request(app).post("/api/website/scan").set("Origin", origin)
+      .set("Accept", "application/x-ndjson").send(input).expect(200);
+    expect(scanStreamEventSchema.parse(JSON.parse(response.text.trim()))).toMatchObject({ type: "error", status: 502 });
+    expect(response.text).not.toContain("Private transport diagnostics");
   });
 
   it("persists immutable scan results, page evidence and activity across reopening", async () => {

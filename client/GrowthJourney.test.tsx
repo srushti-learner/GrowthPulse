@@ -4,6 +4,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GrowthJourney } from "./GrowthJourney";
 import type { GrowthOpportunity, GrowthResponse } from "../shared/growth";
+import { analyticsDataSchema } from "../shared/analytics";
+import { weeklyReport } from "../shared/weekly-review";
 
 const business = {
   id: "02a221ee-41f1-46c9-bc96-12401d8dcf73", name: "Fixture shop", website: "", category: "", description: "",
@@ -41,6 +43,12 @@ describe("connected growth journey", () => {
       if (path === "/api/businesses") return json({ businesses: [business] });
       if (path.endsWith("/products")) return json({ products: [] });
       if (path.endsWith("/growth")) return json(growth);
+      if (path.endsWith("/weekly-review")) return json({
+        version: "empty", observedAt: null, coveredThrough: null, stale: true, observationCount: 0,
+        current: weeklyReport(analyticsDataSchema.parse({
+          version: "empty", currency: null, days: [], products: [], imports: [], sources: [], scenarios: [], warnings: [],
+        }), "2026-11-19"), reviews: [], measurements: [],
+      });
       throw new Error(`Unexpected request: ${path}`);
     });
     vi.stubGlobal("fetch", fetch); return fetch;

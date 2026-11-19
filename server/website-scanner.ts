@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
 import robotsParser from "robots-parser";
 import { setTimeout as delay } from "node:timers/promises";
-import { scanLimits, scanResultSchema, type ScannedPage, type ScanResult } from "../shared/website.js";
+import { scanLimits, scanResultSchema, type ScannedPage, type ScanResult, type ScanProgress } from "../shared/website.js";
 import { createPublicReader, publicSitemapUrl, publicUrl, ScanError, scannerAgent, type PublicReader, type PublicResponse } from "./public-http.js";
 
 const space = (value: string, limit: number) => value.replace(/\s+/g, " ").trim().slice(0, limit);
@@ -115,7 +115,8 @@ function extract(html: string, url: URL, headerRobots: string, marketplaceReview
 }
 
 export function createWebsiteScanner(read: PublicReader = createPublicReader()) {
-  return async (input: string, cancellation?: AbortSignal, options: { singlePage?: boolean; marketplaceReviews?: boolean } = {}): Promise<ScanResult> => {
+  return async (input: string, cancellation?: AbortSignal, options: { singlePage?: boolean; marketplaceReviews?: boolean;
+    onProgress?: (progress: ScanProgress) => void } = {}): Promise<ScanResult> => {
     const seed = publicUrl(input);
     const startedAt = new Date().toISOString();
     const signal = cancellation ? AbortSignal.any([cancellation, AbortSignal.timeout(scanLimits.milliseconds)]) : AbortSignal.timeout(scanLimits.milliseconds);
@@ -135,6 +136,13 @@ export function createWebsiteScanner(read: PublicReader = createPublicReader()) 
     let retainedBytes = 0;
     let sitemapsRead = 0;
     let limited = false;
+    function progress(stage: ScanProgress["stage"], url: string) {
+      options.onProgress?.({
+        stage, url, startedAt, updatedAt: new Date().toISOString(), pages: pages.length,
+        products: pages.reduce((count, page) => count + (page.productJson?.length ?? 0), 0), failures: failures.length,
+        ...(failures.length ? { lastFailure: failures[failures.length - 1].message.slice(0, 500) } : {}),
+      });
+    }
 
     function destination(input: string, sitemap = false) {
       const url = sitemap ? publicSitemapUrl(input) : publicUrl(input);
@@ -196,6 +204,7 @@ export function createWebsiteScanner(read: PublicReader = createPublicReader()) 
         if (requests >= scanLimits.requests) throw new ScanError(`The scan's ${scanLimits.requests}-request budget was reached, including redirects, sitemaps and robots checks.`);
         if (bytesRead >= scanLimits.totalBytes) throw new ScanError("The scan's total download budget was reached.");
         requests++;
+        progress(kind === "robots" ? "robots" : kind === "sitemap" ? "discovering" : "reading", url.href);
         lastRequest.set(url.origin, Date.now());
         const maxBytes = Math.min(kind === "html" ? scanLimits.pageBytes : kind === "sitemap" ? scanLimits.sitemapBytes : 262_144, scanLimits.totalBytes - bytesRead);
         let response: PublicResponse;
@@ -281,6 +290,7 @@ export function createWebsiteScanner(read: PublicReader = createPublicReader()) 
         }
         retainedBytes += size;
         pages.push(page);
+        progress("reading", url.href);
         if (page.warnings.some((warning) => /truncated|not retained|safety limit|may be missing|limited to/i.test(warning))) limited = true;
         if (options.singlePage) {
           notes.add("Only the requested public page was sampled; no navigation or sitemap discovery was performed.");
@@ -294,6 +304,7 @@ export function createWebsiteScanner(read: PublicReader = createPublicReader()) 
       } catch (error) {
         if (!(error instanceof ScanError) && !(error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))) throw error;
         failures.push({ url: current, message: error instanceof ScanError ? error.message : "The scan timed out or was cancelled." });
+        progress("reading", current);
         if (!pages.length || signal.aborted || requests >= scanLimits.requests || bytesRead >= scanLimits.totalBytes) break;
       }
     }

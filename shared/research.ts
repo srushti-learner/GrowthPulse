@@ -19,6 +19,12 @@ export const competitorDimensionLabels = {
 export const researchSourceSchema = z.object({
   id: z.string().regex(/^e_[a-f0-9]{16}$/), url: z.url().max(2048),
   quote: z.string().min(10).max(500), capturedAt: z.iso.datetime(),
+  customerReview: z.object({
+    productId: z.uuid(), productName: z.string().min(1).max(150), reportId: z.uuid(),
+    relation: z.enum(["my_listing", "other_seller", "alternative"]),
+    method: z.enum(["public_page", "owner_export"]), reviewDate: z.string().date().nullable(),
+    analysedAt: z.iso.datetime(),
+  }).strict().optional(),
 }).strict();
 export const researchFindingSchema = z.object({
   kind: z.enum(["observation", "hypothesis", "suggestion"]),

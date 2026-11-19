@@ -216,7 +216,7 @@ describe("agent-led profile onboarding", () => {
     expect(container.textContent).toContain("Your business, explained.");
     const calls = fetch.mock.calls.filter(([path, options]) => path.endsWith("/understanding") && options?.method === "POST");
     expect(calls).toHaveLength(1);
-    expect(JSON.parse(String(calls[0][1]?.body))).toEqual({ permission: true, research: true, researchVersion: 2 });
+    expect(JSON.parse(String(calls[0][1]?.body))).toEqual({ permission: true, research: true, researchVersion: 2, reuseCustomerEvidence: true });
     expect(fetch.mock.calls.some(([path]) => path.includes("/website/scan") || path.endsWith("/scans"))).toBe(false);
     expect(container.querySelector(".agent-suggestion a")?.getAttribute("href")).toBe(business.website);
     expect(container.querySelector<HTMLButtonElement>(".agent-profile-form button[type=submit]")?.disabled).toBe(false);
@@ -233,6 +233,54 @@ describe("agent-led profile onboarding", () => {
   };
   const jobResponse = (job: AnalysisJob) => new Response(`${JSON.stringify({ type: "job", job })}\n`, { headers: { "Content-Type": "application/x-ndjson" } });
 
+  it("shows recorded activity instead of an empty dashboard and reveals findings without another paid start", async () => {
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    const research: NonNullable<AnalysisJob["research"]> = {
+      version: 1, status: "running", enabled: true, steps: [], usage: { searches: 0, competitorScans: 0, modelCalls: 1 },
+    };
+    const active: AnalysisJob = { ...queuedJob, phase: "validating", preview: null, research };
+    const fetch = vi.fn(async (path: string) => {
+      if (path.endsWith("/understanding")) return json({ understanding: null, job: active });
+      if (path.endsWith("/events")) return new Response(new ReadableStream<Uint8Array>({ start(controller) { stream = controller; } }),
+        { headers: { "Content-Type": "application/x-ndjson" } });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetch);
+    await act(async () => root.render(<BusinessAgentReview business={business} autoStart={false} mode="research"
+      showProgressDetails={false} onSaved={vi.fn()} onRecorded={vi.fn()} onSessionExpired={expired} />));
+    expect(container.querySelector(".analysis-activity")).not.toBeNull();
+    expect(container.querySelector(".analysis-background")?.textContent).toContain("leave this page and return");
+    expect(container.querySelector(".research-report")).toBeNull();
+    expect(container.querySelector(".agent-review")?.getAttribute("aria-busy")).toBe("false");
+    const running: NonNullable<AnalysisJob["research"]>["steps"][number] = {
+      key: "competitor-site-0", agent: "competitor", status: "running", findings: [], limitations: [], diagnostic: null,
+      startedAt: business.createdAt, completedAt: null, reused: false,
+    };
+    await act(async () => stream.enqueue(new TextEncoder().encode(`${JSON.stringify({
+      type: "job", job: { ...active, revision: 3, research: { ...research, steps: [running] } },
+    })}\n`)));
+    expect(container.querySelector(".agent-progress [role=status]")?.textContent).toBe("Reading a candidate's public website");
+    expect(container.querySelector(".research-report")).toBeNull();
+    const accepted = { ...research, steps: [{
+      ...running, key: "store", agent: "store" as const, status: "completed" as const, completedAt: business.updatedAt,
+      findings: [{ kind: "observation" as const, title: "Cotton clothing", detail: "We make cotton clothing for everyday wear.",
+        sources: [{ id: "e_1111111111111111", url: business.website, quote: "We make cotton clothing for everyday wear.", capturedAt: business.createdAt }] }],
+    }] };
+    await act(async () => stream.enqueue(new TextEncoder().encode(`${JSON.stringify({
+      type: "job", job: { ...active, revision: 4, research: accepted },
+    })}\n`)));
+    expect(container.querySelector(".research-report")).not.toBeNull();
+    expect([...container.querySelectorAll(".analysis-counts dd")].map((node) => node.textContent)).toEqual(["0", "1", "1"]);
+    await act(async () => {
+      stream.enqueue(new TextEncoder().encode(`${JSON.stringify({ type: "job", job: {
+        ...active, status: "completed", revision: 5, understanding: { ...draft, research: { ...accepted, status: "complete" } },
+      } })}\n`)); stream.close();
+    });
+    expect(container.querySelector(".analysis-activity")).toBeNull();
+    expect(container.querySelector(".research-report")).not.toBeNull();
+    expect(fetch.mock.calls.every(([path]) => path.endsWith("/understanding") || path.endsWith("/events"))).toBe(true);
+  });
+
   it("includes competitor research only after the disclosed start action without a permission checkbox", async () => {
     const fetch = fetcher({ existing: true });
     await renderAgent();
@@ -245,7 +293,7 @@ describe("agent-led profile onboarding", () => {
     await act(async () => container.querySelector<HTMLButtonElement>(".agent-controls .primary-link")!.click());
     const posts = fetch.mock.calls.filter(([, options]) => options?.method === "POST");
     expect(posts).toHaveLength(1);
-    expect(JSON.parse(String(posts[0][1]!.body))).toEqual({ permission: true, research: true, researchVersion: 2 });
+    expect(JSON.parse(String(posts[0][1]!.body))).toEqual({ permission: true, research: true, researchVersion: 2, reuseCustomerEvidence: true });
   });
 
   it("includes competitor research when automatically analysing newly consented website evidence", async () => {
@@ -254,7 +302,7 @@ describe("agent-led profile onboarding", () => {
     await renderAgent(true, { scanId: draft.scanId, scanCapturedAt: "2026-11-17T12:00:00.000Z" });
     const posts = fetch.mock.calls.filter(([, options]) => options?.method === "POST");
     expect(posts).toHaveLength(1);
-    expect(JSON.parse(String(posts[0][1]!.body))).toEqual({ permission: true, scanId: draft.scanId, research: true, researchVersion: 2 });
+    expect(JSON.parse(String(posts[0][1]!.body))).toEqual({ permission: true, scanId: draft.scanId, research: true, researchVersion: 2, reuseCustomerEvidence: true });
     expect(container.querySelectorAll(".agent-controls input[type=checkbox]")).toHaveLength(0);
   });
 
@@ -284,7 +332,7 @@ describe("agent-led profile onboarding", () => {
     await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>(".agent-controls button"))
       .find((button) => button.textContent === "Retry failed research steps")!.click());
     const post = fetch.mock.calls.find(([, options]) => options?.method === "POST")!;
-    expect(JSON.parse(String(post[1]!.body))).toEqual({ permission: true, scanId: draft.scanId, research: true, researchVersion: 2, resumeJobId: stopped.id });
+    expect(JSON.parse(String(post[1]!.body))).toEqual({ permission: true, scanId: draft.scanId, research: true, researchVersion: 2, reuseCustomerEvidence: true, resumeJobId: stopped.id });
     expect(container.querySelector('.research-agent-nav button[aria-pressed="true"]')?.textContent).toContain("Growth strategy");
     expect(container.textContent).toContain("Keep this independently saved suggestion");
   });
@@ -328,7 +376,7 @@ describe("agent-led profile onboarding", () => {
     const posts = fetch.mock.calls.filter(([, options]) => options?.method === "POST");
     expect(posts).toHaveLength(1);
     expect(JSON.parse(String(posts[0][1]!.body))).toEqual({
-      permission: true, scanId: draft.scanId, research: true, researchVersion: 2,
+      permission: true, scanId: draft.scanId, research: true, researchVersion: 2, reuseCustomerEvidence: true,
     });
   });
 
@@ -486,7 +534,7 @@ describe("agent-led profile onboarding", () => {
     expect(posts()).toHaveLength(0);
     await act(async () => start.click());
     expect(posts()).toHaveLength(1);
-    expect(JSON.parse(String(posts()[0][1]?.body))).toEqual({ permission: true, research: true, researchVersion: 2 });
+    expect(JSON.parse(String(posts()[0][1]?.body))).toEqual({ permission: true, research: true, researchVersion: 2, reuseCustomerEvidence: true });
   });
 
   it("leads with a takeaway and action, compares one topic at a time and keeps exact evidence available without paid work", async () => {
@@ -927,7 +975,7 @@ describe("agent-led profile onboarding", () => {
     await act(async () => container.querySelector<HTMLButtonElement>(".agent-controls button")!.click());
     const posts = fetch.mock.calls.filter(([, options]) => options?.method === "POST");
     expect(posts).toHaveLength(1);
-    expect(JSON.parse(String(posts[0][1]!.body))).toEqual({ permission: true, scanId: checkpoint, research: true, researchVersion: 2 });
+    expect(JSON.parse(String(posts[0][1]!.body))).toEqual({ permission: true, scanId: checkpoint, research: true, researchVersion: 2, reuseCustomerEvidence: true });
   });
 
   it.each(["completed", "failed", "interrupted", "cancelled"] as const)("restores a newer %s job instead of automatically analysing older onboarding evidence", async (status) => {
@@ -958,7 +1006,7 @@ describe("agent-led profile onboarding", () => {
     await renderAgent(true, { scanId, scanCapturedAt: "2026-11-16T12:01:00.000Z" });
     const posts = fetch.mock.calls.filter(([, options]) => options?.method === "POST");
     expect(posts).toHaveLength(1);
-    expect(JSON.parse(String(posts[0][1]!.body))).toEqual({ permission: true, scanId, research: true, researchVersion: 2 });
+    expect(JSON.parse(String(posts[0][1]!.body))).toEqual({ permission: true, scanId, research: true, researchVersion: 2, reuseCustomerEvidence: true });
   });
 
   it("cancels only on an explicit click and keeps the previous saved briefing", async () => {
