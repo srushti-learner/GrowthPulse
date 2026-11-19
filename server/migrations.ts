@@ -335,6 +335,33 @@ export const migrations = [{
 }, {
   version: 17,
   sql: "ALTER TABLE marketplace_research ADD COLUMN progress_json TEXT CHECK(progress_json IS NULL OR json_valid(progress_json));",
+}, {
+  version: 18,
+  sql: `
+    CREATE TABLE sales_observations (
+      business_id TEXT NOT NULL REFERENCES businesses(id), version TEXT NOT NULL,
+      captured_at TEXT NOT NULL, snapshot_json TEXT NOT NULL CHECK(json_valid(snapshot_json)),
+      PRIMARY KEY(business_id,version)
+    );
+    CREATE TABLE weekly_reviews (
+      id TEXT PRIMARY KEY, business_id TEXT NOT NULL REFERENCES businesses(id), version TEXT NOT NULL,
+      period_end TEXT NOT NULL, created_at TEXT NOT NULL, review_json TEXT NOT NULL CHECK(json_valid(review_json)),
+      UNIQUE(business_id,version,period_end)
+    );
+    CREATE INDEX weekly_reviews_business ON weekly_reviews(business_id,created_at);
+    CREATE TABLE action_measurements (
+      id TEXT PRIMARY KEY, business_id TEXT NOT NULL REFERENCES businesses(id), opportunity_id TEXT NOT NULL,
+      created_at TEXT NOT NULL, decided_at TEXT, measurement_json TEXT NOT NULL CHECK(json_valid(measurement_json)),
+      FOREIGN KEY(business_id,opportunity_id) REFERENCES growth_plan(business_id,opportunity_id)
+    );
+    CREATE INDEX action_measurements_business ON action_measurements(business_id,created_at);
+  `,
+}, {
+  version: 19,
+  sql: "ALTER TABLE product_analyses ADD COLUMN progress_json TEXT CHECK(progress_json IS NULL OR json_valid(progress_json));",
+}, {
+  version: 20,
+  sql: "ALTER TABLE analysis_jobs ADD COLUMN reuse_customer_evidence INTEGER NOT NULL DEFAULT 0 CHECK(reuse_customer_evidence IN (0,1));",
 }];
 
 export function migrate(database: Database.Database) {

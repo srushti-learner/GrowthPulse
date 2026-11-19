@@ -149,7 +149,7 @@ describe("persisted identity and business ownership", () => {
     expect(() => openStore(path)).toThrow("Database schema is newer than this application");
   });
 
-  it.each([6, 7, 9, 12])("upgrades database version %s without losing saved analyses, scans or preview references", async (version) => {
+  it.each([6, 7, 9, 12, 19])("upgrades database version %s without losing saved analyses, scans or preview references", async (version) => {
     const legacyPath = join(directory, "legacy.sqlite");
     const legacy = new Database(legacyPath);
     const ownerId = randomUUID(), businessId = randomUUID(), scanId = randomUUID(), understandingId = randomUUID(), oldJobId = randomUUID();
@@ -177,10 +177,11 @@ describe("persisted identity and business ownership", () => {
         id: understandingId, businessId, scanId, createdAt: now,
         briefing: null, suggestions: [], scanStatus: "complete", reviewedAt: null, warnings: [], productImportId: null,
       }));
-      if (version === 9) legacy.prepare(`INSERT INTO analysis_jobs
+      if (version === 9 || version === 19) legacy.prepare(`INSERT INTO analysis_jobs
         (id, owner_id, business_id, requested_url, request_key, scan_id, status, phase, created_at, updated_at, research_enabled)
         VALUES (?, ?, ?, ?, ?, ?, 'failed', 'connecting', ?, ?, 1)`)
         .run(oldJobId, ownerId, businessId, website, randomUUID(), scanId, now, now);
+      if (version === 19) legacy.prepare("UPDATE analysis_jobs SET research_version = 2 WHERE id = ?").run(oldJobId);
     } finally { legacy.close(); }
     const upgraded = openStore(legacyPath);
     try {
@@ -193,7 +194,8 @@ describe("persisted identity and business ownership", () => {
       expect((await upgraded.getBusiness(ownerId, businessId))?.name).toBe("Legacy shop");
       expect(await upgraded.latestUnderstanding(ownerId, businessId)).toMatchObject({ scanId, scanStatus: "complete", briefing: null });
       expect(await upgraded.salesData(ownerId, businessId)).toMatchObject({ days: [], scenarios: [], traffic: null });
-      if (version === 9) expect(await upgraded.getAnalysisJob(ownerId, businessId, oldJobId)).toMatchObject({ researchEnabled: true, researchVersion: 1 });
+      if (version === 9 || version === 19) expect(await upgraded.getAnalysisJob(ownerId, businessId, oldJobId))
+        .toMatchObject({ researchEnabled: true, researchVersion: version === 9 ? 1 : 2, reuseCustomerEvidence: false });
       const job = await upgraded.enqueueAnalysis(ownerId, businessId, randomUUID(), website, scanId);
       expect(await upgraded.latestAnalysisJob(ownerId, businessId)).toMatchObject({ id: job.id, status: "queued", scanId, researchVersion: 2 });
       const database = new Database(legacyPath);

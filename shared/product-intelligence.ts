@@ -31,9 +31,16 @@ export const savedProductAnalysisSchema = z.object({
   id: z.uuid(), productId: z.uuid(), fingerprint: z.string().regex(/^[a-f0-9]{64}$/), createdAt: z.iso.datetime(),
   result: productAnalysisOutputSchema, evidence: z.array(productEvidenceSchema).min(1).max(64),
 });
+export const productAnalysisProgressSchema = z.object({
+  stage: z.enum(["preparing", "analysing", "validating", "saving"]),
+  startedAt: z.iso.datetime(), updatedAt: z.iso.datetime(),
+  evidenceCount: z.number().int().min(0).max(64).nullable(),
+}).strict();
+export type ProductAnalysisProgress = z.infer<typeof productAnalysisProgressSchema>;
 export const productIntelligenceResponseSchema = z.object({
   configured: z.boolean(), analysis: savedProductAnalysisSchema.nullable(), stale: z.boolean(),
   running: z.boolean(), error: z.string().nullable(),
+  progress: productAnalysisProgressSchema.nullable().optional(),
 });
 export const productAnalysisConsentSchema = z.object({ consent: z.literal(true) }).strict();
 export const productAnalysisSummariesSchema = z.object({

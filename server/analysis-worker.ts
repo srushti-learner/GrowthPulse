@@ -74,7 +74,11 @@ export function createAnalysisWorker({ store, agent, scanner = createWebsiteScan
         signal.throwIfAborted();
         if (value.type === "phase") { flush(); update(value); }
         else { pending = value; if (Date.now() - lastPreview >= 250) flush(); }
-      }, { research: job.research, journal: store.researchJournal(job.id, job.lease) });
+      }, { research: job.research, journal: store.researchJournal(job.id, job.lease),
+        customerEvidence: job.research ? job.reuseCustomerEvidence
+          ? await store.customerResearchEvidence(job.ownerId, job.businessId)
+          : { findings: [], limitations: ["Reusing saved Customer voice evidence was not authorized for this attempt. No review excerpts were read or sent. Confirm the updated analysis disclosure before a new attempt."] }
+          : undefined });
       await drain();
       signal.throwIfAborted();
       if (!savedScan) throw new AgentError(502, "No website evidence was captured. Your profile is unchanged.");

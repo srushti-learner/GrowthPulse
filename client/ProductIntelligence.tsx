@@ -13,6 +13,18 @@ import { Button } from "./components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
 import { BlurFade } from "./components/ui/blur-fade";
 import { EvidenceExcerpt, SourceReference } from "./SourceDetails";
+import { WorkflowActivity } from "./WorkflowActivity";
+
+const productStages = [
+  { key: "preparing", label: "Prepare evidence" }, { key: "analysing", label: "Analyse and draft" },
+  { key: "validating", label: "Check structure and citations" }, { key: "saving", label: "Save analysis" },
+] as const;
+const productMessages = {
+  preparing: "Preparing this product's saved catalogue excerpts.",
+  analysing: "Analysing saved evidence and drafting recommendations in one AI request.",
+  validating: "Checking response structure, evidence IDs and assessment limits.",
+  saving: "Saving the accepted analysis for you to review.",
+};
 
 const areas = [
   { key: "analysis", label: "Product analysis" }, { key: "optimizer", label: "Listing optimizer" },
@@ -41,6 +53,7 @@ export function ProductIntelligence({ businessId, product, products, thumbnail, 
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [startingAnalysis, setStartingAnalysis] = useState(false);
   const [approved, setApproved] = useState(false);
   const [reload, setReload] = useState(0);
   const [rewrite, setRewrite] = useState({ title: "", description: "", seoTitle: "", metaDescription: "" });
@@ -52,10 +65,11 @@ export function ProductIntelligence({ businessId, product, products, thumbnail, 
   const focusArea = useRef(false);
   const mutationVersion = useRef(0);
   const endpoint = `/api/businesses/${businessId}/products/${product.id}`;
+  useEffect(() => { setData(null); }, [endpoint, product]);
   useEffect(() => {
     const active = new AbortController(); controller.current = active;
     let timer: ReturnType<typeof setTimeout>;
-    setData(null); setLoading(true); setError(""); setBusy(false); setApproved(false);
+    setLoading(true); setError(""); setBusy(false); setStartingAnalysis(false); setApproved(false);
     async function load() {
       const version = mutationVersion.current;
       try {
@@ -93,11 +107,14 @@ export function ProductIntelligence({ businessId, product, products, thumbnail, 
     } finally { if (!signal.aborted) { mutationVersion.current++; setBusy(false); } }
   }
   async function analyse() {
+    const active = controller.current;
+    let poll = false;
     await mutate(async (signal) => {
+      setStartingAnalysis(true);
       let snapshot: ProductIntelligenceResponse;
       try {
         snapshot = await api(`${endpoint}/intelligence`, productIntelligenceResponseSchema,
-          { method: "POST", body: JSON.stringify({ consent: true }), signal }, 60_000);
+          { method: "POST", headers: { Prefer: "respond-async" }, body: JSON.stringify({ consent: true }), signal }, 60_000);
       } catch (error) {
         if ((error instanceof Error || error instanceof DOMException) && error.name === "TimeoutError") {
           throw new Error("The browser stopped waiting for product analysis. The server may still finish and save it. Reload saved status before starting another analysis.");
@@ -107,9 +124,14 @@ export function ProductIntelligence({ businessId, product, products, thumbnail, 
       if (signal.aborted) return;
       mutationVersion.current++;
       setData(snapshot);
+      poll = snapshot.running;
       if (snapshot.analysis && !snapshot.stale) callbacks.current.onAnalysed(snapshot.analysis);
-      setNotice("Product analysis saved. Suggestions are drafts; your catalogue and website have not changed.");
+      setNotice(snapshot.running ? "" : "Product analysis saved. Suggestions are drafts; your catalogue and website have not changed.");
     });
+    if (active && !active.signal.aborted) {
+      setStartingAnalysis(false);
+      if (poll) setReload((value) => value + 1);
+    }
   }
   async function saveListing() {
     if (!analysis || !approved || data?.stale) return;
@@ -147,11 +169,21 @@ export function ProductIntelligence({ businessId, product, products, thumbnail, 
     {notice && <p className="catalogue-notice" role="status">{notice}</p>}
     {data?.error && !error && <p role="alert" className="form-error">{data.error}</p>}
     {data?.stale && <p className="field-note product-stale">Product evidence has changed. This is an older analysis; review a fresh analysis before applying its drafts or planning its suggestions.</p>}
-    {(area !== "performance" && (!analysis || data?.stale)) && <Card className="product-analysis-callout"><CardHeader>
+    {(startingAnalysis || data?.running) && <WorkflowActivity title="Product analysis"
+      message={data?.progress ? productMessages[data.progress.stage] : startingAnalysis
+        ? "Requesting product analysis. Waiting for the server to confirm saved progress."
+        : "Product analysis is running. Reconnecting to its saved progress."}
+      startedAt={data?.progress?.startedAt} updatedAt={data?.progress?.updatedAt}
+      stages={productStages.map((stage, index) => {
+        const current = productStages.findIndex((item) => item.key === data?.progress?.stage);
+        return { label: stage.label, state: index < current ? "completed" : index === current ? "running" : "pending" };
+      })}
+      counts={data?.progress?.evidenceCount != null ? [{ label: "Saved evidence excerpts", value: data.progress.evidenceCount }] : []}
+      guidance="Once the server accepts the request, you can leave this workspace and reopen its saved status. Reopening does not start another AI call. Explore the information checklist or other product tabs while it works." />}
+    {!data?.running && (area !== "performance" && (!analysis || data?.stale)) && <Card className="product-analysis-callout"><CardHeader>
       <CardTitle><Sparkles />Understand what to improve</CardTitle><CardDescription>A product-specific diagnosis, factual listing draft and prioritized recommendations from saved catalogue evidence. No new website scan.</CardDescription>
     </CardHeader><CardContent>
       {loading ? <p role="status">Loading saved product intelligence...</p>
-        : data?.running ? <p role="status">Product analysis is running. You can leave this workspace and reopen its saved status without starting another request.</p>
         : data && !data.configured ? <p>Product AI analysis is not configured on this server. Catalogue checks and existing saved results remain available.</p>
         : data && <><p className="field-note">Starting analysis sends this product&apos;s saved catalogue excerpts to Anthropic. AI charges may apply. Nothing will be published.</p>
           <Button disabled={busy} onClick={() => void analyse()}><Sparkles />{busy ? "Analysing product..." : data.error ? "Retry product analysis" : "Analyse this product"}</Button></>}

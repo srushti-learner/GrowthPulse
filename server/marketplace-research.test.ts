@@ -78,6 +78,33 @@ describe("bounded marketplace research in the existing Market Intelligence agent
     return request(app).patch(`${user.endpoint}/match`).set("Cookie", user.cookie).set("Origin", origin)
       .send({ reportId: saved.id, listingId: saved.listings[index].id, relation });
   }
+  it("uses the latest saved customer report, excludes active refreshes and stale products, and keeps failed attempts separate", async () => {
+    const user = await owner(), report = importMarketplaceCsv(user.product, csv);
+    report.listings[0].relation = "my_listing";
+    report.analysedAt = new Date().toISOString();
+    report.themes = [{ title: "Possible dispensing issue", scope: "own_product", sentiment: "negative",
+      reviewIds: report.listings[0].reviews.map((review) => review.id), experiment: "Check seals before a small packaging test." }];
+    async function save(value: MarketplaceReport) {
+      const pending = await store.beginMarketplace(user.user.id, user.business.id, user.product.id, value.fingerprint, randomUUID(), "fixture");
+      await store.finishMarketplace(user.user.id, user.business.id, user.product.id, pending.id, value);
+    }
+    const evidence = () => store.customerResearchEvidence(user.user.id, user.business.id);
+    await save(report);
+    expect((await evidence()).findings).toHaveLength(1);
+    const pending = await store.beginMarketplace(user.user.id, user.business.id, user.product.id, report.fingerprint, randomUUID(), "refresh");
+    expect(await evidence()).toMatchObject({ findings: [], limitations: expect.arrayContaining([expect.stringContaining("1 being refreshed")]) });
+    await store.failMarketplace(user.user.id, user.business.id, user.product.id, pending.id, "Fixture collection failed.");
+    expect((await evidence()).findings).toHaveLength(1);
+    await save({ ...report, id: randomUUID(), analysedAt: null, themes: [] });
+    expect(await evidence()).toMatchObject({ findings: [], limitations: expect.arrayContaining([expect.stringContaining("1 unanalysed")]) });
+    await save(report);
+    await store.saveProduct(user.user.id, user.business.id, {
+      ...emptyProduct, name: "Changed reviewed product", description: user.product.description, gtin: user.product.gtin,
+    }, user.product.id);
+    expect(await evidence()).toMatchObject({ findings: [], limitations: expect.arrayContaining([expect.stringContaining("1 catalogue-stale")]) });
+    expect(complete).not.toHaveBeenCalled(); expect(searchCall).not.toHaveBeenCalled(); expect(scanner).not.toHaveBeenCalled();
+  });
+
   it("discovers both marketplaces with bounded search, reads one page per listing and never accepts snippets as evidence", async () => {
     const user = await owner(), requestKey = randomUUID();
     const pending = await post(user, "", { consent: true, requestKey }).expect(202);
@@ -145,7 +172,10 @@ describe("bounded marketplace research in the existing Market Intelligence agent
     try {
       await post(user, "", { consent: true, requestKey: randomUUID(), urls: [amazon], refresh: true }).expect(202);
       await vi.waitFor(async () => {
-        expect((await get(user)).body.progress).toEqual({ stage: "collecting", completed: 0, total: 1 });
+        expect((await get(user)).body.progress).toEqual({
+          stage: "collecting", completed: 0, total: 1,
+          startedAt: expect.any(String), updatedAt: expect.any(String),
+        });
       });
       const reopened = openStore(path);
       try {

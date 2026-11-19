@@ -120,6 +120,57 @@ describe("focused product intelligence workspace", () => {
     expect(saved).toHaveBeenCalledWith(expect.objectContaining({ name: "Owner wording" }));
     expect(container.textContent).toContain("live website are unchanged");
   });
+    it("follows accepted background stages across tabs and reopening without inventing progress or another paid call", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(timestamp));
+      let state: ProductIntelligenceResponse = { ...snapshot, analysis: null };
+      const fetch = vi.fn(async (_url: string, options?: RequestInit) => {
+        if (options?.method === "POST") state = { ...state, running: true,
+          progress: { stage: "analysing", evidenceCount: 3, startedAt: timestamp, updatedAt: timestamp } };
+        return json(state, options?.method ? 202 : 200);
+      });
+      vi.stubGlobal("fetch", fetch);
+      await render();
+      await click("Analyse this product");
+      expect(fetch).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ method: "POST", headers: expect.objectContaining({ Prefer: "respond-async" }) }));
+      expect(container.querySelector(".workflow-activity [role=status]")?.textContent).toContain("one AI request");
+      expect(container.querySelector(".product-analysis-callout")).toBeNull();
+      expect(container.querySelectorAll(".analysis-stages [data-status=completed]")).toHaveLength(1);
+      await click("Listing optimizer");
+      expect(container.querySelector(".workflow-activity")).not.toBeNull();
+      await act(async () => vi.advanceTimersByTimeAsync(46_000));
+      expect(container.querySelector(".analysis-quiet")?.textContent).toContain("No new recorded update");
+      expect(container.querySelectorAll(".analysis-stages [data-status=completed]")).toHaveLength(1);
+      expect(container.querySelector(".analysis-counts dd")?.textContent).toBe("3");
+      expect(fetch.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(1);
+      await act(async () => root.unmount()); root = createRoot(container);
+      await render();
+      expect(container.querySelector(".workflow-activity [role=status]")?.textContent).toContain("one AI request");
+      state = { ...state, progress: { ...state.progress!, stage: "validating", updatedAt: new Date().toISOString() } };
+      await act(async () => vi.advanceTimersByTimeAsync(1500));
+      expect(container.querySelector(".workflow-activity [role=status]")?.textContent).toContain("Checking response structure");
+      state = snapshot;
+      await act(async () => vi.advanceTimersByTimeAsync(1500));
+      expect(container.querySelector(".workflow-activity")).toBeNull();
+      expect(container.textContent).toContain(analysis.result.summary.text);
+      expect(fetch.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(1);
+    });
+    it("retains a previous result and exposes a stopped background attempt without automatically retrying", async () => {
+      vi.useFakeTimers();
+      let state: ProductIntelligenceResponse = { ...snapshot, stale: true, running: true,
+        progress: { stage: "analysing", evidenceCount: 3, startedAt: timestamp, updatedAt: timestamp } };
+      const fetch = vi.fn(async () => json(state)); vi.stubGlobal("fetch", fetch);
+      await render();
+      expect(container.textContent).toContain(analysis.result.summary.text);
+      expect(container.querySelector(".workflow-activity")).not.toBeNull();
+      state = { ...state, running: false, progress: null, error: "Provider stopped. No automatic retry was made." };
+      await act(async () => vi.advanceTimersByTimeAsync(1500));
+      expect(container.querySelector(".workflow-activity")).toBeNull();
+      expect(container.querySelector("[role=alert]")?.textContent).toContain("No automatic retry");
+      expect(container.textContent).toContain(analysis.result.summary.text);
+      await act(async () => vi.advanceTimersByTimeAsync(6000));
+      expect(fetch).toHaveBeenCalledTimes(2);
+    });
     it("waits beyond the ordinary request timeout for product analysis", async () => {
       vi.useFakeTimers();
       vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) => {

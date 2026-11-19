@@ -9,7 +9,7 @@ export const briefingTextLimits = {
   action: 300, actionReason: 300, category: 120, description: 2000,
 } as const;
 export const briefingActionCharacterLimit = briefingTextLimits.action;
-export const businessAnalysisDisclosure = `Competitor research is included. Public research queries go to Tavily; captured public website and competing-brand evidence goes to Anthropic for AI analysis. Private account details and profile notes are not sent. Up to ${researchLimits.searches} web searches, ${researchLimits.competitors} brand-site scans and ${researchLimits.modelCalls} AI requests per attempt, for up to ${researchLimits.milliseconds / 60_000} minutes. This is sampled research, not exhaustive market coverage. Tavily credits and separate AI charges may apply.`;
+export const businessAnalysisDisclosure = `Competitor research is included. Public research queries go to Tavily; captured public website and competing-brand evidence goes to Anthropic for AI analysis. Eligible saved Customer voice themes and original review excerpts, including owner-authorized exports, can also go to Anthropic for opportunity and growth recommendations without another review-collection or customer-analysis call. Private account details and profile notes are not sent. Up to ${researchLimits.searches} web searches, ${researchLimits.competitors} brand-site scans and ${researchLimits.modelCalls} AI requests per attempt, for up to ${researchLimits.milliseconds / 60_000} minutes. This is sampled research, not exhaustive market coverage. Tavily credits and separate AI charges may apply.`;
 export const agentEvidenceLimits = { bytes: 256 * 1024, products: 100 } as const;
 export const evidenceCoverageSchema = z.object({
   pagesProvided: z.number().int().min(0).max(scanLimits.pages),
@@ -24,8 +24,9 @@ export const understandingInputSchema = z.object({
   scanId: z.uuid().optional(),
   research: z.boolean().optional(),
   researchVersion: z.literal(2).optional(),
+  reuseCustomerEvidence: z.boolean().optional(),
   resumeJobId: z.uuid().optional(),
-}).strict();
+}).strict().refine((value) => !value.reuseCustomerEvidence || value.research === true, "Saved customer evidence requires the disclosed wider research permission.");
 const sourcesSchema = z.array(z.object({
   url: z.url().max(2048),
   quote: z.string().trim().min(10).max(500),

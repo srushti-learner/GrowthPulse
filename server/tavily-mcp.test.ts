@@ -1,11 +1,22 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createTavilySearch } from "./tavily-mcp.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createTavilySearch as buildSearch } from "./tavily-mcp.js";
+
+const searches: ReturnType<typeof buildSearch>[] = [];
+function createTavilySearch(...args: Parameters<typeof buildSearch>) {
+  const search = buildSearch(...args);
+  searches.push(search);
+  return search;
+}
+afterEach(async () => {
+  await Promise.all(searches.splice(0).map((search) => search.close()));
+  vi.useRealTimers();
+});
 
 const mcp = vi.hoisted(() => ({
-  connect: vi.fn(), listTools: vi.fn(), callTool: vi.fn(), close: vi.fn(), transport: vi.fn(),
+  connect: vi.fn(), listTools: vi.fn(), callTool: vi.fn(), close: vi.fn(), transport: vi.fn(), setNotificationHandler: vi.fn(),
 }));
 vi.mock("@modelcontextprotocol/sdk/client/index.js", () => ({
-  Client: class { connect = mcp.connect; listTools = mcp.listTools; callTool = mcp.callTool; close = mcp.close; },
+  Client: class { connect = mcp.connect; listTools = mcp.listTools; callTool = mcp.callTool; close = mcp.close; setNotificationHandler = mcp.setNotificationHandler; },
 }));
 vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
   StreamableHTTPClientTransport: class { constructor(...args: unknown[]) { mcp.transport(...args); } },
@@ -23,6 +34,7 @@ const inputSchema = { type: "object", properties: {
 } };
 beforeEach(() => {
   vi.resetAllMocks();
+  mcp.close.mockResolvedValue(undefined);
   mcp.listTools.mockResolvedValue({ tools: [{ name: "tavily_search", inputSchema }, { name: "tavily_crawl" }] });
   mcp.callTool.mockResolvedValue({ content: [{ type: "text", text: JSON.stringify(results) }] });
 });
@@ -53,7 +65,84 @@ describe("bounded hosted Tavily MCP search", () => {
       include_raw_content: false, include_images: false,
     } }, undefined, expect.objectContaining({ timeout: 15_000, signal: expect.any(AbortSignal) }));
     expect(mcp.callTool).toHaveBeenCalledOnce();
+    expect(mcp.close).not.toHaveBeenCalled();
+    await search.close();
     expect(mcp.close).toHaveBeenCalledOnce();
+  });
+
+  it("reuses an exclusively leased connection and approved tool contract without caching search results", async () => {
+    const search = createTavilySearch({ apiKey: "fixture" });
+    for (const query of ["first category", "second category", "third category"]) {
+      await search.search(query, new AbortController().signal);
+    }
+    expect(mcp.connect).toHaveBeenCalledOnce();
+    expect(mcp.listTools).toHaveBeenCalledOnce();
+    expect(mcp.callTool.mock.calls.map(([input]) => input.arguments.query)).toEqual(["first category", "second category", "third category"]);
+    expect(mcp.close).not.toHaveBeenCalled();
+    await search.close();
+    expect(mcp.close).toHaveBeenCalledOnce();
+    await expect(search.search("after shutdown", new AbortController().signal)).rejects.toMatchObject({ code: "search_closed" });
+    expect(mcp.callTool).toHaveBeenCalledTimes(3);
+  });
+
+  it("isolates concurrent searches so one cancellation cannot close the other's leased connection", async () => {
+    const search = createTavilySearch({ apiKey: "fixture" }), cancelled = new AbortController();
+    let finish!: () => void;
+    mcp.callTool.mockImplementation(async (input, _schema, { signal }: { signal: AbortSignal }) => {
+      if (input.arguments.query === "cancel this") {
+        await new Promise<void>((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+      } else await new Promise<void>((resolve) => { finish = resolve; });
+      return { structuredContent: results, content: [] };
+    });
+    const first = search.search("cancel this", cancelled.signal);
+    const failure = expect(first).rejects.toThrow("fixture cancelled");
+    const second = search.search("keep this", new AbortController().signal);
+    await vi.waitFor(() => expect(mcp.callTool).toHaveBeenCalledTimes(2));
+    cancelled.abort(new Error("fixture cancelled"));
+    await failure;
+    expect(mcp.connect).toHaveBeenCalledTimes(2);
+    expect(mcp.close).toHaveBeenCalledOnce();
+    finish();
+    await expect(second).resolves.toHaveLength(1);
+    expect(mcp.close).toHaveBeenCalledOnce();
+    await search.close();
+    expect(mcp.close).toHaveBeenCalledTimes(2);
+  });
+
+  it("discards a failed connection without replaying the paid call and reconnects only for another explicit search", async () => {
+    const search = createTavilySearch({ apiKey: "fixture" });
+    mcp.callTool.mockRejectedValueOnce(new Error("transport failure with private details"));
+    await expect(search.search("first", new AbortController().signal)).rejects.toMatchObject({ code: "search_failed" });
+    expect(mcp.callTool).toHaveBeenCalledOnce();
+    expect(mcp.close).toHaveBeenCalledOnce();
+    await search.search("second", new AbortController().signal);
+    expect(mcp.connect).toHaveBeenCalledTimes(2);
+    expect(mcp.listTools).toHaveBeenCalledTimes(2);
+    expect(mcp.callTool).toHaveBeenCalledTimes(2);
+  });
+
+  it("closes idle clients after thirty seconds without starting more provider work", async () => {
+    vi.useFakeTimers();
+    const search = createTavilySearch({ apiKey: "fixture" });
+    await search.search("first", new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(30_001);
+    expect(mcp.close).toHaveBeenCalledOnce();
+    expect(mcp.callTool).toHaveBeenCalledOnce();
+    await search.search("second", new AbortController().signal);
+    expect(mcp.connect).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-discovers and validates the tool contract after a provider tool-list change", async () => {
+    const search = createTavilySearch({ apiKey: "fixture" });
+    await search.search("first", new AbortController().signal);
+    mcp.setNotificationHandler.mock.calls[0][1]();
+    mcp.listTools.mockResolvedValue({ tools: [{ name: "tavily_search", inputSchema: { properties: {
+      ...inputSchema.properties, search_depth: { enum: ["advanced"] },
+    } } }] });
+    await expect(search.search("second", new AbortController().signal)).rejects.toMatchObject({ code: "search_contract" });
+    expect(mcp.connect).toHaveBeenCalledTimes(2);
+    expect(mcp.listTools).toHaveBeenCalledTimes(2);
+    expect(mcp.callTool).toHaveBeenCalledOnce();
   });
 
   it("supports Tavily's published text format without treating snippets as verified source evidence", async () => {

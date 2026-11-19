@@ -57,7 +57,7 @@ describe("live understanding protocol", () => {
       expect(onJob).toHaveBeenLastCalledWith(completed);
       expect(fetch).toHaveBeenCalledTimes(3);
       expect(fetch.mock.calls[0][1]).toMatchObject({ method: "POST", headers: { Prefer: "respond-async", "Idempotency-Key": key } });
-      expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ permission: true, research: true, researchVersion: 2 });
+      expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ permission: true, research: true, researchVersion: 2, reuseCustomerEvidence: true });
       for (const [path, options] of fetch.mock.calls.slice(1)) {
         expect(path).toBe(`/api/businesses/${job.businessId}/analysis-jobs/${job.id}/events`);
         expect(options.method).toBeUndefined(); expect(options.body).toBeUndefined();

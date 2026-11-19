@@ -19,6 +19,8 @@ import { newSession } from "./auth.js";
 import { claimWorkSlot } from "./work-slots.js";
 import Database from "better-sqlite3";
 import Anthropic from "@anthropic-ai/sdk";
+import { emptyProduct } from "../shared/products.js";
+import { importMarketplaceCsv } from "./marketplace-research.js";
 
 const url = "https://shop.example.com/";
 const timestamp = "2026-11-16T12:00:00.000Z";
@@ -124,9 +126,137 @@ describe("durable specialist research orchestration", () => {
     return { id: user.id, business, cookie: `gp_session=${session.token}` };
   }
   async function enqueue(user: Awaited<ReturnType<typeof owner>>, research = true, scanId?: string, resumeJobId?: string) {
-    return await store.enqueueAnalysis(user.id, user.business.id, randomUUID(), url, scanId, research, resumeJobId);
+    return await store.enqueueAnalysis(user.id, user.business.id, randomUUID(), url, scanId, research, resumeJobId, scanId, research);
   }
   async function job(user: Awaited<ReturnType<typeof owner>>, id: string) { return (await store.getAnalysisJob(user.id, user.business.id, id))!; }
+  async function feedback(user: Awaited<ReturnType<typeof owner>>, text = "The bottle leaks during dispensing.") {
+    const product = await store.saveProduct(user.id, user.business.id, { ...emptyProduct, name: "Feedback product" });
+    const report = importMarketplaceCsv(product, `product_url,title,review
+https://www.amazon.in/dp/B000000001,Feedback product,${text}
+https://www.amazon.in/dp/B000000001,Feedback product,Packaging leaks every time I pour.
+`);
+    report.listings[0].relation = "my_listing";
+    report.analysedAt = timestamp;
+    report.themes = [{ title: "Possible dispensing issue", scope: "own_product", sentiment: "negative",
+      reviewIds: report.listings[0].reviews.map((review) => review.id), experiment: "Check seals before a small packaging test." }];
+    const pending = await store.beginMarketplace(user.id, user.business.id, product.id, report.fingerprint, randomUUID(), "fixture");
+    await store.finishMarketplace(user.id, user.business.id, product.id, pending.id, report);
+    return { product, report };
+  }
+
+  it("connects only this owner's eligible customer evidence to opportunities and growth, invalidating just the changed synthesis", async () => {
+    const user = await owner(), other = await owner();
+    await feedback(other, "Unrelated owner's private customer feedback.");
+    const first = await enqueue(user);
+    await worker.tick();
+    const previous = await job(user, first.id);
+    expect(previous.research!.steps.find((step) => step.key === "customer")!.findings).toEqual([]);
+    expect(JSON.stringify(complete.mock.calls)).not.toContain("Unrelated owner's");
+    const saved = await feedback(user);
+    await expect(store.customerResearchEvidence(other.id, user.business.id)).rejects.toMatchObject({ status: 404 });
+    const respond = complete.getMockImplementation()!;
+    complete.mockImplementation(async (...args) => {
+      const input = args[0];
+      if (String(input.system).includes("Propose small") || String(input.system).includes("Prioritise")) {
+        const context = JSON.parse(String(input.messages[0].content));
+        const source = context.sources.find((source: { customerReview?: unknown }) => source.customerReview)!;
+        expect(context.acceptedFindings.some((finding: { title: string }) => finding.title.includes("Possible dispensing issue"))).toBe(true);
+        expect(source.customerReview).toMatchObject({ productId: saved.product.id, method: "owner_export", relation: "my_listing" });
+        return tool("record_findings", { findings: [{ kind: "suggestion", title: "Check the reported dispensing issue",
+          detail: "Inspect the seal before testing a packaging change; these are unverified owner-exported review excerpts.",
+          sourceIds: [source.id] }], limitations: ["A dated, selected sample is not representative customer sentiment."] });
+      }
+      return respond(...args);
+    });
+    complete.mockClear(); scanner.mockClear(); searchCall.mockClear();
+    const retry = await enqueue(user, true, previous.scanId!, first.id);
+    await worker.tick();
+    const result = await job(user, retry.id), report = result.research!;
+    expect(result.status).toBe("completed");
+    expect(report.usage).toEqual({ modelCalls: 2, searches: 0, competitorScans: 0 });
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(searchCall).not.toHaveBeenCalled(); expect(scanner).not.toHaveBeenCalled();
+    expect(JSON.stringify(complete.mock.calls)).not.toContain("Unrelated owner's");
+    expect(report.steps.find((step) => step.key === "store")!.reused).toBe(true);
+    expect(report.steps.find((step) => step.key === "customer")).toMatchObject({
+      status: "limited", reused: false, findings: [{ kind: "hypothesis", sources: expect.arrayContaining([expect.objectContaining({ quote: "The bottle leaks during dispensing." })]) }],
+    });
+    expect(report.steps.find((step) => step.key === "growth")!.findings[0].sources[0].customerReview?.method).toBe("owner_export");
+  });
+
+  it("marks same-job cache hits as reused while preserving artifacts and making no additional provider calls", async () => {
+    const user = await owner(), first = await enqueue(user), claim = (await store.claimAnalysis())!;
+    const journal = store.researchJournal(first.id, claim.lease);
+    const agent = createResearchAgent({ complete, scanner, search: createTavilySearch({ call: searchCall }) });
+    const run = () => agent.run(url, async () => scanAt(), new AbortController().signal, undefined, { research: true, journal });
+    await run();
+    const artifact = (await journal.read("store"))!.artifact;
+    expect((await journal.read("store"))!.step.reused).toBe(false);
+    complete.mockClear(); scanner.mockClear(); searchCall.mockClear();
+    await run();
+    expect((await journal.read("store"))!.step.reused).toBe(true);
+    expect((await journal.read("store"))!.artifact).toEqual(artifact);
+    expect(complete).not.toHaveBeenCalled(); expect(scanner).not.toHaveBeenCalled(); expect(searchCall).not.toHaveBeenCalled();
+  });
+
+  it("rejects review-based observations while retaining a valid suggested test without an extra model call", async () => {
+    const user = await owner();
+    await feedback(user);
+    const respond = complete.getMockImplementation()!;
+    complete.mockImplementation(async (...args) => {
+      const input = args[0];
+      if (String(input.system).includes("Prioritise")) {
+        const context = JSON.parse(String(input.messages[0].content));
+        const source = context.sources.find((source: { customerReview?: unknown }) => source.customerReview)!;
+        return tool("record_findings", { findings: [
+          { kind: "observation", title: "Verified dispensing defect", detail: source.quote, sourceIds: [source.id] },
+          { kind: "suggestion", title: "Check the reported seal issue", detail: "Inspect the seal before a small packaging test.", sourceIds: [source.id] },
+        ], limitations: [] });
+      }
+      return respond(...args);
+    });
+    const first = await enqueue(user);
+    await worker.tick();
+    const report = (await job(user, first.id)).research!, growth = report.steps.find((step) => step.key === "growth")!;
+    expect(growth).toMatchObject({ status: "limited", diagnostic: { code: "finding_validation", paths: ["findings.0.customerReviewClaim"] } });
+    expect(growth.findings).toHaveLength(1);
+    expect(growth.findings[0].kind).toBe("suggestion");
+    expect(report.usage.modelCalls).toBe(9);
+  });
+
+  it("does not read or forward saved reviews for a job admitted without customer-evidence permission", async () => {
+    const user = await owner();
+    await feedback(user);
+    const snapshot = vi.spyOn(store, "customerResearchEvidence");
+    const first = await store.enqueueAnalysis(user.id, user.business.id, randomUUID(), url, undefined, true);
+    await worker.tick();
+    const result = await job(user, first.id);
+    expect(result).toMatchObject({ status: "completed", reuseCustomerEvidence: false });
+    expect(snapshot).not.toHaveBeenCalled();
+    expect(JSON.stringify(complete.mock.calls)).not.toContain("The bottle leaks during dispensing.");
+    expect(result.research!.steps.find((step) => step.key === "customer")).toMatchObject({
+      status: "limited", findings: [], limitations: [expect.stringContaining("not authorized for this attempt")],
+    });
+  });
+
+  it("invalidates model-dependent artifacts after a model change without re-fetching saved sites or repeating identical searches", async () => {
+    const user = await owner(), first = await enqueue(user);
+    await worker.tick();
+    const previous = await job(user, first.id);
+    await worker.stop();
+    worker = createAnalysisWorker({ store, scanner, agent: createResearchAgent({
+      complete, scanner, model: "fixture-new-model", search: createTavilySearch({ call: searchCall }),
+    }) });
+    complete.mockClear(); scanner.mockClear(); searchCall.mockClear();
+    const retry = await enqueue(user, true, previous.scanId!, first.id);
+    await worker.tick();
+    const report = (await job(user, retry.id)).research!;
+    expect(report.steps.find((step) => step.key === "store")!.reused).toBe(false);
+    expect(report.steps.find((step) => step.key === "competitor-site-0")!.reused).toBe(true);
+    expect(complete.mock.calls.length).toBeGreaterThan(0);
+    expect(complete.mock.calls.every(([input]) => input.model === "fixture-new-model")).toBe(true);
+    expect(scanner).not.toHaveBeenCalled(); expect(searchCall).not.toHaveBeenCalled();
+  });
 
   it("runs the graph, studies competitor products, checkpoints and saves each role without applying owner changes", async () => {
     const user = await owner(), first = await enqueue(user);

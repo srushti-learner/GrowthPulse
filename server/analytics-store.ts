@@ -4,6 +4,7 @@ import { analyticsDataSchema, dailySalesSchema, manualSalesSchema, salesImportSc
 import { trafficImportSchema, trafficSnapshotSchema, trafficSourceSchema, type TrafficSnapshot } from "../shared/traffic.js";
 import { scenarioDays } from "../shared/analytics-math.js";
 import { SalesError } from "./sales-imports.js";
+import { recordSalesObservation } from "./weekly-review-store.js";
 
 type ImportRecord = { id: string; filename: string; createdAt: string; committed: number; json: string };
 export function analyticsStore(database: SqlDatabase) {
@@ -72,9 +73,12 @@ export function analyticsStore(database: SqlDatabase) {
         const manual = await database.prepare<[string], { date: string; currency: string }>("SELECT date,currency FROM sales_manual WHERE business_id=?").all(businessId);
         if (manual.some((row) => row.currency !== draft.snapshot.currency || draft.snapshot.days.some((day) => day.date === row.date))) throw new SalesError(409, "This import overlaps owner-entered dates or uses a different currency. Use a separate business workspace.");
         if (current.traffic) checkTrafficAlignment(draft.snapshot.days, current.traffic.snapshot);
+        await recordSalesObservation(database, businessId, current);
         await database.prepare(`INSERT INTO sales_baselines (business_id,import_id) VALUES (?,?) ${database.dialect === "mysql" ? "ON DUPLICATE KEY UPDATE import_id=VALUES(import_id)" : "ON CONFLICT(business_id) DO UPDATE SET import_id=excluded.import_id"}`).run(businessId, importId);
         await database.prepare("UPDATE sales_imports SET committed=1 WHERE id=?").run(importId);
-        return data(ownerId, businessId);
+        const saved = await data(ownerId, businessId);
+        await recordSalesObservation(database, businessId, saved);
+        return saved;
       })();
     },
     async saveManualSales(ownerId: string, businessId: string, input: unknown, expectedVersion: string) {
@@ -86,8 +90,11 @@ export function analyticsStore(database: SqlDatabase) {
         if (current.currency && current.currency !== entry.currency) throw new SalesError(409, "Keep one currency per business. Currency conversion is not supported.");
         if (current.days.some((day) => day.date === entry.day.date)) throw new SalesError(409, "That date already has data. Existing history is not overwritten; choose an unrecorded date or use a scenario.");
         if (current.traffic?.snapshot.days.some((day) => day.date === entry.day.date)) checkTrafficAlignment([entry.day], current.traffic.snapshot);
+        await recordSalesObservation(database, businessId, current);
         await database.prepare("INSERT INTO sales_manual (business_id,date,currency,day_json,evidence,estimated,created_at) VALUES (?,?,?,?,?,?,?)").run(businessId, entry.day.date, entry.currency, JSON.stringify(entry.day), entry.evidence, Number(entry.estimated), new Date().toISOString());
-        return data(ownerId, businessId);
+        const saved = await data(ownerId, businessId);
+        await recordSalesObservation(database, businessId, saved);
+        return saved;
       })();
     },
     async saveSalesScenario(ownerId: string, businessId: string, input: unknown, expectedVersion: string) {

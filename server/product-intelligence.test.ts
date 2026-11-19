@@ -104,6 +104,43 @@ describe("product-specific saved intelligence", () => {
     expect(complete).toHaveBeenCalledOnce();
   });
 
+  it("admits async analysis once and persists real stages for a reopening client", async () => {
+    const user = await owner(), fingerprint = productFingerprint(user.product);
+    const implementation = complete.getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    complete.mockImplementation(async (...parameters) => { await gate; return implementation(...parameters); });
+    const updates = vi.spyOn(store, "updateProductAnalysisProgress");
+    try {
+      await analyse(user).set("Prefer", "respond-async").expect(202);
+      await vi.waitFor(async () => expect((await get(user)).body).toMatchObject({
+        running: true, progress: { stage: "analysing", evidenceCount: productEvidence(user.product).length },
+      }));
+      await analyse(user).set("Prefer", "respond-async").expect(202);
+      const reopened = openStore(path);
+      try {
+        expect(await reopened.productAnalysisState(user.id, user.businessId, user.product.id, fingerprint)).toMatchObject({
+          running: true, progress: { stage: "analysing", startedAt: expect.any(String), updatedAt: expect.any(String) },
+        });
+      } finally { await reopened.close(); }
+      expect(complete).toHaveBeenCalledOnce();
+    } finally { release(); }
+    await vi.waitFor(async () => expect((await get(user)).body).toMatchObject({ running: false, progress: null, analysis: { productId: user.product.id } }));
+    expect(updates.mock.calls.map((call) => call[5].stage)).toEqual(["preparing", "analysing", "validating", "saving"]);
+    expect(complete).toHaveBeenCalledOnce();
+  });
+
+  it("exposes async provider failure without inventing completion or retrying", async () => {
+    const user = await owner();
+    complete.mockRejectedValue(new AgentError(502, "Provider could not complete this request. No automatic retry was made."));
+    await analyse(user).set("Prefer", "respond-async").expect(202);
+    await vi.waitFor(async () => expect((await get(user)).body).toMatchObject({
+      running: false, progress: null, analysis: null, error: expect.stringContaining("No automatic retry"),
+    }));
+    await get(user).expect(200);
+    expect(complete).toHaveBeenCalledOnce();
+  });
+
   it("checks account ownership, business scope, origin and explicit paid consent", async () => {
     const alice = await owner(), bob = await owner();
     await request(app).get(`${alice.endpoint}/intelligence`).expect(401);
@@ -175,11 +212,14 @@ describe("product-specific saved intelligence", () => {
     vi.spyOn(Date, "now").mockReturnValue(firstLease + 1);
     expect(await store.productAnalysisState(user.id, user.businessId, user.product.id, fingerprint)).toMatchObject({ running: false, error: expect.stringContaining("interrupted") });
     const nextLease = await store.beginProductAnalysis(user.id, user.businessId, user.product.id, fingerprint);
+    const progress = { stage: "analysing" as const, startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), evidenceCount: 1 };
+    await expect(store.updateProductAnalysisProgress(user.id, user.businessId, user.product.id, fingerprint, firstLease, progress)).rejects.toThrow("expired");
+    await store.updateProductAnalysisProgress(user.id, user.businessId, user.product.id, fingerprint, nextLease, progress);
     await store.failProductAnalysis(user.id, user.businessId, user.product.id, fingerprint, "Late old failure", firstLease);
     const evidence = productEvidence(user.product);
     const analysis = { id: randomUUID(), productId: user.product.id, fingerprint, createdAt: new Date().toISOString(), evidence, result: output(evidence[0].id) };
     await expect(store.finishProductAnalysis(user.id, user.businessId, analysis, firstLease)).rejects.toThrow("lease expired");
-    expect(await store.productAnalysisState(user.id, user.businessId, user.product.id, fingerprint)).toMatchObject({ running: true, analysis: null, error: null });
+    expect(await store.productAnalysisState(user.id, user.businessId, user.product.id, fingerprint)).toMatchObject({ running: true, analysis: null, error: null, progress });
     await store.finishProductAnalysis(user.id, user.businessId, analysis, nextLease);
     expect((await store.productAnalysisState(user.id, user.businessId, user.product.id, fingerprint)).analysis?.id).toBe(analysis.id);
   });

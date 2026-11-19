@@ -1,0 +1,27 @@
+.weekly-growth-review { min-width: 0; margin-bottom: 24px; }
+.weekly-growth-review h2 { font-size: 24px; line-height: 1.4; }
+.weekly-growth-review h3 { font-size: 15px; line-height: 1.5; margin-bottom: 8px; }
+.weekly-growth-review p { font-size: 13px; line-height: 1.8; margin-block: 10px; overflow-wrap: anywhere; }
+.weekly-growth-review [data-slot="card-description"] { font-size: 10px; letter-spacing: 1px; }
+.weekly-review-freshness { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.weekly-review-metrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-block: 20px; }
+.weekly-review-metrics > div { min-width: 0; padding: 16px; border: 1px solid var(--border); border-radius: 10px; }
+.weekly-review-metrics > div > strong { display: block; font-size: 24px; overflow-wrap: anywhere; }
+.weekly-review-metrics p { color: var(--muted-foreground); }
+.weekly-review-attention { display: block; color: var(--foreground); font-weight: 600; }
+.weekly-review-gap { padding: 14px; background: var(--accent); border-radius: 8px; }
+.weekly-review-details, .weekly-review-experiment { margin-top: 18px; border: 1px solid var(--border); padding: 16px; border-radius: 10px; }
+.weekly-growth-review summary { font-size: 13px; cursor: pointer; overflow-wrap: anywhere; }
+.weekly-review-actions { margin-top: 24px; }
+.weekly-growth-review fieldset { display: grid; gap: 14px; margin-top: 14px; min-width: 0; }
+.weekly-growth-review legend { font-size: 14px; margin-bottom: 12px; }
+.weekly-growth-review label { display: grid; gap: 6px; min-width: 0; font-size: 12px; }
+.weekly-growth-review select, .weekly-growth-review input, .weekly-growth-review textarea { width: 100%; min-width: 0; max-width: 100%; background: var(--card); color: var(--foreground); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font: inherit; }
+.weekly-growth-review textarea { min-height: 90px; }
+.weekly-growth-review [data-slot="button"] { max-width: 100%; white-space: normal; height: auto; min-height: 36px; }
+.weekly-growth-review [data-slot="button"][data-variant="default"] { color: var(--primary-foreground); }
+.weekly-review-details article + article { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 16px; }
+@media (max-width: 700px) {
+  .weekly-review-metrics { grid-template-columns: 1fr; }
+  .weekly-growth-review h2 { font-size: 21px; }
+}

@@ -111,7 +111,7 @@ export async function streamUnderstanding(path: string, signal: AbortSignal, onU
     const response = await apiResponse(path, {
       method: "POST",
       headers: { Accept: "application/x-ndjson", Prefer: "respond-async", "Idempotency-Key": requestKey },
-      body: JSON.stringify({ permission: true, research: true, researchVersion: researchLimits.version, ...(scanId ? { scanId } : {}),
+      body: JSON.stringify({ permission: true, research: true, researchVersion: researchLimits.version, reuseCustomerEvidence: true, ...(scanId ? { scanId } : {}),
         ...(options?.resumeJobId ? { resumeJobId: options.resumeJobId } : {}) }),
       signal: combined,
     }, understandingTimeoutMs + 5000);

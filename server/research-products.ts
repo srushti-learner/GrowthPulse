@@ -78,6 +78,11 @@ export function compareResearchProducts(merchant: ResearchProduct[], competitors
   return {
     findings,
     limitations: [
+      findings.length
+        ? `Found ${findings.length} matching published GTIN record pair(s) in this sample. Published offers may still be incomplete; like-for-like price comparability is not established.`
+        : !merchant.length || !competitors.length
+          ? `Pricing coverage is unavailable: captured structured products include ${merchant.length} merchant and ${competitors.length} verified-competitor record(s).`
+          : `No quote-supported exact GTIN pair was found among ${merchant.length} merchant and ${competitors.length} verified-competitor product record(s). Similar products may still compete.`,
       "Cross-store SKUs and similar names do not establish an exact match; only matching valid GTINs are identified here.",
       "GTINs and offer values must appear in retained product quotes. Fields outside those excerpts are not presented as cited pricing evidence.",
       "No price delta or unit-price advantage is calculated: market, quantities, tax, shipping and promotion conditions have not all been established.",

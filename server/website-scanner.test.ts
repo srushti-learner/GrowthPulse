@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createWebsiteScanner } from "./website-scanner.js";
 import { ScanError, type PublicResponse } from "./public-http.js";
-import { scanLimits } from "../shared/website.js";
+import { scanLimits, scanProgressSchema, type ScanProgress } from "../shared/website.js";
 
 const origin = "https://shop.example.com";
 const html = (body: string): PublicResponse => ({
@@ -15,6 +15,23 @@ function transport(routes: Record<string, PublicResponse>, robots = "User-agent:
 }
 
 describe("bounded static website scanner with isolated fixture transport", () => {
+  it("reports actual captures and explicit blocked-page limitations without extra requests", async () => {
+    const read = transport({ "/": html('<h1>Fixture</h1><a href="/private">Private</a>') });
+    const progress: ScanProgress[] = [];
+    const result = await createWebsiteScanner(read)(origin, undefined, { onProgress: (value) => progress.push(scanProgressSchema.parse(value)) });
+    expect(progress[0]).toMatchObject({ stage: "robots", pages: 0, products: 0, failures: 0 });
+    expect(progress.some((value) => value.stage === "reading" && value.pages === 1)).toBe(true);
+    expect(progress.at(-1)).toMatchObject({ pages: result.pages.length, failures: result.failures.length, lastFailure: expect.stringContaining("robots.txt") });
+    expect(read.mock.calls.some(([url]) => url.pathname === "/private")).toBe(false);
+    const withoutProgress = transport({ "/": html('<h1>Fixture</h1><a href="/private">Private</a>') });
+    await createWebsiteScanner(withoutProgress)(origin);
+    expect(read.mock.calls.map(([url]) => url.href)).toEqual(withoutProgress.mock.calls.map(([url]) => url.href));
+  });
+  it("does not mistake an activity observer failure for a blocked website page", async () => {
+    await expect(createWebsiteScanner(transport({ "/": html("Fixture") }))(origin, undefined, {
+      onProgress: () => { throw new Error("Activity transport failed"); },
+    })).rejects.toThrow("Activity transport failed");
+  });
   it("supports a single-listing capture without following links or fetching sitemaps", async () => {
     const read = transport({ "/": html('<h1>One product</h1><a href="/other">Other product</a>') });
     const result = await createWebsiteScanner(read)(origin, undefined, { singlePage: true });

@@ -8,6 +8,7 @@ import { ForecastComparison, OrdersChart, SalesChart } from "./AnalyticsCharts";
 import { TrafficWorkspace } from "./TrafficWorkspace";
 import { trafficMetrics } from "../shared/traffic";
 import { growthResponseSchema, type GrowthOpportunity } from "../shared/growth";
+import { requiredSalesFields, salesFieldLabels, salesFields, salesHeadersResponseSchema, type SalesMapping } from "../shared/sales-mapping";
 import "./analytics.css";
 
 const emptyAnalytics: AnalyticsData = { currency: null, version: "", days: [], products: [], sources: [], imports: [], scenarios: [], warnings: [], traffic: null };
@@ -33,6 +34,9 @@ export function AnalyticsWorkspace({ onSessionExpired, studio = false, selectedB
   const [currency, setCurrency] = useState("");
   const [draft, setDraft] = useState<SalesImport | null>(null);
   const [confirmed, setConfirmed] = useState(false);
+  const [salesFile, setSalesFile] = useState<File | null>(null);
+  const [salesHeaders, setSalesHeaders] = useState<string[]>([]);
+  const [mapping, setMapping] = useState<SalesMapping>([]);
   const [range, setRange] = useState({ start: "", end: "" });
   const [scenario, setScenario] = useState<ScenarioInput>({ name: "My growth scenario", start: "", end: "", ordersPct: 0, aovPct: 0, costPct: 0 });
   const [savedId, setSavedId] = useState("");
@@ -40,6 +44,7 @@ export function AnalyticsWorkspace({ onSessionExpired, studio = false, selectedB
   const [growthError, setGrowthError] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
   const requests = useRef<AbortController | null>(null);
+  const salesRequest = useRef<AbortController | null>(null);
   const requestedSelection = useRef({ id: selectedBusinessId, onSelected: onBusinessSelected });
   requestedSelection.current = { id: selectedBusinessId, onSelected: onBusinessSelected };
   const requestedView = context.get("view");
@@ -80,6 +85,7 @@ export function AnalyticsWorkspace({ onSessionExpired, studio = false, selectedB
     return () => window.removeEventListener("hashchange", followLink);
   }, [businesses]);
   useEffect(() => {
+    clearSalesImport();
     if (!businessId) return;
     const controller = new AbortController();
     requests.current = controller;
@@ -88,7 +94,7 @@ export function AnalyticsWorkspace({ onSessionExpired, studio = false, selectedB
       if (!controller.signal.aborted) setData(analytics);
     }).catch((error: unknown) => { if (!controller.signal.aborted) report(error); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    return () => controller.abort();
+    return () => { controller.abort(); salesRequest.current?.abort(); };
   }, [businessId, reload, onSessionExpired]);
   useEffect(() => {
     setGrowthAction(null); setGrowthError("");
@@ -118,6 +124,7 @@ export function AnalyticsWorkspace({ onSessionExpired, studio = false, selectedB
     setScenario((current) => ({ ...current, name: growthAction?.title.slice(0, 80) ?? "My growth scenario", start: data.days[0]?.date ?? "", end: data.days.at(-1)?.date ?? "", ordersPct: 0, aovPct: 0, costPct: 0 }));
     setCurrency(data.currency ?? "");
   }, [data.version, businessId]);
+  useEffect(() => { clearSalesImport(); }, [currency]);
   async function run(action: (signal: AbortSignal) => Promise<void>) {
     const signal = requests.current?.signal;
     if (!signal || signal.aborted || busy) return;
@@ -142,25 +149,56 @@ export function AnalyticsWorkspace({ onSessionExpired, studio = false, selectedB
   const windowSize = range.start && range.end ? Math.round((Date.parse(range.end) - Date.parse(range.start)) / 86_400_000) + 1 : 0;
   const previous = windowSize > 0 ? data.days.filter((day) => day.date >= nextDate(range.start, -windowSize) && day.date < range.start) : [];
   const growth = windowSize === days.length && previous.length === windowSize ? percentageChange(metrics.net, salesMetrics(previous).net) : null;
-  async function upload(file: File) {
-    setDraft(null); setConfirmed(false);
-    await run(async (signal) => {
-      if (!currency) throw new Error("Choose the currency used in your sales file.");
-      if (!/\.(csv|xlsx)$/i.test(file.name) || file.size > 32 * 1024 * 1024) throw new Error("Choose a CSV or XLSX file up to 32 MiB.");
-      const query = new URLSearchParams({ currency, filename: file.name });
-      const { draft } = await api(`/api/businesses/${businessId}/sales-imports?${query}`, salesImportResponseSchema, {
-        method: "POST", body: await file.arrayBuffer(), signal,
-        headers: { "Content-Type": /\.xlsx$/i.test(file.name) ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/csv" },
-      }, 120_000);
-      if (!signal.aborted) setDraft(draft);
-    });
+  function clearSalesImport() {
+    if (salesRequest.current) setBusy(false);
+    salesRequest.current?.abort(); salesRequest.current = null;
+    setSalesFile(null); setSalesHeaders([]); setMapping([]); setDraft(null); setConfirmed(false);
   }
+  async function readUpload(file: File, approved?: SalesMapping) {
+    salesRequest.current?.abort();
+    const controller = new AbortController();
+    salesRequest.current = controller;
+    const signal = controller.signal;
+    setDraft(null); setConfirmed(false); setBusy(true); setError(""); setNotice("");
+    try {
+      if (!currency) throw new Error("Choose the currency used in your sales file.");
+      if (!/\.(csv|xlsx)$/i.test(file.name) || !file.size || file.size > 32 * 1024 * 1024) throw new Error("Choose a nonempty CSV or XLSX file up to 32 MiB.");
+      const body = await file.arrayBuffer();
+      if (signal.aborted) return;
+      const query = new URLSearchParams({ currency, filename: file.name, mode: approved ? "preview" : "headers" });
+      if (approved) query.set("mapping", JSON.stringify(approved));
+      const options = {
+        method: "POST", body, signal,
+        headers: { "Content-Type": /\.xlsx$/i.test(file.name) ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/csv" },
+      };
+      const path = `/api/businesses/${businessId}/sales-imports?${query}`;
+      if (approved) {
+        const { draft } = await api(path, salesImportResponseSchema, options, 120_000);
+        if (!signal.aborted) setDraft(draft);
+      } else {
+        const { headers, suggestions } = await api(path, salesHeadersResponseSchema, options, 120_000);
+        if (!signal.aborted) { setSalesFile(file); setSalesHeaders(headers); setMapping(suggestions); }
+      }
+    } catch (error) { if (!signal.aborted) report(error); }
+    finally {
+      if (salesRequest.current === controller) {
+        salesRequest.current = null;
+        if (!signal.aborted) setBusy(false);
+      }
+    }
+  }
+  async function upload(file: File) {
+    clearSalesImport();
+    await readUpload(file);
+  }
+  const missingMappings = requiredSalesFields.filter((field) => !mapping.includes(field));
+  const duplicateMappings = mapping.some((field, index) => field !== null && mapping.indexOf(field) !== index);
   async function commit() {
     if (!draft) return;
     await run(async (signal) => {
       const { analytics } = await api(`/api/businesses/${businessId}/sales-imports/${draft.id}/commit`, analyticsResponseSchema, { method: "POST", signal, body: JSON.stringify({ expectedVersion: data.version, confirmRejected: confirmed }) });
       if (signal.aborted) return;
-      setData(analytics); setPanel(null); setDraft(null);
+      setData(analytics); setPanel(null); clearSalesImport();
       setNotice("Sales baseline saved. Previous imports and scenarios are preserved.");
     });
   }
@@ -205,7 +243,7 @@ export function AnalyticsWorkspace({ onSessionExpired, studio = false, selectedB
   return <section className="analytics-workspace">
     <div className="analytics-heading">
       <div><p className="analytics-eyebrow"><span /> YOUR SALES WORKSPACE</p><h2>Explore a change. Keep the facts.</h2><p>Website, Instagram, WhatsApp or offline sales. No website required.</p></div>
-      <div className="analytics-heading-actions"><span className="analytics-private"><Icon name="shield" /> Private workspace</span><button className="a-button a-primary" disabled={busy || loading || !businessId} onClick={() => { setPanel("import"); setDraft(null); }}><Icon name="plus" /> Import sales</button></div>
+      <div className="analytics-heading-actions"><span className="analytics-private"><Icon name="shield" /> Private workspace</span><button className="a-button a-primary" disabled={busy || loading || !businessId} onClick={() => { setPanel("import"); clearSalesImport(); }}><Icon name="plus" /> Import sales</button></div>
     </div>
     {error && <div role="alert" className="analytics-alert error">{error} <button type="button" onClick={() => { setError(""); setReload((value) => value + 1); }}>Reload workspace</button></div>}
     {notice && <p role="status" className="analytics-alert">{notice}</p>}
@@ -223,13 +261,27 @@ export function AnalyticsWorkspace({ onSessionExpired, studio = false, selectedB
     </div>
     {loading ? <div className="a-loading" role="status"><span className="a-loading-dot" /> Bringing your numbers into focus...</div> : !businessId ? <div className="a-empty"><Icon name="box" /><h2>A home for your business first.</h2><p>Create a business profile to keep sales and scenarios private.</p><a className="a-button a-primary" href="#overview?view=setup&new=1">Create business profile <Icon name="arrow" /></a></div> : <>
       {panel && <section className="a-card a-input-panel" aria-label={panel === "import" ? "Sales import" : "Owner entry"}>
-        <div className="a-card-header"><div><p className="analytics-eyebrow">YOUR DATA, NOT A GUESS</p><h2>{panel === "import" ? "Bring your sales history." : "Start with what you know."}</h2></div><button className="a-button a-outline" disabled={busy} onClick={() => { setPanel(null); setDraft(null); }}>Close</button></div>
-        <label className="a-field a-currency">Currency<select required value={currency} disabled={busy || !!data.currency} onChange={(event) => { setCurrency(event.target.value); setDraft(null); }}><option value="" disabled>Choose currency</option>{Intl.supportedValuesOf("currency").map((item) => <option key={item}>{item}</option>)}</select></label>
+        <div className="a-card-header"><div><p className="analytics-eyebrow">YOUR DATA, NOT A GUESS</p><h2>{panel === "import" ? "Bring your sales history." : "Start with what you know."}</h2></div><button className="a-button a-outline" disabled={busy} onClick={() => { setPanel(null); clearSalesImport(); }}>Close</button></div>
+        <label className="a-field a-currency">Currency<select required value={currency} disabled={busy || !!data.currency} onChange={(event) => { setCurrency(event.target.value); clearSalesImport(); setBusy(false); }}><option value="" disabled>Choose currency</option>{Intl.supportedValuesOf("currency").map((item) => <option key={item}>{item}</option>)}</select></label>
         {panel === "import" ? <>
           <div className="a-upload"><span className="a-upload-icon"><Icon name="chart" /></span><div><h3>One file. A clearer picture.</h3><p>CSV or Excel · Up to 32 MiB / 600,000 rows<br />UCI Online Retail headers are recognized. Select GBP for that dataset.</p></div><button className="a-button a-primary" disabled={busy} onClick={() => fileInput.current?.click()}>{busy ? "Reading file..." : "Choose sales file"}</button><input ref={fileInput} className="sr-only" aria-label="Sales file" type="file" accept=".csv,.xlsx" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file); event.target.value = ""; }} /></div>
-          <div className="a-import-help"><p>Choose your currency, upload a file, then review it. <strong>Confirming replaces your imported sales history; it does not add to it.</strong> Previous imports stay saved.</p><button className="a-text-button" onClick={downloadTemplate}>Download CSV template <Icon name="arrow" /></button></div>
-          <details className="a-form-extras"><summary>File format and import rules</summary><p className="a-muted">Required: <code>order_id, date, quantity, unit_price</code>. Optional: sku, product, discount, currency, status. Use ISO dates and per-line discounts. One currency and one worksheet per file. Imported dates cannot overlap owner-entered dates. Use Import website visits below for daily traffic CSVs; this uploader accepts sales records only.</p></details>
+          <div className="a-import-help"><p>Choose your currency, upload a file, review column mappings, then preview your sales. <strong>Confirming replaces your imported sales history; it does not add to it.</strong> Previous imports stay saved.</p><button className="a-text-button" onClick={downloadTemplate}>Download CSV template <Icon name="arrow" /></button></div>
+          <details className="a-form-extras"><summary>File format and import rules</summary><p className="a-muted">Required: stable order ID, date, quantity and unit selling price. Column headings can differ; you approve their mappings. Optional: sku, product, per-line discount amount, currency, status. Dates must use ISO YYYY-MM-DD (for example 2025-01-31); ambiguous slash dates are rejected. Quantity is never assumed and unit price is not calculated from totals. Use booked selling prices, not line totals; no net/gross or currency conversion is inferred. One currency and one worksheet per file. Imported dates cannot overlap owner-entered dates. Use Owner entry for daily totals and Import website visits below for daily traffic CSVs.</p></details>
           {busy && <p role="status" className="a-muted">Reading and validating your file. Large workbooks can take a minute. Nothing changes until confirmation.</p>}
+          {salesFile && <section className="a-review" aria-label="Sales column mapping">
+            <h3>Review column mappings</h3>
+            <p>Common headings are suggested using fixed rules, not AI. Check every mapping before continuing. Skipped columns are not saved; do not map customer identifiers to sales fields.</p>
+            <p id="sales-mapping-help">Required: stable order ID, date (YYYY-MM-DD), quantity and unit selling price. Use Owner entry for daily totals. Per-line discounts are amounts, not percentages. UCI InvoiceNo / Invoice mappings retain C-prefixed reversal rules.</p>
+            <fieldset className="a-manual-grid" disabled={busy} aria-describedby="sales-mapping-help"><legend className="sr-only">Source columns and sales fields</legend>
+              {salesHeaders.map((header, index) => <label className="a-field" key={index}><span style={{ overflowWrap: "anywhere" }}>Column {index + 1}: {header || "(blank heading)"}</span><select aria-label={`Map column ${index + 1}: ${header || "(blank heading)"}`} value={mapping[index] ?? ""} onChange={(event) => {
+                salesRequest.current?.abort(); setDraft(null); setConfirmed(false); setBusy(false);
+                setMapping((current) => current.map((field, position) => position === index ? (event.target.value || null) as SalesMapping[number] : field));
+              }}><option value="">Skip column (not saved)</option>{salesFields.map((field) => <option key={field} value={field}>{salesFieldLabels[field]}{requiredSalesFields.includes(field) ? " (required)" : ""}</option>)}</select></label>)}
+            </fieldset>
+            {!!missingMappings.length && <p role="status">Map required fields: {missingMappings.map((field) => salesFieldLabels[field]).join(", ")}.</p>}
+            {duplicateMappings && <p role="alert">Map each sales field only once. Skip or change duplicate mappings.</p>}
+            <button className="a-button a-primary" disabled={busy || !!missingMappings.length || duplicateMappings} onClick={() => void readUpload(salesFile, mapping)}>Approve mappings and preview</button>
+          </section>}
           {draft && <div className="a-review" aria-label="Review sales import"><div className="a-card-header"><h3>{draft.filename}</h3><span className="a-badge">{draft.committed ? "Already imported" : "Review before saving"}</span></div>
             <div className="a-review-stats"><span><strong>{fmt.format(draft.snapshot.accepted)}</strong> accepted rows</span><span><strong>{fmt.format(draft.snapshot.rejected)}</strong> rejected</span><span><strong>{fmt.format(draft.snapshot.excluded)}</strong> cancelled rows excluded</span><span><strong>{draft.snapshot.days.length}</strong> observed dates</span></div>
             <p>{dateLabel(draft.snapshot.days[0].date)} – {dateLabel(draft.snapshot.days.at(-1)!.date)} · {draft.snapshot.currency} · No automatic currency conversion</p>

@@ -13,6 +13,7 @@ import { researchStore } from "./research-store.js";
 import { growthStore } from "./growth-store.js";
 import { productIntelligenceStore } from "./product-intelligence.js";
 import { analyticsStore } from "./analytics-store.js";
+import { weeklyReviewStore } from "./weekly-review-store.js";
 import { marketplaceStore } from "./marketplace-research.js";
 import type { BaseCheckpointSaver } from "@langchain/langgraph";
 import { sqliteDatabase, type SqlDatabase } from "./sql-database.js";
@@ -48,6 +49,7 @@ export function openStore(path: string) {
 
 export function createStore(database: SqlDatabase, checkpointer: BaseCheckpointSaver) {
   const catalogue = catalogueStore(database);
+  const analytics = analyticsStore(database);
   return {
     engine: database.dialect,
     ...catalogue,
@@ -55,8 +57,9 @@ export function createStore(database: SqlDatabase, checkpointer: BaseCheckpointS
     ...researchStore(database, checkpointer),
     ...growthStore(database),
     ...productIntelligenceStore(database),
-    ...analyticsStore(database),
-    ...marketplaceStore(database),
+    ...analytics,
+    ...weeklyReviewStore(database, analytics.salesData),
+    ...marketplaceStore(database, catalogue.getProduct),
     async prunePreviews() {
       await database.prepare("DELETE FROM onboarding_previews WHERE expires_at <= ?").run(Date.now());
     },

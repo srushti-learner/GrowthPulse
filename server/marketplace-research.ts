@@ -11,6 +11,7 @@ import { modelInputSchema } from "./model-schema.js";
 import { publicUrl, ScanError } from "./public-http.js";
 import { ResearchToolError, type ResearchSearch } from "./tavily-mcp.js";
 import type { WebsiteScanner } from "./website-scanner.js";
+import { customerEvidence, customerEvidenceLimits } from "./customer-evidence.js";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const bounded = (value: unknown, length = 300) => typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, length) : "";
@@ -320,7 +321,7 @@ export function importMarketplaceCsv(product: Product, csv: string) {
 }
 
 type JobRow = { id: string; product_id: string; fingerprint: string; status: string; result_json: string | null; error: string | null; lease_until: number; request_key: string; input_hash: string; progress_json: string | null };
-export function marketplaceStore(database: SqlDatabase) {
+export function marketplaceStore(database: SqlDatabase, getProduct: (ownerId: string, businessId: string, productId: string) => Promise<Product | undefined>) {
   async function authorize(ownerId: string, businessId: string, productId: string) {
     if (!await database.prepare(`SELECT p.id FROM products p JOIN businesses b ON b.id = p.business_id
       WHERE p.id = ? AND b.id = ? AND b.owner_id = ?`).get(productId, businessId, ownerId)) throw new AgentError(404, "Product not found.");
@@ -336,6 +337,31 @@ export function marketplaceStore(database: SqlDatabase) {
     return database.prepare<[string], JobRow>("SELECT * FROM marketplace_research WHERE product_id = ? AND result_json IS NOT NULL ORDER BY rowid DESC LIMIT 1").get(productId);
   }
   return {
+    async customerResearchEvidence(ownerId: string, businessId: string) {
+      return database.transaction(async () => {
+        if (!await database.prepare("SELECT id FROM businesses WHERE id = ? AND owner_id = ?").get(businessId, ownerId)) {
+          throw new AgentError(404, "Business not found.");
+        }
+        const rows = await database.prepare<[number, string, string, number], { productId: string; result: string; refreshing: number }>(`
+          SELECT m.product_id AS productId, m.result_json AS result,
+            EXISTS (SELECT 1 FROM marketplace_research active WHERE active.product_id = m.product_id
+              AND active.status = 'running' AND active.lease_until >= ?) AS refreshing
+          FROM marketplace_research m JOIN products p ON p.id = m.product_id AND p.business_id = m.business_id
+          JOIN businesses b ON b.id = p.business_id
+          WHERE b.id = ? AND b.owner_id = ? AND m.result_json IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM marketplace_research newer WHERE newer.product_id = m.product_id
+              AND newer.result_json IS NOT NULL AND newer.rowid > m.rowid)
+          ORDER BY m.rowid DESC LIMIT ?
+        `).all(Date.now(), businessId, ownerId, customerEvidenceLimits.reports);
+        const saved = [];
+        for (const row of rows) {
+          const product = await getProduct(ownerId, businessId, row.productId);
+          if (!product) throw new AgentError(409, "A reviewed product changed while customer evidence was loading. Reload before starting another analysis.");
+          saved.push({ product, report: marketplaceReportSchema.parse(JSON.parse(row.result)), refreshing: !!row.refreshing });
+        }
+        return customerEvidence(saved);
+      })();
+    },
     async marketplaceState(ownerId: string, businessId: string, productId: string, fingerprint: string) {
       await authorize(ownerId, businessId, productId); await expire();
       const current = await latest(productId), stored = await saved(productId);

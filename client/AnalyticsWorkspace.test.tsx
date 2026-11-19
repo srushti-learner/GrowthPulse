@@ -19,6 +19,7 @@ const record = { date: "2025-01-01", gross: 1_000_000, discounts: 100_000, rever
 const empty: AnalyticsData = { currency: null, version, days: [], products: [], sources: [], imports: [], scenarios: [], warnings: [], traffic: null };
 const loaded: AnalyticsData = { ...empty, version: "abcdef1234567890abcdef12", currency: "GBP", days: [record], sources: [{ name: "fixture.csv", kind: "import", createdAt: timestamp }] };
 const draft: SalesImport = { id: importId, filename: "fixture.csv", createdAt: timestamp, committed: false, snapshot: { currency: "GBP", days: [record], accepted: 2, rejected: 1, excluded: 0, products: [], errors: ["Row 4: invalid price."], warnings: [] } };
+const headers = { headers: ["order_id", "date", "quantity", "unit_price"], suggestions: ["order", "date", "quantity", "price"] };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 describe("analytics owner workflows", () => {
   let container: HTMLDivElement, root: Root;
@@ -30,7 +31,7 @@ describe("analytics owner workflows", () => {
   });
   afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
   async function render() { await act(async () => root.render(<AnalyticsWorkspace onSessionExpired={expired} />)); }
-  function fetcher(data: AnalyticsData, handler?: (path: string, options?: RequestInit) => Response) {
+  function fetcher(data: AnalyticsData, handler?: (path: string, options?: RequestInit) => Response | Promise<Response>) {
     const fetch = vi.fn(async (path: string, options?: RequestInit) => {
       if (path === "/api/businesses") return json({ businesses: [{ id, name: "Fixture business", category: "", description: "", website: "", createdAt: timestamp, updatedAt: timestamp }] });
       if (path.endsWith("/analytics") && !options?.method) return json({ analytics: data });
@@ -49,6 +50,21 @@ describe("analytics owner workflows", () => {
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
   }
+  async function select(selector: string, value: string) {
+    await act(async () => {
+      const input = container.querySelector<HTMLSelectElement>(selector)!;
+      input.value = value; input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  }
+  async function chooseFile(name = "fixture.csv") {
+    const file = new File(["order_id,date,quantity,unit_price"], name, { type: "text/csv" });
+    Object.defineProperty(file, "arrayBuffer", { value: async () => new TextEncoder().encode("order_id,date,quantity,unit_price").buffer });
+    await act(async () => {
+      const input = container.querySelector<HTMLInputElement>('input[aria-label="Sales file"]')!;
+      Object.defineProperty(input, "files", { configurable: true, value: [file] });
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  }
   it("shows a real empty state without fabricated metrics or forecasts", async () => {
     fetcher(empty); await render();
     expect(container.textContent).toContain("Your next chapter starts");
@@ -65,16 +81,16 @@ describe("analytics owner workflows", () => {
     expect(fetch.mock.calls.some(([, options]) => options?.method)).toBe(false);
   });
   it("previews raw CSV, requires rejected-row acknowledgement and confirms before replacing history", async () => {
-    const fetch = fetcher(empty, (path) => path.includes("/commit") ? json({ analytics: loaded }) : json({ draft }, 201));
+    const fetch = fetcher(empty, (path) => path.includes("/commit") ? json({ analytics: loaded }) : path.includes("mode=headers") ? json(headers) : json({ draft }, 201));
     await render(); await click("Import sales");
     await chooseCurrency();
-    const file = new File(["order_id,date,quantity,unit_price"], "fixture.csv", { type: "text/csv" });
-    Object.defineProperty(file, "arrayBuffer", { value: async () => new TextEncoder().encode("order_id,date,quantity,unit_price").buffer });
-    await act(async () => {
-      const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
-      Object.defineProperty(input, "files", { configurable: true, value: [file] });
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    await chooseFile();
+    expect(container.querySelector('[aria-label="Sales column mapping"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Review sales import"]')).toBeNull();
+    expect(container.textContent).toContain("fixed rules, not AI");
+    await click("Approve mappings and preview");
+    const preview = fetch.mock.calls.find(([path]) => path.includes("mode=preview"))!;
+    expect(JSON.parse(new URL(preview[0], window.location.origin).searchParams.get("mapping")!)).toEqual(headers.suggestions);
     const confirm = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("Confirm baseline"))!;
     expect(confirm.disabled).toBe(true);
     expect(container.textContent).toContain("Row 4: invalid price.");
@@ -86,6 +102,92 @@ describe("analytics owner workflows", () => {
     expect(container.textContent).toContain("Sales baseline saved");
     expect(container.textContent).toContain("£85.00");
     expect(container.textContent).toContain("£45.00");
+  });
+  it("lets owners correct suggestions, blocks missing/duplicate fields, and invalidates previews on edits", async () => {
+    const customHeaders = { headers: ["Ticket", "When", "Count", "Each", "Email"], suggestions: [null, null, null, null, null] };
+    const fetch = fetcher(empty, (path) => path.includes("mode=headers") ? json(customHeaders) : json({ draft }, 201));
+    await render(); await click("Import sales"); await chooseCurrency(); await chooseFile();
+    const approve = () => [...container.querySelectorAll("button")].find((item) => item.textContent === "Approve mappings and preview")!;
+    expect(approve().disabled).toBe(true);
+    expect(container.textContent).toContain("Map required fields");
+    expect(container.textContent).toContain("YYYY-MM-DD");
+    expect(container.textContent).toContain("daily totals");
+    for (const [index, field] of ["order", "date", "quantity", "price"].entries()) await select(`[aria-label^="Map column ${index + 1}:"]`, field);
+    expect(approve().disabled).toBe(false);
+    await select('[aria-label^="Map column 5:"]', "price");
+    expect(approve().disabled).toBe(true);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("only once");
+    await select('[aria-label^="Map column 5:"]', "");
+    await click("Approve mappings and preview");
+    const preview = fetch.mock.calls.find(([path]) => path.includes("mode=preview"))!;
+    expect(JSON.parse(new URL(preview[0], window.location.origin).searchParams.get("mapping")!)).toEqual(["order", "date", "quantity", "price", null]);
+    expect(container.querySelector('[aria-label="Review sales import"]')).not.toBeNull();
+    await select('[aria-label^="Map column 4:"]', "");
+    expect(container.querySelector('[aria-label="Review sales import"]')).toBeNull();
+    expect(approve().disabled).toBe(true);
+    expect(fetch.mock.calls.some(([path]) => path.includes("/commit"))).toBe(false);
+  });
+  it("surfaces header syntax and mapping validation errors rather than creating a successful preview", async () => {
+    let inspectError = true;
+    fetcher(empty, (path) => path.includes("mode=headers")
+      ? inspectError ? json({ error: "CSV syntax error near row 3. Check quoting and column counts." }, 400) : json(headers)
+      : json({ error: "Column mapping must match every source column." }, 400));
+    await render(); await click("Import sales"); await chooseCurrency(); await chooseFile();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("CSV syntax error");
+    expect(container.querySelector('[aria-label="Sales column mapping"]')).toBeNull();
+    inspectError = false; await chooseFile(); await click("Approve mappings and preview");
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Column mapping");
+    expect(container.querySelector('[aria-label="Review sales import"]')).toBeNull();
+  });
+  it("clears file/mapping/draft on currency changes and ignores aborted header responses", async () => {
+    let finish!: (response: Response) => void;
+    const fetch = fetcher(empty, (path) => path.includes("mode=headers")
+      ? new Promise<Response>((resolve) => { finish = resolve; })
+      : json({ draft }, 201));
+    await render(); await click("Import sales"); await chooseCurrency(); await chooseFile();
+    const request = fetch.mock.calls.find(([path]) => path.includes("mode=headers"))!;
+    await select(".a-currency select", "USD");
+    expect(request[1]?.signal?.aborted).toBe(true);
+    await act(async () => finish(json(headers)));
+    expect(container.querySelector('[aria-label="Sales column mapping"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Review sales import"]')).toBeNull();
+    expect(container.querySelector<HTMLSelectElement>(".a-currency select")!.value).toBe("USD");
+  });
+  it("ignores replaced-file responses and clears the old preview before reading the replacement", async () => {
+    let finish!: (response: Response) => void;
+    let hold = false;
+    fetcher(empty, (path) => path.includes("mode=headers")
+      ? hold ? new Promise<Response>((resolve) => { finish = resolve; }) : json(headers)
+      : json({ draft }, 201));
+    await render(); await click("Import sales"); await chooseCurrency(); await chooseFile(); await click("Approve mappings and preview");
+    hold = true; await chooseFile("old.csv");
+    expect(container.querySelector('[aria-label="Review sales import"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Sales column mapping"]')).toBeNull();
+    hold = false; await chooseFile("replacement.csv");
+    await act(async () => finish(json({ headers: ["Stale"], suggestions: [null] })));
+    expect(container.textContent).not.toContain("Stale");
+    expect(container.querySelectorAll('[aria-label^="Map column"]')).toHaveLength(4);
+  });
+  it("ignores an in-flight mapped preview when the selected business changes", async () => {
+    const secondId = "02a221ee-41f1-46c9-bc96-12401d8dcf74";
+    let finish!: (response: Response) => void;
+    const fetch = vi.fn(async (path: string, options?: RequestInit) => {
+      if (path === "/api/businesses") return json({ businesses: [id, secondId].map((businessId) => ({ id: businessId, name: "Fixture", category: "", description: "", website: "", createdAt: timestamp, updatedAt: timestamp })) });
+      if (!options?.method) return json({ analytics: empty });
+      if (path.includes("mode=headers")) return json(headers);
+      return new Promise<Response>((resolve) => { finish = resolve; });
+    });
+    vi.stubGlobal("fetch", fetch);
+    await act(async () => root.render(<AnalyticsWorkspace selectedBusinessId={id} onSessionExpired={expired} />));
+    await click("Import sales"); await chooseCurrency(); await chooseFile();
+    await click("Approve mappings and preview");
+    const preview = fetch.mock.calls.find(([path]) => path.includes("mode=preview"))!;
+    await act(async () => root.render(<AnalyticsWorkspace selectedBusinessId={secondId} onSessionExpired={expired} />));
+    expect(preview[1]?.signal?.aborted).toBe(true);
+    await act(async () => finish(json({ draft }, 201)));
+    await click("Import sales");
+    expect(container.querySelector('[aria-label="Review sales import"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Sales column mapping"]')).toBeNull();
   });
   it("saves owner entries with unknown costs left null rather than zero", async () => {
     const fetch = fetcher(empty, () => json({ analytics: loaded }, 201));
