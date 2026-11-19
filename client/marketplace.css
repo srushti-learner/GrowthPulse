@@ -22,3 +22,11 @@
 .marketplace-customer-voice select { width: 100%; min-width: 0; }
 .marketplace-customer-voice blockquote { margin: 1rem 0; padding-left: 1rem; border-left: 2px solid var(--border); }
 .marketplace-customer-voice .marketplace-listing { margin: 1rem 0; }
+.feedback-progress { padding: 1rem; border: 1px solid var(--border); border-radius: 1rem; }
+.feedback-progress ol { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: .75rem; list-style: none; padding: 0; margin: 0 0 1rem; }
+.feedback-progress li { padding-top: .5rem; border-top: 3px solid var(--border); font-size: .85rem; }
+.feedback-progress li[data-state="current"] { border-color: var(--primary); font-weight: 700; }
+.feedback-progress li[data-state="done"] { border-color: var(--foreground); }
+.marketplace-customer-voice .marketplace-research-controls > button { white-space: normal; height: auto; min-height: 2.5rem; max-width: 100%; }
+.marketplace-customer-voice [data-slot="button"][data-variant="default"] { color: var(--primary-foreground); }
+.marketplace-customer-voice h3 { font-size: 1.05rem; }

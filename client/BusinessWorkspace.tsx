@@ -7,7 +7,6 @@ import { businessAnalysisDisclosure } from "../shared/understanding";
 import type { ResearchView } from "./ResearchDashboard";
 import { GrowthIntelligence } from "./GrowthIntelligence";
 import { SourceReference } from "./SourceDetails";
-import { MarketplaceInsights } from "./MarketplaceInsights";
 import { MarketplaceResearchProvider } from "./MarketplaceResearchContext";
 import { MarketplaceCustomerVoice } from "./MarketplaceCustomerVoice";
 
@@ -152,7 +151,6 @@ export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView
       {growthOnly && !selectedBusiness && <section className="profile-card"><h2>Choose a business to build its growth plan.</h2><a className="text-button" href="#overview?view=business">Manage business profiles</a></section>}
       {growthOnly && selectedBusiness && <GrowthIntelligence key={selectedBusiness.id} business={selectedBusiness} onSessionExpired={onSessionExpired} onPlanSaved={onPlanSaved} actionOnly={actionOnly} />}
       <MarketplaceResearchProvider businessId={researchOnly && researchView === "intelligence" ? selectedBusiness?.id ?? "" : ""} onSessionExpired={onSessionExpired}>
-      {researchOnly && researchView === "intelligence" && selectedBusiness && <MarketplaceInsights key={`marketplace:${selectedBusiness.id}`} businessId={selectedBusiness.id} />}
       {!growthOnly && !activityOnly && selectedBusiness?.website && (researchOnly || !editing) && (!profileOnly || analysisVisible) && <BusinessAgentReview key={selectedBusiness.id} business={selectedBusiness} autoStart={autoStartId === selectedBusiness.id}
         initialView={researchView}
         mode={researchOnly ? "research" : profileOnly ? "manage" : "full"}

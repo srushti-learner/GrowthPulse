@@ -38,8 +38,7 @@ export function AuthForm({ onAuthenticated, mode, onModeChange }: {
         <span className="auth-symbol"><Icon name="shield" /></span>
         <p className="section-eyebrow">YOUR BUSINESS. YOUR WORKSPACE.</p>
         <h2 id="auth-heading">{register ? "Make room for clarity." : "Welcome back."}</h2>
-        <p>{register ? "Create a local account to save your business profile and keep its history." : "Log in to your GrowthPulse account to manage your business."}</p>
-        <p className="local-note">Development preview: data stays on this computer. Email verification and password recovery are not available. Use a test password, not one you use elsewhere.</p>
+        {!register && <p>Log in to your GrowthPulse account to manage your business.</p>}
       </div>
       <form className="workspace-form auth-form" onSubmit={(event) => void submit(event)}>
         <fieldset disabled={pending}>

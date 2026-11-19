@@ -146,17 +146,18 @@ describe("agent-led profile onboarding", () => {
     const consoleError = vi.spyOn(console, "error");
     try {
       await act(async () => root.render(<BusinessWorkspace activityOnly={false} researchOnly researchView="intelligence" onSessionExpired={expired} />));
-      expect(container.querySelectorAll(".marketplace-insights")).toHaveLength(1);
+      expect(container.querySelectorAll(".marketplace-insights")).toHaveLength(0);
+      expect(container.querySelectorAll(".market-intelligence")).toHaveLength(1);
       for (let attempt = 0; attempt < 3; attempt++) {
         await act(async () => root.render(<BusinessWorkspace activityOnly={false} researchOnly researchView="overview" onSessionExpired={expired} />));
-        expect(container.querySelectorAll(".marketplace-insights")).toHaveLength(0);
+        expect(container.querySelectorAll(".market-intelligence")).toHaveLength(0);
         await act(async () => root.render(<BusinessWorkspace activityOnly={false} researchOnly researchView="intelligence" onSessionExpired={expired} />));
-        expect(container.querySelectorAll(".marketplace-insights")).toHaveLength(1);
+        expect(container.querySelectorAll(".market-intelligence")).toHaveLength(1);
         const businessSelect = container.querySelector<HTMLSelectElement>(".business-toolbar select")!;
         await act(async () => { businessSelect.value = ""; businessSelect.dispatchEvent(new Event("change", { bubbles: true })); });
-        expect(container.querySelectorAll(".marketplace-insights")).toHaveLength(0);
+        expect(container.querySelectorAll(".market-intelligence")).toHaveLength(0);
         await act(async () => { businessSelect.value = business.id; businessSelect.dispatchEvent(new Event("change", { bubbles: true })); });
-        expect(container.querySelectorAll(".marketplace-insights")).toHaveLength(1);
+        expect(container.querySelectorAll(".market-intelligence")).toHaveLength(1);
       }
       expect(consoleError.mock.calls.filter((args) => args.some((arg) => typeof arg === "string" && arg.includes("same key")))).toHaveLength(0);
     } finally {

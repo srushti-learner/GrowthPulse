@@ -30,6 +30,10 @@ export const scannedPageSchema = z.object({
   links: z.array(z.url().max(2048)).max(100),
   warnings: z.array(z.string()).max(10),
   productJson: z.array(z.string().max(20_000)).max(50).optional(),
+  listingReviews: z.object({
+    productUrl: z.url(), title: z.string().min(1).max(300),
+    reviews: z.array(z.object({ text: z.string().min(10).max(500) })).max(50),
+  }).optional(),
 });
 export const scannedCatalogueSchema = z.object({
   created: z.number().int().nonnegative(),

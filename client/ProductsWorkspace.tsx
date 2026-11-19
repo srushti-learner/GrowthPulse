@@ -114,17 +114,18 @@ export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusi
         const saved = await api(`/api/businesses/${businessId}/understanding`, understandingResponseSchema, { signal: controller.signal });
         if (controller.signal.aborted) return;
         setCatalogueResult(saved.understanding?.catalogue ?? saved.lastSuccessfulUnderstanding?.catalogue);
-        const legacy = saved.understanding?.productImportId ? saved.understanding
-          : saved.lastSuccessfulUnderstanding?.productImportId ? saved.lastSuccessfulUnderstanding : null;
-        if (legacy) {
-          const synced = await api(`/api/businesses/${businessId}/scans/${legacy.scanId}/catalogue`, scannedProductsResponseSchema, {
+        const pending = [saved.understanding, saved.lastSuccessfulUnderstanding]
+          .find((item) => item?.productImportId || item?.catalogue?.skipped);
+        if (pending) {
+          const synced = await api(`/api/businesses/${businessId}/scans/${pending.scanId}/catalogue`, scannedProductsResponseSchema, {
             method: "POST", body: "{}", signal: controller.signal,
           });
           if (controller.signal.aborted) return;
           setProducts(synced.products);
           setCatalogueResult(synced.catalogue ?? undefined);
+          const summary = synced.products.length ? "Your website catalogue is ready." : "No usable products could be added from this saved scan.";
           setNotice(synced.catalogue?.skipped
-            ? `Your website catalogue is ready. ${synced.catalogue.skipped} source records need attention; review saved website records below or add a missing product manually.`
+            ? `${summary} ${synced.catalogue.skipped} source records need attention; review saved website records below or add a missing product manually.`
             : synced.catalogue ? "Your website catalogue is ready. No import confirmation is needed."
               : "No supported product records were found in the saved scan. Add a missing product manually.");
         }

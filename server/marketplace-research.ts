@@ -4,7 +4,7 @@ import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import { parse, CsvError } from "csv-parse/sync";
 import { z } from "zod";
 import { normalizedGtin, productInputSchema, type Product } from "../shared/products.js";
-import { marketplaceLimits, marketplaceReportSchema, marketplaceThemesSchema, type MarketplaceListing, type MarketplaceReport } from "../shared/marketplace.js";
+import { marketplaceLimits, marketplaceProgressSchema, marketplaceReportSchema, marketplaceThemesSchema, type MarketplaceListing, type MarketplaceProgress, type MarketplaceReport } from "../shared/marketplace.js";
 import { AgentError, type AgentModel } from "./business-agent.js";
 import { productFingerprint } from "./product-intelligence.js";
 import { modelInputSchema } from "./model-schema.js";
@@ -87,7 +87,7 @@ function report(product: Product, listings: MarketplaceListing[], limitations: s
 }
 async function capture(url: string, title: string, scanner: WebsiteScanner, signal: AbortSignal) {
   const item = listing(url, title, "public_page");
-  const scan = await scanner(publicUrl(url).href, signal, { singlePage: true });
+  const scan = await scanner(publicUrl(url).href, signal, { singlePage: true, marketplaceReviews: true });
   signal.throwIfAborted();
   const page = scan.pages.find((value) => marketplaceUrl(value.url) === url);
   if (!page) {
@@ -102,30 +102,39 @@ async function capture(url: string, title: string, scanner: WebsiteScanner, sign
   };
   const matching = products.filter(identifiesPage);
   const product = matching.length === 1 ? matching[0] : products.length === 1 && products[0].url === undefined ? products[0] : undefined;
-  if (!product || !bounded(product.name)) {
-    item.limitation = "No unambiguous structured product record was captured. Search snippets and recommendations were not substituted.";
+  const visible = page.listingReviews?.productUrl === url ? page.listingReviews : undefined;
+  if ((!product || !bounded(product.name)) && (!visible || products.length > 0)) {
+    item.limitation = "No unambiguous Product JSON-LD or supported exact-listing review block was captured. Search snippets, unrelated page text and recommendations were not substituted.";
     return item;
   }
-  item.status = "captured"; item.title = bounded(product.name); item.capturedAt = page.capturedAt;
-  item.description = bounded(product.description, 2000);
-  item.variants = bounded(product.size, 1000);
-  const gtin = productInputSchema.shape.gtin.safeParse(String(product.gtin ?? product.gtin13 ?? product.gtin14 ?? product.gtin12 ?? product.gtin8 ?? ""));
+  const facts = product ?? {};
+  item.status = "captured"; item.title = bounded(facts.name) || bounded(visible?.title); item.capturedAt = page.capturedAt;
+  item.description = bounded(facts.description, 2000);
+  item.variants = bounded(facts.size, 1000);
+  const gtin = productInputSchema.shape.gtin.safeParse(String(facts.gtin ?? facts.gtin13 ?? facts.gtin14 ?? facts.gtin12 ?? facts.gtin8 ?? ""));
   item.gtin = gtin.success ? gtin.data : "";
-  const offer = record(first(product.offers));
+  const offer = record(first(facts.offers));
   const parsed = productInputSchema.shape.price.safeParse(String(offer.price ?? ""));
   const currency = productInputSchema.shape.currency.safeParse(offer.priceCurrency ?? "");
   if (parsed.success && parsed.data && currency.success && currency.data) { item.price = parsed.data; item.currency = currency.data; }
   item.seller = bounded(record(offer.seller).name, 200);
-  const aggregate = record(product.aggregateRating);
+  const aggregate = record(facts.aggregateRating);
   const supportedScale = Number(aggregate.bestRating ?? 5) === 5 && Number(aggregate.worstRating ?? 1) === 1;
   if (supportedScale) { item.rating = rating(aggregate.ratingValue); item.reviewCount = count(aggregate.reviewCount); }
-  const reviews = product.review ? Array.isArray(product.review) ? product.review : [product.review] : [];
+  const reviews = facts.review ? Array.isArray(facts.review) ? facts.review : [facts.review] : [];
   item.reviews = reviews.slice(0, marketplaceLimits.reviews).flatMap((raw) => {
     const data = record(raw), stars = record(data.reviewRating);
     const supported = Number(stars.bestRating ?? 5) === 5 && Number(stars.worstRating ?? 1) === 1;
     const value = review(data.reviewBody, supported ? stars.ratingValue : undefined, data.datePublished);
     return value ? [value] : [];
   });
+  const seen = new Set(item.reviews.map((value) => value.id));
+  for (const raw of visible?.reviews ?? []) {
+    const value = review(raw.text, undefined, undefined);
+    if (value && !seen.has(value.id) && item.reviews.length < marketplaceLimits.reviews) {
+      item.reviews.push(value); seen.add(value.id);
+    }
+  }
   source(item, "Product name", item.title);
   if (item.description) source(item, "Published description", item.description);
   if (item.gtin) source(item, "Published GTIN", item.gtin);
@@ -135,7 +144,7 @@ async function capture(url: string, title: string, scanner: WebsiteScanner, sign
   if (item.rating !== null) source(item, "Published aggregate rating (out of 5)", String(item.rating));
   if (item.reviewCount !== null) source(item, "Published review count (not orders)", String(item.reviewCount));
   item.limitation = item.reviews.length
-    ? "Only review excerpts embedded in this captured product record were sampled. No review pagination or authenticity verification."
+    ? "Sampled embedded product reviews and, where available, visible review blocks tied to this exact listing. No review pagination or authenticity verification; missing ratings and dates remain unknown."
     : "Listing comparison available; customer-review analysis unavailable for this listing. No individual review text was captured.";
   return item;
 }
@@ -163,11 +172,13 @@ No automatic publication or catalogue changes. All proposed experiments are hypo
   }
   return {
     configured: !!complete, discoveryConfigured: search.configured,
-    async discover(product: Product, category: string, urls: string[], signal: AbortSignal): Promise<MarketplaceReport> {
+    async discover(product: Product, category: string, urls: string[], signal: AbortSignal,
+      progress?: (value: MarketplaceProgress) => Promise<void>): Promise<MarketplaceReport> {
       const candidates = new Map<string, string>(urls.map((url) => [url, "Owner-selected listing"]));
       const limitations: string[] = [];
       const state = Annotation.Root({ result: Annotation<MarketplaceReport | null>({ reducer: (_, next) => next, default: () => null }) });
       const graph = new StateGraph(state).addNode("discover_marketplace_listings", async () => {
+        await progress?.({ stage: "discovering", completed: 0, total: 0 });
         if (!urls.length) {
           if (!search.configured) throw new AgentError(503, "Marketplace discovery is not configured. Supply listing URLs or an authorized review CSV instead.");
           const schema = z.object({ category: z.string().trim().min(3).max(100).regex(/^[\p{L}\p{N} -]+$/u) }).strict();
@@ -207,6 +218,7 @@ No automatic publication or catalogue changes. All proposed experiments are hypo
         return {};
       }).addNode("capture_marketplace_evidence", async () => {
         const listings: MarketplaceListing[] = [];
+        await progress?.({ stage: "collecting", completed: 0, total: candidates.size });
         for (const [url, title] of candidates) {
           signal.throwIfAborted();
           try { listings.push(await capture(url, title, scanner, signal)); }
@@ -215,6 +227,7 @@ No automatic publication or catalogue changes. All proposed experiments are hypo
             if (!(error instanceof ScanError)) throw error;
             const item = listing(url, title, "public_page"); item.limitation = error.message.slice(0, 500); listings.push(item);
           }
+          await progress?.({ stage: "collecting", completed: listings.length, total: candidates.size });
         }
         if (!candidates.size) limitations.push("No matching marketplace listing was discovered. This does not establish that the product is absent from these marketplaces.");
         if (listings.some((item) => item.status === "unavailable")) limitations.push("Some pages could not supply permitted structured evidence. No login, challenge, robots or retention bypass was attempted.");
@@ -306,7 +319,7 @@ export function importMarketplaceCsv(product: Product, csv: string) {
   return report(product, [...listings.values()], ["This dataset was supplied by the owner with permission; it is not an independently collected or representative marketplace sample."]);
 }
 
-type JobRow = { id: string; product_id: string; fingerprint: string; status: string; result_json: string | null; error: string | null; lease_until: number; request_key: string; input_hash: string };
+type JobRow = { id: string; product_id: string; fingerprint: string; status: string; result_json: string | null; error: string | null; lease_until: number; request_key: string; input_hash: string; progress_json: string | null };
 export function marketplaceStore(database: SqlDatabase) {
   async function authorize(ownerId: string, businessId: string, productId: string) {
     if (!await database.prepare(`SELECT p.id FROM products p JOIN businesses b ON b.id = p.business_id
@@ -327,7 +340,16 @@ export function marketplaceStore(database: SqlDatabase) {
       await authorize(ownerId, businessId, productId); await expire();
       const current = await latest(productId), stored = await saved(productId);
       const result = stored?.result_json ? marketplaceReportSchema.parse(JSON.parse(stored.result_json)) : null;
-      return { report: result, stale: !!result && result.fingerprint !== fingerprint, running: current?.status === "running", error: current?.status === "failed" ? current.error : null };
+      return { report: result, stale: !!result && result.fingerprint !== fingerprint, running: current?.status === "running",
+        error: current?.status === "failed" ? current.error : null,
+        progress: current?.status === "running" && current.progress_json ? marketplaceProgressSchema.parse(JSON.parse(current.progress_json)) : null };
+    },
+    async updateMarketplaceProgress(ownerId: string, businessId: string, productId: string, id: string, progress: MarketplaceProgress) {
+      await authorize(ownerId, businessId, productId);
+      const changed = await database.prepare(`UPDATE marketplace_research SET progress_json = ?
+        WHERE id = ? AND product_id = ? AND status = 'running' AND lease_until >= ?`)
+        .run(JSON.stringify(marketplaceProgressSchema.parse(progress)), id, productId, Date.now());
+      if (!changed.changes) throw new AgentError(409, "Marketplace research expired. Reload saved status before continuing.");
     },
     async marketplaceRequest(ownerId: string, businessId: string, productId: string, requestKey: string, inputHash: string) {
       await authorize(ownerId, businessId, productId); await expire();

@@ -15,7 +15,7 @@ const pageKind = (url: string) => {
   return "other";
 };
 
-function extract(html: string, url: URL, headerRobots: string): { page: ScannedPage; followLinks: boolean } {
+function extract(html: string, url: URL, headerRobots: string, marketplaceReviews = false): { page: ScannedPage; followLinks: boolean } {
   const $ = cheerio.load(html);
   const directives = `${headerRobots},${$('meta[name="robots" i], meta[name="growthpulsebot" i]').map((_index, item) => $(item).attr("content") ?? "").get().join(",")}`;
   if (/\b(?:nosnippet|noarchive|nocache)\b/i.test(directives)) {
@@ -77,9 +77,26 @@ function extract(html: string, url: URL, headerRobots: string): { page: ScannedP
   const title = space($("title").first().text() || $('meta[property="og:title" i], meta[name="og:title" i]').first().attr("content") || "", 300);
   const description = space($('meta[name="description" i]').first().attr("content")
     ?? $('meta[property="og:description" i], meta[name="og:description" i]').first().attr("content") ?? "", 2000);
+  const asin = $("#ASIN").attr("value");
   $("script, style, template, noscript, iframe, svg, [hidden], [aria-hidden=true]").remove();
+  if (marketplaceReviews) $("[style]").filter((_index, item) =>
+    /(?:display\s*:\s*none|visibility\s*:\s*hidden)/i.test($(item).attr("style") ?? "")).remove();
   $("br").replaceWith(" ");
   $("p, div, h1, h2, h3, li, section, article, main, td").append(" ");
+  let listingReviews: ScannedPage["listingReviews"];
+  const requestedAsin = /^\/dp\/([A-Z0-9]{10})\/?$/i.exec(url.pathname)?.[1];
+  if (marketplaceReviews && /^(?:www\.)?amazon\.in$/i.test(url.hostname)
+    && requestedAsin && asin?.toUpperCase() === requestedAsin.toUpperCase()) {
+    const productTitle = space($("#productTitle").text(), 300);
+    if (productTitle) {
+      const reviews = $('#cm-cr-dp-review-list [data-hook="review"]').slice(0, 50).map((_index, item) => {
+        const body = $(item).find('[data-hook="review-body"]').first().clone();
+        body.find("button, a").remove();
+        return { text: space(body.text(), 500) };
+      }).get().filter((review) => review.text.length >= 10);
+      listingReviews = { productUrl: `https://www.amazon.in/dp/${requestedAsin.toUpperCase()}`, title: productTitle, reviews };
+    }
+  }
   const headings = $("h1, h2, h3").slice(0, 30).map((_index, item) => ({
     level: Number(item.tagName.slice(1)), text: space($(item).text(), 240),
   })).get();
@@ -93,11 +110,12 @@ function extract(html: string, url: URL, headerRobots: string): { page: ScannedP
     title, description,
     headings, text: fullText.slice(0, 12000), contacts: [...contacts].slice(0, 20), callsToAction,
     links: /\b(?:nofollow|none)\b/i.test(directives) ? [] : [...links].slice(0, 100), warnings: [...new Set(warnings)].slice(0, 10), productJson,
+    ...(listingReviews ? { listingReviews } : {}),
   } };
 }
 
 export function createWebsiteScanner(read: PublicReader = createPublicReader()) {
-  return async (input: string, cancellation?: AbortSignal, options: { singlePage?: boolean } = {}): Promise<ScanResult> => {
+  return async (input: string, cancellation?: AbortSignal, options: { singlePage?: boolean; marketplaceReviews?: boolean } = {}): Promise<ScanResult> => {
     const seed = publicUrl(input);
     const startedAt = new Date().toISOString();
     const signal = cancellation ? AbortSignal.any([cancellation, AbortSignal.timeout(scanLimits.milliseconds)]) : AbortSignal.timeout(scanLimits.milliseconds);
@@ -256,7 +274,7 @@ export function createWebsiteScanner(read: PublicReader = createPublicReader()) 
         const charset = type.match(/charset\s*=\s*["']?([^;"'\s]+)/i)?.[1].toLowerCase();
         if (charset && !["utf-8", "utf8", "us-ascii"].includes(charset)) throw new ScanError("Only UTF-8 or ASCII HTML is supported.");
         if (pages.some((page) => page.url === url.href)) continue;
-        const { page, followLinks } = extract(response.body, url, String(response.headers["x-robots-tag"] ?? ""));
+        const { page, followLinks } = extract(response.body, url, String(response.headers["x-robots-tag"] ?? ""), options.marketplaceReviews);
         const size = Buffer.byteLength(JSON.stringify(page));
         if (retainedBytes + size > scanLimits.retainedBytes) {
           limited = true; notes.add("The retained-evidence budget was reached; further pages were not stored."); break;

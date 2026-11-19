@@ -11,12 +11,13 @@ import { researchLimits, type ResearchReport as SavedResearch } from "../shared/
 import type { ResearchView } from "./ResearchDashboard";
 const phaseLabels = { connecting: "Connecting to your business agent...", scanning: "Gathering your permitted public website evidence...", analysing: "Writing your business briefing...", validating: "Checking sources and saving your briefing..." };
 
-export function BusinessAgentReview({ business, autoStart, scanId, scanCapturedAt, onSaved, onRecorded, onSessionExpired, initialView = "overview", mode = "full" }: {
+export function BusinessAgentReview({ business, autoStart, scanId, scanCapturedAt, onSaved, onRecorded, onSessionExpired, initialView = "overview", mode = "full", showProgressDetails = true }: {
   business: Business; autoStart: boolean; scanId?: string; scanCapturedAt?: string;
   onSaved: (business: Business) => void;
   onRecorded: () => void; onSessionExpired: () => void;
   initialView?: ResearchView;
   mode?: "full" | "research" | "manage";
+  showProgressDetails?: boolean;
 }) {
   const researchOnly = mode === "research";
   const managementOnly = mode === "manage";
@@ -242,10 +243,10 @@ export function BusinessAgentReview({ business, autoStart, scanId, scanCapturedA
     {state === "loading" && <p role="status">Loading your latest business review...</p>}
     {live && <><div className="agent-progress"><p role="status">{job?.status === "queued" ? "Waiting to start..." : phaseLabels[phase]}</p>
       {job && activeAnalysis(job) && <button className="text-button" type="button" onClick={() => void cancel()}>Cancel analysis</button>}</div>
-      <details className="agent-sources agent-progress-details"><summary>Analysis details</summary>
+      {showProgressDetails && <details className="agent-sources agent-progress-details"><summary>Analysis details</summary>
         <p>{reusingScan ? "Using saved website information." : "Reading public website information."} This can take up to {(job ? researchLimits.milliseconds : understandingTimeoutMs) / 60_000} minutes once started. Your profile and catalogue will not change.</p>
         {job && <p>You can leave this page and return; background work continues.</p>}
-      </details></>}
+      </details>}</>}
     {error && <p className="form-error" role="alert">{error}</p>}
     {coolingDown && <p className="field-note" role="status">No new analysis started. Retry available in {Math.ceil((retryAt - now) / 1000)} seconds. Saved findings remain available.</p>}
     {saveError && <p className="form-error" role="alert">{saveError}</p>}

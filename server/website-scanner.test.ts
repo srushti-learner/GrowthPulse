@@ -21,6 +21,43 @@ describe("bounded static website scanner with isolated fixture transport", () =>
     expect(result.pages).toHaveLength(1);
     expect(read.mock.calls.map(([url]) => url.pathname)).toEqual(["/robots.txt", "/"]);
   });
+  it("samples only explicit listing review blocks with matching Amazon identity, without reviewer fields or page recommendations", async () => {
+    const body = `<input id="ASIN" value="B000000001"><h1 id="productTitle">Fixture bottle</h1>
+      <div id="cm-cr-dp-review-list">
+        <div data-hook="review"><span class="a-profile-name">Private reviewer</span>
+          <div data-hook="review-body"><span>The dispenser leaks<br>when I use it.</span><a>Read more</a></div></div>
+        <div data-hook="review" hidden><div data-hook="review-body">Hidden review is not evidence.</div></div>
+        <div data-hook="review" style="display: none"><div data-hook="review-body">Another hidden review.</div></div>
+      </div>
+      <aside data-hook="review"><div data-hook="review-body">Recommended product feedback must stay out.</div></aside>`;
+    const read = transport({ "/dp/B000000001": html(body) });
+    const result = await createWebsiteScanner(read)("https://www.amazon.in/dp/B000000001", undefined, { singlePage: true, marketplaceReviews: true });
+    expect(result.pages[0].listingReviews).toEqual({ productUrl: "https://www.amazon.in/dp/B000000001", title: "Fixture bottle",
+      reviews: [{ text: "The dispenser leaks when I use it." }] });
+    const ordinary = await createWebsiteScanner(read)("https://www.amazon.in/dp/B000000001", undefined, { singlePage: true });
+    expect(ordinary.pages[0].listingReviews).toBeUndefined();
+    const mismatched = await createWebsiteScanner(transport({ "/dp/B000000002": html(body) }))(
+      "https://www.amazon.in/dp/B000000002", undefined, { singlePage: true, marketplaceReviews: true });
+    expect(mismatched.pages[0].listingReviews).toBeUndefined();
+  });
+  it("does not capture listing reviews when retention directives disallow storing the page", async () => {
+    const read = transport({ "/dp/B000000001": html(`<meta name="robots" content="noarchive">
+      <input id="ASIN" value="B000000001"><h1 id="productTitle">Fixture</h1>
+      <div id="cm-cr-dp-review-list"><div data-hook="review"><div data-hook="review-body">Must never be captured.</div></div></div>`) });
+    const result = await createWebsiteScanner(read)("https://www.amazon.in/dp/B000000001", undefined, { singlePage: true, marketplaceReviews: true });
+    expect(result.pages).toEqual([]);
+    expect(result.failures[0].message).toContain("prohibit retaining");
+  });
+  it("bounds static review capture to fifty excerpts of five hundred characters without extra requests", async () => {
+    const body = `<input id="ASIN" value="B000000001"><h1 id="productTitle">Fixture bottle</h1>
+      <div id="cm-cr-dp-review-list">${Array.from({ length: 60 }, () =>
+        `<div data-hook="review"><div data-hook="review-body">${"Long fixture review. ".repeat(50)}</div></div>`).join("")}</div>`;
+    const read = transport({ "/dp/B000000001": html(body) });
+    const result = await createWebsiteScanner(read)("https://www.amazon.in/dp/B000000001", undefined, { singlePage: true, marketplaceReviews: true });
+    expect(result.pages[0].listingReviews?.reviews).toHaveLength(50);
+    expect(result.pages[0].listingReviews?.reviews.every((review) => review.text.length === 500)).toBe(true);
+    expect(read.mock.calls.map(([url]) => url.pathname)).toEqual(["/robots.txt", "/dp/B000000001"]);
+  });
   it("extracts traceable facts and prioritizes useful pages within the expanded attempt budget", async () => {
     const body = `<h1>Our fixture shop</h1><h2>Products</h2><p>Owner-published informational copy for a deterministic public HTML scan fixture, not a real business.</p>
       <a href="mailto:hello@example.test">Email</a><a href="tel:+10000000000">Call us</a><button>Shop now</button>

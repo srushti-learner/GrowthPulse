@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { parse, CsvError } from "csv-parse/sync";
-import { emptyProduct, importRowLimit, normalizedGtin, normalizedSku, productImageUrlSchema, productInputSchema, productPreviewSchema, type ImportRow } from "../shared/products.js";
+import { emptyProduct, importRowLimit, normalizedGtin, normalizedSku, productDescriptionLimit, productImageUrlSchema, productInputSchema, productPreviewSchema, type ImportRow } from "../shared/products.js";
 import type { SavedScan } from "../shared/website.js";
 import { CatalogueError } from "./catalogue-store.js";
 
@@ -70,6 +70,12 @@ function websitePrice(value: unknown, notes: string[]) {
   notes.push(`Normalized published price "${trimmed}" to "${normalized}" by removing thousands separators.`);
   return normalized;
 }
+function websiteDescription(value: unknown, notes: string[]) {
+  const description = field(value);
+  if (typeof description !== "string" || description.trim().length <= productDescriptionLimit) return description;
+  notes.push(`Published description was shortened to ${productDescriptionLimit} characters for the catalogue. The full description remains in the saved website evidence.`);
+  return description.trim().slice(0, productDescriptionLimit);
+}
 function productImage(value: unknown, pageUrl: string, notes: string[]) {
   if (value === undefined || value === null) return undefined;
   const images = (Array.isArray(value) ? value : [value]).slice(0, 20);
@@ -121,7 +127,7 @@ export function websiteProducts(scan: Pick<SavedScan, "pages">, limit = importRo
       const stable = identity(identifiers, explicitId);
       const variants = Object.fromEntries(["size", "color", "material", "pattern"].filter((key) => raw[key] !== undefined).map((key) => [key, raw[key]]));
       const data = {
-        ...emptyProduct, name: field(raw.name), description: field(raw.description), sku, gtin,
+        ...emptyProduct, name: field(raw.name), description: websiteDescription(raw.description, notes), sku, gtin,
         ...(offers.length === 1 && object(offers[0]) ? offers[0] : {}), offers, variants: Object.keys(variants).length ? JSON.stringify(variants) : "",
         imageUrl: productImage(raw.image, page.url, notes),
       };

@@ -9,7 +9,7 @@ import { createApp } from "./app.js";
 import { openStore, type Store } from "./database.js";
 import { migrations } from "./migrations.js";
 import { csvProducts, websiteProducts } from "./product-imports.js";
-import { emptyProduct, productInputSchema, type ProductInput } from "../shared/products.js";
+import { emptyProduct, productDescriptionLimit, productInputSchema, type ProductInput } from "../shared/products.js";
 import { createWebsiteScanner } from "./website-scanner.js";
 import type { ScanResult } from "../shared/website.js";
 
@@ -119,6 +119,30 @@ describe("product imports and identity", () => {
     expect(rows.slice(4).every((row) => row.data === null && row.errors.some((error) => error.startsWith("Duplicate listing identity")))).toBe(true);
   });
 
+  it("bounds long website descriptions without rejecting products or relaxing owner and CSV validation", () => {
+    const description = "Published product details. ".repeat(200);
+    const rows = websiteProducts({ pages: [{
+      url: "https://shop.example.com/products/tee", capturedAt: timestamp, title: "", description: "", headings: [], text: "", contacts: [], callsToAction: [], links: [], warnings: [],
+      productJson: [
+        { name: "Long description", sku: "LONG", description: `  ${description}  ` },
+        { name: "Boundary description", sku: "BOUNDARY", description: "x".repeat(productDescriptionLimit) },
+        { name: "Invalid description", sku: "INVALID", description: { text: description } },
+        { name: "No identity", description },
+      ].map((value) => JSON.stringify({ "@type": "Product", ...value })),
+    }] });
+    expect(rows[0].errors).toEqual([]);
+    expect(rows[0].data?.description).toBe(description.trim().slice(0, productDescriptionLimit));
+    expect(rows[0].notes.join(" ")).toContain("The full description remains in the saved website evidence");
+    expect(rows[1].errors).toEqual([]);
+    expect(rows[1].data?.description).toHaveLength(productDescriptionLimit);
+    expect(rows[1].notes).toEqual([]);
+    expect(rows[2].data).toBeNull();
+    expect(rows[2].errors.join(" ")).toContain("description:");
+    expect(rows[3].errors.join(" ")).toContain("identity:");
+    expect(productInputSchema.safeParse({ ...product, description }).success).toBe(false);
+    expect(csvProducts(`name,sku,description\nTee,LONG,${description}`)[0].data).toBeNull();
+  });
+
   it.each([
     "javascript:alert(1)", "data:image/svg+xml,bad", "file:///image.png", "http://cdn.example.com/image.png",
     "https://user:password@cdn.example.com/image.png", "https://127.0.0.1/image.png",
@@ -216,7 +240,8 @@ describe("owner catalogue API and transactions", () => {
 
   it("synchronizes retained legacy scans idempotently with ownership and origin checks and no network calls", async () => {
     const alice = await owner(), bob = await owner("bob@example.test");
-    const evidence = captured([{ "@type": "Product", name: "Legacy tee", sku: "LEGACY" }]), scanId = randomUUID();
+    const description = "Published website product details. ".repeat(200);
+    const evidence = captured([{ "@type": "Product", name: "Legacy tee", sku: "LEGACY", description }]), scanId = randomUUID();
     const database = new Database(path);
     try {
       database.prepare("INSERT INTO website_scans (id,business_id,requested_url,status,started_at,completed_at,page_count,result_json) VALUES (?,?,?,?,?,?,?,?)")
@@ -232,6 +257,9 @@ describe("owner catalogue API and transactions", () => {
     await post(alice, suffix, { products: [] }).expect(400);
     const first = (await post(alice, suffix, {}).expect(200)).body;
     expect(first.catalogue.created).toBe(1);
+    expect(first.products[0].description).toBe(description.trim().slice(0, productDescriptionLimit));
+    expect(first.products[0].listings[0].data.description).toBe(first.products[0].description);
+    expect((await store.getScan(alice.userId, alice.id, scanId))?.pages[0].productJson).toEqual(evidence.pages[0].productJson);
     const repeat = (await post(alice, suffix, {}).expect(200)).body;
     expect(repeat.catalogue).toMatchObject({ created: 0, updated: 0, unchanged: 1 });
     expect(repeat.products).toEqual(first.products);

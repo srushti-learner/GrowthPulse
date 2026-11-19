@@ -1,6 +1,6 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { createPool, type Pool, type RowDataPacket } from "mysql2/promise";
+import { createPool, type Pool, type PoolConnection, type RowDataPacket } from "mysql2/promise";
 import request from "supertest";
 import { openMysqlStore } from "./mysql-store.js";
 import { mysqlDatabase, type SqlDatabase } from "./sql-database.js";
@@ -18,10 +18,72 @@ import { createAnalysisWorker } from "./analysis-worker.js";
 import { createBusinessAgent, type AgentMessage } from "./business-agent.js";
 import { buildAgentEvidence } from "./agent-evidence.js";
 import type { ResearchReport } from "../shared/research.js";
+import { migrateMysql } from "./mysql-migrations.js";
 
 const enabled = process.env.GP_TEST_MYSQL === "1";
 const origin = "https://growth.example";
 const website = "https://shop.example.com/";
+
+describe("additive MySQL migration sequencing without a database connection", () => {
+  async function fixture(run: (value: {
+    pool: Pool; rows: { version: number; checksum: string; completed: number }[];
+    query: ReturnType<typeof vi.fn>; release: ReturnType<typeof vi.fn>;
+  }) => Promise<void>) {
+    const rows: { version: number; checksum: string; completed: number }[] = [];
+    const query = vi.fn(async (sql: string, values: unknown[] = []) => {
+      if (sql.includes("GET_LOCK")) return [[{ acquired: 1 }], []];
+      if (sql.startsWith("SELECT version")) return [structuredClone(rows), []];
+      if (sql.startsWith("INSERT INTO mysql_schema_migrations")) {
+        rows.push({ version: Number(values[0]), checksum: String(values[1]), completed: 0 });
+      }
+      if (sql.startsWith("UPDATE mysql_schema_migrations")) rows.find((row) => row.version === values[0])!.completed = 1;
+      return [[], []];
+    });
+    const release = vi.fn();
+    const pool = createPool({});
+    const connection = { query, release } as PoolConnection;
+    const spy = vi.spyOn(pool, "getConnection").mockResolvedValue(connection);
+    try { await run({ pool, rows, query, release }); }
+    finally { spy.mockRestore(); await pool.end(); }
+  }
+  it("upgrades an existing v1 schema without replaying it, then treats the upgrade as already applied", async () => {
+    await fixture(async ({ pool, rows, query }) => {
+      await migrateMysql(pool, "fictional-test");
+      const original = structuredClone(rows.find((row) => row.version === 1)!);
+      rows.splice(1);
+      query.mockClear();
+      await migrateMysql(pool, "fictional-test");
+      expect(rows.find((row) => row.version === 1)).toEqual(original);
+      expect(query.mock.calls.filter(([sql]) => sql.startsWith("ALTER TABLE"))).toHaveLength(1);
+      expect(query.mock.calls.some(([sql]) => sql.startsWith("CREATE TABLE businesses"))).toBe(false);
+      expect(rows.find((row) => row.version === 2)?.completed).toBe(1);
+      query.mockClear();
+      await migrateMysql(pool, "fictional-test");
+      expect(query.mock.calls.some(([sql]) => /^(?:ALTER|INSERT|UPDATE)/.test(sql))).toBe(false);
+    });
+  });
+  it("refuses an interrupted upgrade without retrying its DDL and releases the migration lock", async () => {
+    await fixture(async ({ pool, rows, query, release }) => {
+      await migrateMysql(pool, "fictional-test");
+      rows.find((row) => row.version === 2)!.completed = 0;
+      query.mockClear(); release.mockClear();
+      await expect(migrateMysql(pool, "fictional-test")).rejects.toThrow("interrupted");
+      expect(query.mock.calls.some(([sql]) => /^(?:ALTER|INSERT|UPDATE)/.test(sql))).toBe(false);
+      expect(query.mock.calls.some(([sql]) => sql.includes("RELEASE_LOCK"))).toBe(true);
+      expect(release).toHaveBeenCalledOnce();
+    });
+  });
+  it("validates all applied checksums before attempting any missing migration", async () => {
+    await fixture(async ({ pool, rows, query }) => {
+      await migrateMysql(pool, "fictional-test");
+      rows.shift();
+      rows[0].checksum = "invalid";
+      query.mockClear();
+      await expect(migrateMysql(pool, "fictional-test")).rejects.toThrow("checksum");
+      expect(query.mock.calls.some(([sql]) => /^(?:ALTER|INSERT|UPDATE)/.test(sql))).toBe(false);
+    });
+  });
+});
 
 describe.skipIf(!enabled)("real MySQL persistence (explicit disposable database only)", () => {
   let first: Store, second: Store, pool: Pool, database: SqlDatabase;
@@ -269,8 +331,11 @@ describe.skipIf(!enabled)("real MySQL persistence (explicit disposable database 
     expect(tasks.filter((task) => task.started)).toHaveLength(1);
     expect(tasks[0]!.id).toBe(tasks[1]!.id);
     const task = tasks.find((task) => task.started)!;
+    const progress = { stage: "collecting" as const, completed: 0, total: 1 };
+    await first.updateMarketplaceProgress(user.id, business.id, product.id, task.id, progress);
+    expect((await second.marketplaceState(user.id, business.id, product.id, report.fingerprint)).progress).toEqual(progress);
     await first.finishMarketplace(user.id, business.id, product.id, task.id, report);
-    expect((await second.marketplaceState(user.id, business.id, product.id, report.fingerprint)).report).toEqual(report);
+    expect(await second.marketplaceState(user.id, business.id, product.id, report.fingerprint)).toMatchObject({ report, progress: null });
     expect(await second.marketplaceRequest(user.id, business.id, product.id, key, "synthetic-input")).toBeTruthy();
     const fingerprint = productFingerprint(product);
     const lease = await first.beginProductAnalysis(user.id, business.id, product.id, fingerprint);

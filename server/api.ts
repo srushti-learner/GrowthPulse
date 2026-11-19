@@ -25,7 +25,7 @@ import { readSalesFile, salesFileHash } from "./sales-imports.js";
 import { analyticsCurrency } from "../shared/analytics.js";
 import { trafficSourceSchema } from "../shared/traffic.js";
 import { readTrafficFile } from "./traffic-imports.js";
-import { marketplaceAnalyseInput, marketplaceImportInput, marketplaceLimits, marketplaceMatchInput, marketplaceResearchInput, type MarketplaceReport } from "../shared/marketplace.js";
+import { marketplaceAnalyseInput, marketplaceImportInput, marketplaceLimits, marketplaceMatchInput, marketplaceResearchInput, type MarketplaceProgress, type MarketplaceReport } from "../shared/marketplace.js";
 import { importMarketplaceCsv, marketplaceUrl } from "./marketplace-research.js";
 
 export class ApiError extends Error {
@@ -474,7 +474,8 @@ export function createApi(store: Store, origin: string, production: boolean, sca
     return current.report;
   }
   async function marketplaceTask(request: Request, response: Response, requestKey: string, inputHash: string,
-    work: (signal: AbortSignal) => Promise<MarketplaceReport>) {
+    work: (signal: AbortSignal, progress: (value: MarketplaceProgress) => Promise<void>) => Promise<MarketplaceReport>,
+    stage: MarketplaceProgress["stage"] = "discovering") {
     const { user, business, product } = await ownedProduct(request);
     const release = claimWorkSlot();
     if (!release) throw new ApiError(429, "Analysis capacity is busy. Saved evidence remains available; try again shortly.");
@@ -492,7 +493,9 @@ export function createApi(store: Store, origin: string, production: boolean, sca
     // Persist status before returning; browser disconnects never restart paid work.
     const pending = Promise.resolve().then(async () => {
       try {
-        const result = await work(signal);
+        const progress = (value: MarketplaceProgress) => store.updateMarketplaceProgress(user.id, business.id, product.id, task.id, value);
+        await progress({ stage, completed: 0, total: 0 });
+        const result = await work(signal, progress);
         signal.throwIfAborted();
         await store.finishMarketplace(user.id, business.id, product.id, task.id, result);
       } catch (error) {
@@ -534,7 +537,7 @@ export function createApi(store: Store, origin: string, production: boolean, sca
     };
     const capability = agent.marketplace;
     if (!capability) throw new ApiError(503, "Marketplace research is not configured.");
-    await marketplaceTask(request, response, input.requestKey, inputHash, (signal) => capability.discover(product, business.category, urls, signal));
+    await marketplaceTask(request, response, input.requestKey, inputHash, (signal, progress) => capability.discover(product, business.category, urls, signal, progress));
   });
   api.post("/businesses/:id/products/:productId/marketplace/import", async (request, _response, next) => {
     await ownedProduct(request); next();
@@ -575,7 +578,7 @@ export function createApi(store: Store, origin: string, production: boolean, sca
     const capability = agent.marketplace;
     if (!capability) throw new ApiError(503, "Marketplace analysis is not configured.");
     await marketplaceTask(request, response, randomUUID(), createHash("sha256").update(JSON.stringify(saved)).digest("hex"),
-      (signal) => capability.analyse(saved, product, signal));
+      (signal) => capability.analyse(saved, product, signal), "analysing");
   });
   api.get("/businesses/:id/product-intelligence", async (request, response) => {
     const { user, business } = await ownedBusiness(request);

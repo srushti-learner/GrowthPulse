@@ -277,6 +277,8 @@ describe("workspace foundation", () => {
     expect(container.querySelector(".welcome-scene-1")).not.toBeNull();
     await act(async () => container.querySelector<HTMLButtonElement>(".welcome-skip")!.click());
     expect(container.querySelector("#auth-heading")?.textContent).toBe("Make room for clarity.");
+    expect(container.textContent).not.toContain("Create a local account");
+    expect(container.textContent).not.toContain("Development preview:");
     expect(container.querySelector('[name="name"]')).not.toBeNull();
     expect(container.querySelector('input[type="url"]')).toBeNull();
     await act(async () => container.querySelector<HTMLButtonElement>(".welcome-login")!.click());
