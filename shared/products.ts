@@ -3,6 +3,7 @@ import { scannedCatalogueSchema } from "./website.js";
 
 export const catalogueLimit = 200;
 export const importRowLimit = 100;
+export const productDescriptionLimit = 2000;
 export const normalizedSku = (value: string) => value.trim().toUpperCase();
 export const normalizedGtin = (value: string) => value ? value.padStart(14, "0") : "";
 function validGtin(value: string) {
@@ -27,7 +28,7 @@ export const offerSchema = z.object({
 }).strict().refine((value) => !value.price || !!value.currency, { path: ["currency"], message: "Currency is required when price is supplied." });
 export const productInputSchema = z.object({
   name: z.string().trim().min(1, "Product name is required.").max(300),
-  description: z.string().trim().max(2000),
+  description: z.string().trim().max(productDescriptionLimit),
   sku: z.string().trim().max(100),
   gtin: z.string().trim().refine(validGtin, "Use a valid GTIN-8/12/13/14 with its check digit, or leave it blank."),
   price, currency,

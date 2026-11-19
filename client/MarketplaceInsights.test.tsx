@@ -50,12 +50,12 @@ describe("product-focused Marketplace Insights", () => {
     vi.stubGlobal("fetch", fetcher);
     container = document.createElement("div"); document.body.append(container); root = createRoot(container);
   });
-  afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
-  async function render(id = businessId) {
+  afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+  async function render(id = businessId, standalone = true, marketRunning = false) {
     await act(async () => root.render(<MarketplaceResearchProvider businessId={id} onSessionExpired={expired}>
-      <MarketplaceInsights businessId={id} />
+      {standalone && <MarketplaceInsights businessId={id} />}
       <MarketIntelligence businessName="Fixture shop" renderComparison={() => null}
-        report={{ version: 1, status: "complete", enabled: true, steps: [], usage: { modelCalls: 0, searches: 0, competitorScans: 0 } }} />
+        report={{ version: 1, status: marketRunning ? "running" : "complete", enabled: true, steps: [], usage: { modelCalls: 0, searches: 0, competitorScans: 0 } }} />
     </MarketplaceResearchProvider>));
   }
   function button(text: string) { return Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((item) => item.textContent === text)!; }
@@ -148,7 +148,7 @@ describe("product-focused Marketplace Insights", () => {
       return original(path, options);
     });
     await render();
-    await act(async () => button("Customer voice2 sampled review excerpts").click());
+    await act(async () => button("Customer voiceFeedback research needs attention").click());
     expect(container.querySelector(".marketplace-customer-voice")?.textContent).toContain("The bottle leaks during dispensing.");
     expect(button("Retry marketplace research").disabled).toBe(false);
     expect(container.textContent).toContain("Reload saved status only refreshes this saved message");
@@ -281,9 +281,75 @@ describe("product-focused Marketplace Insights", () => {
       ? Response.json({ businesses: [{ id: businessId, name: "Social seller", website: "", category: "", description: "", createdAt, updatedAt: createdAt }] })
       : original(path, options));
     await act(async () => root.render(<BusinessWorkspace activityOnly={false} researchOnly researchView="intelligence" onSessionExpired={expired} />));
-    expect(container.querySelectorAll(".marketplace-insights")).toHaveLength(1);
+    expect(container.querySelectorAll(".marketplace-insights")).toHaveLength(0);
     expect(container.querySelectorAll(".marketplace-customer-voice")).toHaveLength(1);
+    expect(button("Find fresh customer feedback")).toBeDefined();
     expect(container.querySelector(".marketplace-customer-voice")?.textContent).toContain("The bottle leaks during dispensing.");
     expect(fetcher.mock.calls.every(([, options]) => !options?.method)).toBe(true);
+  });
+
+  it("runs collection, source confirmation and analysis entirely inside Customer voice with independent real progress", async () => {
+    vi.useFakeTimers();
+    state.report = null;
+    const original = fetcher.getMockImplementation()!;
+    fetcher.mockImplementation(async (path, options) => {
+      if (options?.method === "POST") {
+        state = { ...state, running: true, progress: { stage: String(path).endsWith("/analyse") ? "analysing" : "discovering", completed: 0, total: 0 } };
+        return Response.json(state);
+      }
+      return original(path, options);
+    });
+    await render(businessId, false, true);
+    await act(async () => button("Customer voiceNo feedback saved").click());
+    const feedback = () => container.querySelector<HTMLElement>(".marketplace-customer-voice")!;
+    expect(container.querySelector(".dashboard-intro [data-slot=badge]")?.textContent).toBe("No feedback saved");
+    expect(feedback().textContent).not.toContain("Marketplace Insights above");
+    expect(feedback().textContent).toContain("Provider charges may apply");
+    expect(fetcher.mock.calls.every(([, options]) => !options?.method)).toBe(true);
+    await act(async () => button("Find customer feedback").click());
+    const started = fetcher.mock.calls.filter(([, options]) => options?.method === "POST");
+    expect(started).toHaveLength(1);
+    expect(JSON.parse(String(started[0][1]?.body))).toMatchObject({ consent: true, urls: [], refresh: false });
+    expect(container.querySelector(".dashboard-intro [data-slot=badge]")?.textContent).toBe("Collecting customer feedback");
+    expect(feedback().textContent).toContain("Finding product listings");
+    expect(feedback().textContent).not.toContain("No marketplace feedback saved");
+    state = { ...state, progress: { stage: "collecting", completed: 1, total: 2 } };
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    expect(feedback().textContent).toContain("1 of 2 listings checked");
+    state = structuredClone(initial);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    expect(feedback().textContent).toContain("waiting for listing confirmation");
+    expect(feedback().textContent).not.toContain("The bottle leaks during dispensing.");
+    await act(async () => button("My product, another seller").click());
+    expect(feedback().textContent).toContain("The bottle leaks during dispensing.");
+    expect(button("Analyse confirmed reviews").disabled).toBe(false);
+    await act(async () => button("Analyse confirmed reviews").click());
+    expect(container.querySelector(".dashboard-intro [data-slot=badge]")?.textContent).toBe("Analysing customer feedback");
+    expect(feedback().textContent).toContain("Analysing confirmed review excerpts.");
+    expect(fetcher.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(2);
+  });
+
+  it.each(["captured", "unavailable"] as const)("explains %s source gaps without passing off listing facts as customer insights", async (status) => {
+    state.report!.listings[0] = { ...state.report!.listings[0], status, reviews: [],
+      limitation: "robots.txt does not allow GrowthPulseBot to read this page." };
+    await render(businessId, false);
+    await act(async () => button("Customer voiceNo confirmed review text").click());
+    if (status === "unavailable") {
+      expect(container.textContent).toContain("No listing supplied usable product evidence");
+      expect(container.textContent).toContain("robots.txt does not allow");
+      expect(container.textContent).toContain("Repeating the same blocked request may not help");
+    } else {
+      expect(container.textContent).toContain("no individual review text was available");
+      expect(container.textContent).toContain("Ratings and brand descriptions cannot supply customer insights");
+    }
+    const options = container.querySelector<HTMLDetailsElement>(".marketplace-research-controls > details")!;
+    expect(options.querySelector("textarea")).not.toBeNull();
+    expect(options.querySelector('input[type="file"]')).not.toBeNull();
+    expect(button("Analyse confirmed reviews").disabled).toBe(true);
+    const steps = container.querySelectorAll(".feedback-progress li");
+    expect(steps[1].getAttribute("aria-current")).toBe("step");
+    expect(steps[2].getAttribute("data-state")).toBe("pending");
+    expect(steps[3].getAttribute("data-state")).toBe("pending");
+    expect(fetcher.mock.calls.every(([, options]) => options?.method !== "POST")).toBe(true);
   });
 });

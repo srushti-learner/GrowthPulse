@@ -43,10 +43,11 @@ describe("growth decision workspace", () => {
   }
   async function click(text: string) { await act(async () => button(text).click()); }
 
-  it("shows a conclusion first, keeps strategy/evidence on demand and never starts research while browsing", async () => {
+  it("shows a suggested experiment, keeps strategy/evidence on demand and never starts research while browsing", async () => {
     const fetch = vi.fn(async (_path: string) => json(snapshot)); vi.stubGlobal("fetch", fetch);
     await render();
     expect(container.querySelector(".growth-next-move h2")?.textContent).toBe(opportunity.title);
+    expect(container.querySelector('.growth-next-move [data-slot="card-description"]')?.textContent).toBe("Suggested experiment");
     expect(container.querySelector(".growth-next-move")!.compareDocumentPosition(container.querySelector(".growth-summary")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(container.querySelector(".growth-map")?.getAttribute("open")).toBeNull();
     expect(container.textContent).toContain("Partial evidence");
@@ -63,6 +64,8 @@ describe("growth decision workspace", () => {
       .toBe(`#simulator?business=${business.id}&action=${opportunity.id}`);
     expect(dialog.querySelector<HTMLAnchorElement>('a[href^="#products"]')?.getAttribute("href"))
       .toBe(`#products?business=${business.id}&action=${opportunity.id}`);
+    expect(dialog.querySelector('a[href^="#products"]')?.textContent).toContain("Work on a product with this context");
+    expect(dialog.querySelector('a[href^="#products"]')?.getAttribute("data-slot")).toBe("button");
     const background = dialog.querySelector<HTMLDetailsElement>(".action-background")!;
     expect(background.open).toBe(false);
     await act(async () => background.querySelector("summary")!.click());
@@ -73,6 +76,25 @@ describe("growth decision workspace", () => {
     expect(evidence.textContent).toContain(opportunity.sources[0].quote);
     expect(fetch).toHaveBeenCalledOnce();
     expect(fetch.mock.calls[0][0]).toBe(`/api/businesses/${business.id}/growth`);
+  });
+
+  it.each(["Experiment 2:", "Research 2:", "Experiment #2 -"])("removes the %s prefix from displayed recommendation titles without changing saved data", async (prefix) => {
+    const numbered = { ...opportunity, title: `${prefix} ${opportunity.title}` };
+    const fetch = vi.fn(async () => json({ ...snapshot, opportunities: [numbered], plan: [{ ...planned, opportunity: numbered }] }));
+    vi.stubGlobal("fetch", fetch);
+    await render();
+    expect(container.querySelector(".growth-next-move h2")?.textContent).toBe(opportunity.title);
+    expect(container.querySelector(".growth-plan-item summary")?.textContent).not.toContain(prefix);
+    await click("Explore strategy");
+    expect(document.querySelector('[data-slot="sheet-title"]')?.textContent).toBe(opportunity.title);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("preserves meaningful numbers that are not experiment or research prefixes", async () => {
+    const title = "Research 2026 customer buying patterns";
+    vi.stubGlobal("fetch", vi.fn(async () => json({ ...snapshot, opportunities: [{ ...opportunity, title }] })));
+    await render();
+    expect(container.querySelector(".growth-next-move h2")?.textContent).toBe(title);
   });
 
   it("reopens the exact saved action from a journey handoff without changing its status", async () => {

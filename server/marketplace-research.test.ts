@@ -111,6 +111,51 @@ describe("bounded marketplace research in the existing Market Intelligence agent
     await confirm(user, saved).expect(400);
     expect(complete).not.toHaveBeenCalled(); expect(searchCall).not.toHaveBeenCalled();
   });
+  it("collects exact-listing static review blocks without JSON-LD, deduplicates and redacts them, and still requires match confirmation", async () => {
+    const user = await owner();
+    const scan = createWebsiteScanner(async (url) => url.pathname === "/robots.txt"
+      ? { status: 200, headers: { "content-type": "text/plain" }, body: "User-agent: *\nAllow: /" }
+      : { status: 200, headers: { "content-type": "text/html" }, body: `<html><body>
+        <input id="ASIN" value="B000000001"><h1 id="productTitle">Fixture hair oil</h1>
+        <div id="cm-cr-dp-review-list">${["The dispenser leaks, contact buyer@example.com.", "The dispenser leaks, contact buyer@example.com.", "I find the bottle difficult to pour."].map((text) =>
+          `<article data-hook="review"><span class="a-profile-name">Private buyer</span><div data-hook="review-body">${text}</div></article>`).join("")}</div>
+        </body></html>` });
+    scanner.mockImplementation(scan);
+    await post(user, "", { consent: true, requestKey: randomUUID(), urls: [amazon] }).expect(202);
+    const result = await finished(user);
+    expect(result.progress).toBeNull();
+    const saved = result.report!;
+    expect(saved.listings[0]).toMatchObject({ status: "captured", title: "Fixture hair oil", relation: "unconfirmed", rating: null, reviewCount: null });
+    expect(saved.listings[0].reviews).toHaveLength(2);
+    expect(saved.listings[0].reviews[0]).toMatchObject({ text: "The dispenser leaks, contact [email removed].", rating: null, date: null });
+    expect(JSON.stringify(saved)).not.toMatch(/Private buyer|buyer@example/);
+    await post(user, "/analyse", { reportId: saved.id, consent: true }).expect(400);
+    expect(complete).not.toHaveBeenCalled();
+    await confirm(user, saved).expect(200);
+    await post(user, "/analyse", { reportId: saved.id, consent: true }).expect(202);
+    expect((await finished(user)).report!.themes).toHaveLength(1);
+  });
+  it("persists actual collection progress per product and keeps saved evidence available while work runs", async () => {
+    const user = await owner(), other = await owner();
+    const previous = (await post(user, "/import", { consent: true, csv }).expect(201)).body.report as MarketplaceReport;
+    const original = scanner.getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    scanner.mockImplementation(async (...parameters) => { await gate; return original(...parameters); });
+    try {
+      await post(user, "", { consent: true, requestKey: randomUUID(), urls: [amazon], refresh: true }).expect(202);
+      await vi.waitFor(async () => {
+        expect((await get(user)).body.progress).toEqual({ stage: "collecting", completed: 0, total: 1 });
+      });
+      const reopened = openStore(path);
+      try {
+        const persisted = await reopened.marketplaceState(user.user.id, user.business.id, user.product.id, productFingerprint(user.product));
+        expect(persisted).toMatchObject({ running: true, progress: { stage: "collecting", completed: 0, total: 1 }, report: previous });
+      } finally { await reopened.close(); }
+      expect((await get(other)).body.progress).toBeNull();
+    } finally { release(); }
+    expect((await finished(user)).progress).toBeNull();
+  });
   it.each(["savoury snacks", "---"])("still searches the saved product when category %s cannot be grounded", async (category) => {
     const user = await owner();
     const product = await store.saveProduct(user.user.id, user.business.id, {
@@ -162,12 +207,15 @@ describe("bounded marketplace research in the existing Market Intelligence agent
       : { status: 200, headers: { "content-type": "text/html" }, body: `<html><script type="application/ld+json">${JSON.stringify({
         "@type": "Product", name: "Recommended item", url: "https://www.amazon.in/dp/B000000099",
         review: { reviewBody: "This other item must never be treated as evidence." },
-      })}</script><body>Recommendations for another item, not the requested product.</body></html>` });
+      })}</script><body><input id="ASIN" value="B000000001"><h1 id="productTitle">Fixture hair oil</h1>
+      <div id="cm-cr-dp-review-list"><article data-hook="review"><div data-hook="review-body">Visible review must not override contradictory product identity.</div></article></div>
+      Recommendations for another item, not the requested product.</body></html>` });
     scanner.mockImplementation(scan);
     await post(user, "", { consent: true, requestKey: randomUUID(), urls: [amazon] }).expect(202);
     const saved = (await finished(user)).report!;
     expect(saved.listings[0]).toMatchObject({ status: "unavailable", reviews: [], sources: [] });
     expect(JSON.stringify(saved)).not.toContain("This other item");
+    expect(JSON.stringify(saved)).not.toContain("Visible review");
   });
   it("imports authorized reviews, requires confirmation, preserves own-product scope and saves analysis across restart", async () => {
     const user = await owner();

@@ -332,6 +332,9 @@ export const migrations = [{
 }, {
   version: 16,
   sql: "CREATE TABLE IF NOT EXISTS graph_checkpoint_imports (name TEXT PRIMARY KEY);",
+}, {
+  version: 17,
+  sql: "ALTER TABLE marketplace_research ADD COLUMN progress_json TEXT CHECK(progress_json IS NULL OR json_valid(progress_json));",
 }];
 
 export function migrate(database: Database.Database) {

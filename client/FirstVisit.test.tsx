@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FirstVisit } from "./FirstVisit";
 import type { OnboardingPreview } from "../shared/onboarding";
 import type { Understanding } from "../shared/understanding";
+import type { AnalysisJob } from "../shared/analysis";
 
 const user = { id: "509e12ce-3028-4ed1-bdf7-329a26d470d8", name: "Test Owner", email: "owner@example.test" };
 const timestamp = "2026-11-16T12:00:00.000Z";
@@ -134,6 +135,41 @@ describe("signed-in website onboarding", () => {
     expect(container.querySelector(".agent-profile-form")).toBeNull();
     expect(analyses(fetch)).toHaveLength(1);
     expect(fetch.mock.calls.filter(([path]) => path.endsWith("/apply"))).toHaveLength(0);
+  });
+
+  it("hides analysis details during first-time AI analysis without hiding progress or cancellation", async () => {
+    const fetch = fetcher({ restored: preview });
+    const complete = fetch.getMockImplementation()!;
+    const job: AnalysisJob = {
+      id: "9f1fb19f-04dc-41d7-ae01-8b5e238266fe", businessId: business.id, requestedUrl: business.website,
+      scanId: review.scanId, status: "running", phase: "analysing", preview: null, understanding: null,
+      error: null, revision: 1, createdAt: timestamp, updatedAt: timestamp, researchVersion: 2,
+    };
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    fetch.mockImplementation(async (path, options) => {
+      if (path.endsWith("/understanding") && options?.method === "POST") {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            stream = controller;
+            stream.enqueue(new TextEncoder().encode(`${JSON.stringify({ type: "job", job })}\n`));
+          },
+        }), { headers: { "Content-Type": "application/x-ndjson" } });
+      }
+      return complete(path, options);
+    });
+    await render();
+    await startAnalysis();
+    expect(container.textContent).not.toContain("Analysis details");
+    expect(container.querySelector(".agent-progress [role=status]")?.textContent).toBe("Writing your business briefing...");
+    expect(container.querySelector(".agent-progress button")?.textContent).toBe("Cancel analysis");
+    expect(container.querySelector(".agent-progress-details")).toBeNull();
+    expect(analyses(fetch)).toHaveLength(1);
+    await act(async () => {
+      stream.enqueue(new TextEncoder().encode(`${JSON.stringify({ type: "complete", understanding: review })}\n`));
+      stream.close();
+    });
+    expect(container.textContent).toContain("Your business, explained.");
+    expect(container.querySelector(".agent-progress")).toBeNull();
   });
 
   it("restores the website URL without showing scan findings or automatically claiming or calling AI", async () => {
@@ -287,6 +323,7 @@ describe("signed-in website onboarding", () => {
     await render(); await set("onboardingUrl", business.website); await startAnalysis();
     expect(container.querySelector<HTMLFieldSetElement>("fieldset")?.disabled).toBe(true);
     expect(container.querySelector('[role="status"]')?.textContent).toContain("AI analysis follows automatically");
+    expect(container.textContent).not.toContain("Analysis details");
     await submit(".first-visit form");
     expect(fetch.mock.calls.filter(([path]) => path.endsWith("/onboarding/scan"))).toHaveLength(1);
     await act(async () => finish(json({ preview })));

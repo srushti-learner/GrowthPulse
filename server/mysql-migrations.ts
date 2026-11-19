@@ -142,14 +142,26 @@ export async function migrateMysql(pool: Pool, databaseName: string) {
       version INTEGER PRIMARY KEY, checksum CHAR(64) NOT NULL, completed INTEGER NOT NULL DEFAULT 0
     ) ENGINE=InnoDB`);
     const [applied] = await connection.query<(RowDataPacket & { version: number; checksum: string; completed: number })[]>("SELECT version,checksum,completed FROM mysql_schema_migrations");
-    const checksum = createHash("sha256").update(statements.join("\n")).digest("hex");
-    if (applied.some((row) => row.version !== 1)) throw new Error("MySQL schema is newer than this application.");
+    const migrations = [
+      { version: 1, statements },
+      { version: 2, statements: ["ALTER TABLE marketplace_research ADD COLUMN progress_json LONGTEXT CHECK(progress_json IS NULL OR JSON_VALID(progress_json))"] },
+    ];
+    if (applied.some((row) => !migrations.some((migration) => migration.version === row.version))) throw new Error("MySQL schema is newer than this application.");
     if (applied.some((row) => !row.completed)) throw new Error("A MySQL migration was interrupted. Verify the database and repair the incomplete migration before restarting; no tables were deleted.");
-    if (applied.some((row) => row.checksum !== checksum)) throw new Error("Applied MySQL migration checksum does not match this application.");
-    if (applied.length) return;
-    await connection.query("INSERT INTO mysql_schema_migrations (version,checksum,completed) VALUES (1,?,0)", [checksum]);
-    for (const statement of statements) await connection.query(statement);
-    await connection.query("UPDATE mysql_schema_migrations SET completed=1 WHERE version=1");
+    for (const migration of migrations) {
+      const existing = applied.find((row) => row.version === migration.version);
+      if (existing && existing.checksum !== createHash("sha256").update(migration.statements.join("\n")).digest("hex")) {
+        throw new Error("Applied MySQL migration checksum does not match this application.");
+      }
+    }
+    for (const migration of migrations) {
+      const checksum = createHash("sha256").update(migration.statements.join("\n")).digest("hex");
+      const existing = applied.find((row) => row.version === migration.version);
+      if (existing) continue;
+      await connection.query("INSERT INTO mysql_schema_migrations (version,checksum,completed) VALUES (?, ?,0)", [migration.version, checksum]);
+      for (const statement of migration.statements) await connection.query(statement);
+      await connection.query("UPDATE mysql_schema_migrations SET completed=1 WHERE version=?", [migration.version]);
+    }
   } finally {
     try { if (locked) await connection.query("SELECT RELEASE_LOCK(?)", [lock]); }
     finally { connection.release(); }

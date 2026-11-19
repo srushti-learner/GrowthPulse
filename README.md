@@ -68,13 +68,14 @@ and Market gaps. Verified brand profiles, one-topic comparisons, dated published
 price claims and accepted gap hypotheses reuse saved research. Hypotheses are not
 established demand; claims are not market share, sales or relative-price scores.
 The website report does not collect customer reviews. Product-specific
-**Marketplace Insights** now provides a separate, explicitly approved research path
-described below. External trend datasets, continuous Market Radar alerts, price history
+**Customer voice** provides an explicitly approved collection, source-confirmation
+and review-analysis workflow on the same page, as described below.
+External trend datasets, continuous Market Radar alerts, price history
 and manual independent-brand submission are **not implemented**.
-The marketplace research button has no surrounding explanatory paragraphs by
-default. **Research options and details** holds provider/charge disclosures,
-scope, listing URLs and the authorized review CSV fallback. Browsing or opening
-these details never starts paid research; errors remain visible.
+Customer voice displays the provider/charge disclosure alongside its start action.
+**Research options and details** holds scope, listing URLs and the authorized
+review CSV fallback. Browsing or opening these details never starts paid research;
+errors remain visible.
 Full explanations and original evidence open on demand. The Store briefing and
 original specialist outputs remain under **At a glance → Store briefing and saved
 specialist details**, not on the Market landing page. The active business is
@@ -106,6 +107,9 @@ remain separate.
 Competitor, Customer, Pricing, Product Opportunities and Growth Strategy findings.
 It brings together accepted, cited suggestions, a first recommendation to review,
 on-demand strategy/evidence drawers and a persistent business-specific action plan.
+The first suggestion uses a compact **Suggested experiment** card, not a
+predicted-impact hero. Numbered Experiment/Research prefixes are omitted from
+displayed recommendation titles; saved recommendations and evidence are unchanged.
 The initial review order favors saved Growth Strategy synthesis, then supporting
 specialists and distinct captured pages; it is not a predicted-impact score.
 Owners assess potential impact, effort and time to value. Those assessments
@@ -137,8 +141,11 @@ edits are rejected instead of silently overwriting another view.
 
 ### Marketplace Insights
 
-Open **Market intelligence**, choose a reviewed catalogue product, read the provider
-disclosure and select **Research marketplaces**. This works without a business website.
+Open **Market intelligence → Customer voice**, choose a reviewed catalogue product,
+read the provider disclosure and select **Find customer feedback**. Collection,
+listing confirmation, authorized imports and **Analyse confirmed reviews** are
+available here; there is no separate "above" workflow to locate. For a profile
+without a website, the same feedback workflow is shown directly in Market intelligence.
 The existing Market Intelligence agent exposes a bounded LangGraph marketplace
 workflow using the existing server-only Anthropic/Tavily configuration; no extra AI
 provider or autonomous agent fleet is introduced.
@@ -149,13 +156,20 @@ provider or autonomous agent fleet is introduced.
   If the proposed category is not supported by saved product details, discovery
   still searches the saved product name on both marketplaces, skips category
   queries and records the reduced comparable-product coverage. Failed attempts
-  can be retried explicitly with **Retry marketplace research**; reloading saved status
-  never retries research.
+  can be retried explicitly with **Find fresh customer feedback**; reloading saved
+  status never retries research.
 - The existing DNS-pinned, robots-aware scanner reads one public page per listing.
   Login/challenge/retention restrictions remain enforced; no browser automation,
-  proxy rotation or bypass is added. Only an unambiguous Product JSON-LD record
-  supplies listing facts and any embedded individual review excerpts. Blocked pages,
-  missing structured data and absent review text remain explicit gaps. This is **not**
+  proxy rotation or bypass is added. An unambiguous Product JSON-LD record supplies
+  listing facts and embedded review excerpts. An opt-in Amazon adapter also reads
+  bounded static review-body blocks in the listing's review section when the
+  page's ASIN matches the requested product and its product title is present.
+  These blocks can supply review text without JSON-LD, but never override
+  contradictory/ambiguous structured product identity. Ratings/dates absent from
+  these blocks remain unknown; unrelated text, recommendations, hidden blocks and
+  reviewer author fields are not used. Flipkart capture still requires Product
+  JSON-LD. Blocked pages, missing product identity and absent review text remain
+  explicit per-source gaps, with listing-link/export recovery actions. This is **not**
   a comprehensive live Amazon/Flipkart review feed or an official marketplace API
   integration. Flipkart query parameters are dropped; verify the captured variant.
 - Confirm each captured listing as **My listing**, **My product, another seller**,
@@ -181,15 +195,21 @@ provider or autonomous agent fleet is introduced.
 - Public ratings/counts remain attributed publisher claims; review counts are not
   orders. No competitor order totals, currency conversions, automatic price
   advantages, catalogue rewrites, publishing or monitoring are inferred.
-- **Customer voice** shares the selected product and saved marketplace status
-  with Marketplace Insights. It shows review excerpts only from captured,
+- **Customer voice** owns the selected product's research controls and status,
+  independent of the business/competitor research badge. Actual discovery,
+  per-listing capture counts and analysis stages are persisted in SQLite/MySQL
+  and reloaded on return; listing confirmation remains an explicit owner action.
+  Finding listings is not reported as successfully collecting reviews.
+  It shows review excerpts only from captured,
   owner-confirmed listings, with separate own-product and comparable-product
   samples, source links, capture dates, known review dates and export provenance.
   Saved AI themes cite their supporting excerpts; reading feedback never runs
   analysis. Confirmations, imports and completed research update the same view.
   Unconfirmed/excluded listings and stale catalogue matches are not presented as
-  current feedback. No-website businesses can read the same feedback beneath
-  Marketplace Insights. **Market trends** still requires a dated trend dataset
+  current feedback. After analysis, cited insights come first; source-confirmation
+  and collection controls remain available in **Review sources or collect fresh feedback**.
+  No-website businesses use the same controls.
+  **Market trends** still requires a dated trend dataset
   or repeated observations; marketplace search/review samples do not establish trends.
 - Work starts only with explicit consent and returns saved status immediately.
   Reopening/polling is read-only; duplicate request keys do not repeat paid work.
@@ -983,8 +1003,12 @@ explicit and may incur another provider charge.
 **Add a product manually** is always available on the catalogue page for products
 the scan missed. CSV upload and saved-scan record review remain optional bulk/
 repair tools under **Manual entry and optional bulk tools**. Existing agent
-discovery drafts are synchronized from their retained scan when Products opens;
-this makes no scanner or AI calls and requires no import confirmation.
+discovery drafts and scans with previously skipped records are synchronized from
+their retained scan when Products opens; this makes no scanner or AI calls and
+requires no import confirmation. Long published product descriptions are shortened
+to the catalogue's 2,000-character limit, with a note in the source preview; the
+complete original description remains in the saved scan. This does not relax
+owner/CSV validation or invent identifiers for incomplete collection summaries.
 
 Website synchronization is transactional with scan saving and works with local
 SQLite and production MySQL. Rescans refresh only source listings, not owner-edited

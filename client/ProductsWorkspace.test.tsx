@@ -388,6 +388,38 @@ describe("product workspace", () => {
     expect(fetch.mock.calls.some(([path]) => path.includes("/product-imports/"))).toBe(false);
   });
 
+  it.each([false, true])("retries previously skipped scan records and replaces stale issues without scans or AI (existing products: %s)", async (hasProducts) => {
+    const identityIssue = { reference: "https://shop.example.com/collection", name: "Incomplete collection entry", message: "No usable product identifier." };
+    const saved: Understanding = { ...understanding, productImportId: null, catalogue: {
+      created: 0, updated: 0, unchanged: 0, skipped: 2,
+      issues: [{ reference: "https://shop.example.com/products/tee", name: data.name, message: "description: Too big: expected string to have <=2000 characters" }, identityIssue],
+    } };
+    const fetch = fetcher((path) => path.endsWith(`/scans/${scanId}/catalogue`)
+      ? json({ catalogue: { created: hasProducts ? 0 : 1, updated: 0, unchanged: hasProducts ? 1 : 0, skipped: 1, issues: [identityIssue] }, products: [product] })
+      : json({ products: hasProducts ? [product] : [] }), saved);
+    await render();
+    expect(container.querySelector(".catalogue-product h3")?.textContent).toBe(data.name);
+    expect(container.querySelector(".product-catalogue-metrics dd")?.textContent).toBe("1");
+    expect(container.textContent).toContain("Website products needing attention (1)");
+    expect(container.textContent).toContain(identityIssue.message);
+    expect(container.textContent).not.toContain("description: Too big");
+    expect(container.querySelector(".import-review")).toBeNull();
+    expect(fetch.mock.calls.filter(([, options]) => options?.method).map(([path]) => path)).toEqual([`/api/businesses/${businessId}/scans/${scanId}/catalogue`]);
+  });
+
+  it("does not claim the catalogue is ready when saved records remain unusable", async () => {
+    const catalogue = { created: 0, updated: 0, unchanged: 0, skipped: 1, issues: [
+      { reference: "https://shop.example.com/collection", name: "Incomplete collection entry", message: "No usable product identifier." },
+    ] };
+    const fetch = fetcher((path) => path.endsWith(`/scans/${scanId}/catalogue`)
+      ? json({ catalogue, products: [] }) : json({ products: [] }), { ...understanding, productImportId: null, catalogue });
+    await render();
+    expect(container.querySelector('[role="status"]')?.textContent).toContain("No usable products could be added from this saved scan");
+    expect(container.textContent).not.toContain("Your website catalogue is ready");
+    expect(container.querySelector(".catalogue-product")).toBeNull();
+    expect(fetch.mock.calls.filter(([, options]) => options?.method)).toHaveLength(1);
+  });
+
   it("keeps the catalogue visible if saved-scan synchronization fails and retries without paid calls", async () => {
     let failed = true;
     const fetch = fetcher((path) => path.endsWith(`/scans/${scanId}/catalogue`)

@@ -36,9 +36,16 @@ export const marketplaceReportSchema = z.object({
   themes: marketplaceThemesSchema.shape.themes, analysedAt: z.iso.datetime().nullable(),
   limitations: z.array(z.string().max(500)).max(12),
 }).strict();
+export const marketplaceProgressSchema = z.object({
+  stage: z.enum(["discovering", "collecting", "analysing"]),
+  completed: z.number().int().min(0).max(marketplaceLimits.listings),
+  total: z.number().int().min(0).max(marketplaceLimits.listings),
+}).strict();
+export type MarketplaceProgress = z.infer<typeof marketplaceProgressSchema>;
 export const marketplaceResponseSchema = z.object({
   configured: z.boolean(), discoveryConfigured: z.boolean(),
   report: marketplaceReportSchema.nullable(), running: z.boolean(), stale: z.boolean(), error: z.string().nullable(),
+  progress: marketplaceProgressSchema.nullable().optional(),
 });
 export const marketplaceResearchInput = z.object({
   consent: z.literal(true), requestKey: z.uuid(),

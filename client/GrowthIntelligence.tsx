@@ -18,6 +18,9 @@ import { journeyLink } from "./GrowthJourney";
 const statusLabels = { planned: "Planned", in_progress: "In progress", completed: "Completed", dismissed: "Dismissed" };
 const assessmentLabels = { unknown: "Not assessed", low: "Low", medium: "Medium", high: "High" };
 const timelineLabels = { unknown: "Not assessed", days: "Days", weeks: "Weeks", months: "Months" };
+function recommendationTitle(title: string) {
+  return title.replace(/^\s*(?:experiment|research)\s+#?\d+\s*[:.)-]\s*/i, "").trim() || title;
+}
 function quadrant(item: GrowthPlanItem) {
   if (item.impact === "unknown" || item.effort === "unknown") return null;
   return item.impact === "high" ? item.effort === "low" ? "Quick wins" : "Strategic bets"
@@ -55,7 +58,7 @@ function ActionPlan({ opportunity }: { opportunity: GrowthOpportunity }) {
 function Strategy({ opportunity, businessId, planned = false }: { opportunity: GrowthOpportunity; businessId: string; planned?: boolean }) {
   return <Sheet><SheetTrigger asChild><Button variant="outline">Explore strategy<ArrowRight /></Button></SheetTrigger>
     <SheetContent className="research-drawer"><SheetHeader>
-      <p className="section-eyebrow">GROWTH RECOMMENDATION</p><SheetTitle>{opportunity.title}</SheetTitle>
+      <p className="section-eyebrow">GROWTH RECOMMENDATION</p><SheetTitle>{recommendationTitle(opportunity.title)}</SheetTitle>
       <SheetDescription>A planning scaffold from saved AI findings, not an executed change or a promised outcome.</SheetDescription>
     </SheetHeader><div className="research-drawer-body growth-strategy">
       <ActionPlan opportunity={opportunity} />
@@ -211,7 +214,7 @@ export function GrowthIntelligence({ business, onSessionExpired, onPlanSaved, ac
           : "Use the filters to review your saved work, or return to Decide to choose another action."}</p>
         <Button asChild variant="outline"><a href={journeyLink("growth", business.id)}>Review opportunities<ArrowRight /></a></Button></CardContent></Card>}
       {visible.map((item, index) => <details className="agent-sources growth-plan-item" open={index === 0} key={item.opportunity.id} id={`growth-action-${item.opportunity.id}`}>
-        <summary>{item.opportunity.title} <Badge variant="outline">{item.status === "completed" ? "Marked complete by you" : statusLabels[item.status]}</Badge></summary>
+        <summary>{recommendationTitle(item.opportunity.title)} <Badge variant="outline">{item.status === "completed" ? "Marked complete by you" : statusLabels[item.status]}</Badge></summary>
         <ActionPlan opportunity={item.opportunity} />
         <details className="agent-sources"><summary>Optional tools for this action</summary>
           <p>Only open a tool if it fits this action. You can also do the work outside GrowthPulse. No product has been selected or changed for you.</p>
@@ -233,9 +236,9 @@ export function GrowthIntelligence({ business, onSessionExpired, onPlanSaved, ac
     {mutationError && <p role="alert" className="form-error">{mutationError}</p>}
     {notice && <p role="status" className="dashboard-notice">{notice}</p>}
     <BlurFade duration={0.25} blur="2px"><Card className="growth-next-move">
-      <CardHeader><CardDescription>{ranked.length ? "YOUR FIRST PLANNED MOVE" : "START YOUR REVIEW HERE"}</CardDescription>
-        <CardTitle><h2>{primary?.title ?? (hasSavedActions ? "No pending growth actions." : "Gather evidence before choosing a growth move.")}</h2></CardTitle></CardHeader>
-      <CardContent>{primary ? <><p>{primary.detail}</p><p className="field-note">{ranked.length
+      <CardHeader><CardDescription>{primary ? ranked.length ? "Planned experiment" : "Suggested experiment" : "Growth plan"}</CardDescription>
+        <CardTitle><h2>{primary ? recommendationTitle(primary.title) : hasSavedActions ? "No pending growth actions." : "Gather evidence before choosing a growth move."}</h2></CardTitle></CardHeader>
+      <CardContent>{primary ? <><p className="dashboard-clamped growth-experiment-description">{primary.detail}</p><p className="field-note">{ranked.length
         ? "Assessed actions come first, then higher owner-rated impact, lower effort and shorter time to value. Unassessed actions still need review."
         : primary.reviewReason}</p><Strategy opportunity={primary} businessId={business.id} planned={data.plan.some((item) => item.opportunity.id === primary.id)} /></>
         : <><p>{hasSavedActions ? "Review completed or dismissed actions below before choosing another move."
@@ -254,7 +257,7 @@ export function GrowthIntelligence({ business, onSessionExpired, onPlanSaved, ac
     </div></div>
       <div className="opportunity-grid">{available.slice(0, showAll ? available.length : 3).map((opportunity) => <Card key={opportunity.id} className="opportunity-card">
         <CardHeader id={`growth-opportunity-${opportunity.id}`} tabIndex={-1}><Badge variant="secondary">{opportunity.agents.map((agent) => researchAgentLabels[agent]).join(" + ")}</Badge>
-          <CardTitle><h4>{opportunity.title}</h4></CardTitle></CardHeader>
+          <CardTitle><h4>{recommendationTitle(opportunity.title)}</h4></CardTitle></CardHeader>
         <CardContent><p className="dashboard-clamped">{opportunity.detail}</p>
           <p className="field-note">Impact / effort: not assessed. Evidence: {new Set(opportunity.sources.map((source) => source.url)).size} captured page(s), needs validation.</p>
           <div className="growth-card-actions"><Strategy opportunity={opportunity} businessId={business.id} /><Button disabled={!!savingId} onClick={() => void save(opportunity)}>
@@ -271,7 +274,7 @@ export function GrowthIntelligence({ business, onSessionExpired, onPlanSaved, ac
           ? <ul>{assessed.filter((item) => quadrant(item) === label).map((item) => <li key={item.opportunity.id}><button className="text-button" type="button" onClick={() => {
             const action = document.getElementById(`growth-action-${item.opportunity.id}`);
             if (action instanceof HTMLDetailsElement) { action.open = true; action.querySelector("summary")?.focus(); }
-          }}>{item.opportunity.title}</button></li>)}</ul>
+          }}>{recommendationTitle(item.opportunity.title)}</button></li>)}</ul>
           : <p className="field-note">No assessed actions here.</p>}
       </section>)}</div>
       <p className="field-note">{pending.length - assessed.length} actions need an impact and effort assessment before appearing on the map.</p>
@@ -282,7 +285,7 @@ export function GrowthIntelligence({ business, onSessionExpired, onPlanSaved, ac
       {!data.plan.length && <p>Add a recommendation above to start your plan. Nothing is published or executed automatically.</p>}
       {[...ranked, ...data.plan.filter((item) => item.status === "completed" || item.status === "dismissed")].map((item) =>
         <details className="agent-sources growth-plan-item" key={item.opportunity.id} id={`growth-action-${item.opportunity.id}`}>
-          <summary>{item.opportunity.title} <Badge variant="outline">{statusLabels[item.status]}</Badge></summary>
+          <summary>{recommendationTitle(item.opportunity.title)} <Badge variant="outline">{statusLabels[item.status]}</Badge></summary>
           {!data.opportunities.some((opportunity) => opportunity.id === item.opportunity.id) && <p className="field-note">Saved plan evidence, separate from the current business-wide research. Recheck it before acting.</p>}
           <p className="field-note">This plan keeps the evidence saved when the action was added. New research does not refresh it automatically.</p>
           <p>{item.opportunity.detail}</p><Strategy opportunity={item.opportunity} businessId={business.id} planned />
