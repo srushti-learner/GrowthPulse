@@ -57,11 +57,26 @@ export function evidenceContains(quote: string, text: string) {
   const normalize = (value: string) => value.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
   return normalize(quote).includes(normalize(text));
 }
+// A single canonical singular form is unsound for English plurals (e.g. "cases" -> "case" needs a
+// different rule than "buses" -> "bus", even though both end in "ses"). Instead, each word expands
+// to a small set of candidate forms; a match only needs one candidate from each side to coincide.
+// An incorrect extra candidate is harmless as long as the correct one is also present. A short
+// invariant-word guard stops genuinely distinct words (e.g. "news") from being treated as the
+// plural of an unrelated word (e.g. "new").
+const invariantWords = new Set(["news", "species", "series"]);
+function wordVariants(word: string) {
+  const variants = new Set([word]);
+  if (invariantWords.has(word)) return variants;
+  if (word.length > 4 && /ies$/.test(word)) variants.add(word.slice(0, -3) + "y");
+  if (word.length >= 5 && /(?:[sxz]es|[cs]hes)$/.test(word)) variants.add(word.slice(0, -2));
+  if (word.length > 3 && /s$/.test(word) && !/ss$/.test(word)) variants.add(word.slice(0, -1));
+  return variants;
+}
 export function categoryEvidenceMatches(quote: string, category: string) {
-  const words = (value: string) => value.normalize("NFKC").toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
-  const captured = new Set(words(quote));
-  const required = words(category).filter((word) => !["and", "or", "the", "of", "for"].includes(word));
-  return required.length > 0 && required.every((word) => captured.has(word));
+  const tokens = (value: string) => value.normalize("NFKC").toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+  const captured = new Set(tokens(quote).flatMap((word) => [...wordVariants(word)]));
+  const required = tokens(category).filter((word) => !["and", "or", "the", "of", "for"].includes(word));
+  return required.length > 0 && required.every((word) => [...wordVariants(word)].some((variant) => captured.has(variant)));
 }
 function host(url: string) { return new URL(url).hostname.toLowerCase().replace(/^www\./, ""); }
 function within(hostname: string, domain: string) { return hostname === domain || hostname.endsWith(`.${domain}`); }
