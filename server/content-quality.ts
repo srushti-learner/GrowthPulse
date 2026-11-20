@@ -2,9 +2,24 @@ import { z } from "zod";
 import Anthropic from "@anthropic-ai/sdk";
 import { AgentError, providerFailure, type AgentModel } from "./business-agent.js";
 import { modelInputSchema } from "./model-schema.js";
-import { capturedFacts, factsFirstInstruction, numericTokens, type FactSource } from "./evidence-facts.js";
+import { capturedFacts, factsFirstInstruction, type FactSource } from "./evidence-facts.js";
 
 export const contentPolicyVersion = 12;
+// Extracts numeric tokens for uncited-number comparison. Unlike evidence-facts' numericTokens,
+// this keeps a trailing "%" as part of the token (so a percentage never matches a bare count or
+// vice versa) and only trims formatting noise -- trailing zeros after a decimal point -- with pure
+// string operations. It deliberately avoids Number()/parseFloat(), which would silently collapse
+// distinct integers once they exceed Number.MAX_SAFE_INTEGER (e.g. two different 20-digit SKU-like
+// values both round to the same float and would otherwise be wrongly treated as "the same number").
+function canonicalNumericTokens(text: string) {
+  const raw = text.replace(/(\d),(?=\d{3}\b)/g, "$1").match(/\d+(?:\.\d+)?%?/g) ?? [];
+  return raw.map((token) => {
+    const percent = token.endsWith("%");
+    const digits = percent ? token.slice(0, -1) : token;
+    const canonical = digits.includes(".") ? digits.replace(/0+$/, "").replace(/\.$/, "") : digits;
+    return percent ? `${canonical}%` : canonical;
+  });
+}
 export const containsNumericPrice = (text: string) =>
   /(?:[$\u20b9\u00a3\u20ac]\s*\d|\b(?:INR|USD|EUR|GBP|Rs\.?)\s*\d|\d[\d,.]*\s*(?:INR|USD|EUR|GBP|rupees?|dollars?)\b)/i.test(text);
 const numericNutrition = /(?:\d+(?:\.\d+)?\s*(?:kcal|calories?|kilojoules?)\b|\d+(?:\.\d+)?\s*(?:g|mg)\s*(?:of\s+)?(?:protein|sugar|fat|fibre|fiber|sodium|carbohydrates?)\b|\b(?:protein|sugar|fat|fibre|fiber|sodium|carbohydrates?)\s*[:(]?\s*\d+(?:\.\d+)?\s*(?:g|mg)\b)/i;
@@ -52,8 +67,11 @@ export function contentViolations(field: Pick<ContentField, "text" | "policy"> &
     if (!attributed && /\b(?:dominat\w*|pioneer\w*|first[\s-]mover|first brand|market leader|leading brand|across \d+\+? countries|in \d+\+? countries)\b/i.test(field.text)) {
       issues.push("missing_claim_attribution");
     }
-    const supportedNumbers = new Set(numericTokens((field.sources ?? []).map((source) => source.quote).join(" ")));
-    if (numericTokens(field.text).some((value) => !supportedNumbers.has(value))) issues.push("uncited_number");
+    // Compare canonical numeric form, not raw digits: a structured source of "189.00" must still
+    // support prose that naturally writes "189" -- but "12" and "12%" remain distinct, and large
+    // integers are compared as exact strings (see canonicalNumericTokens for why).
+    const supportedNumbers = new Set(canonicalNumericTokens((field.sources ?? []).map((source) => source.quote).join(" ")));
+    if (canonicalNumericTokens(field.text).some((value) => !supportedNumbers.has(value))) issues.push("uncited_number");
   }
   return issues;
 }
