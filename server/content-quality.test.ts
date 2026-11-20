@@ -146,6 +146,38 @@ describe("bounded evidence-quality review", () => {
     expect(contentViolations({ ...target, text: "The website claims to be a leading snack brand." })).toEqual([]);
   });
 
+  it("matches a summary number by value, not digit-for-digit, against a structured decimal source", () => {
+    // Reproduces a real captured listing shape ({"price":"189.00"}); natural prose drops the trailing zeros.
+    const target = {
+      ...field("Date Melts are priced at Rs. 189 for an 80g pack."), path: "summary.text",
+      sources: [{ id: "e_1111111111111111", quote: JSON.stringify({ price: "189.00", currency: "INR" }) },
+        { id: "e_2222222222222222", quote: "Net Weight: 80g" }],
+    };
+    expect(contentViolations(target)).toEqual([]);
+    // A number absent from every selected source, even one close in magnitude, must still be rejected.
+    expect(contentViolations({ ...target, text: "Date Melts are priced at Rs. 199 for an 80g pack." })).toContain("uncited_number");
+  });
+
+  it("never lets a percentage and a bare count satisfy each other", () => {
+    const percentClaim = { ...field("Sales grew 12% last quarter."), path: "summary.text", sources: [{ id: "e_3333333333333333", quote: "12 new stores opened." }] };
+    expect(contentViolations(percentClaim)).toContain("uncited_number");
+    const bareClaim = { ...field("The brand operates 12 locations."), path: "summary.text", sources: [{ id: "e_4444444444444444", quote: "Market share grew by 12%." }] };
+    expect(contentViolations(bareClaim)).toContain("uncited_number");
+    // A decimal-formatted percentage must still support the same percentage written without the trailing zero.
+    const percentMatch = { ...field("Market share grew by 12%."), path: "summary.text", sources: [{ id: "e_5555555555555555", quote: "Market share grew by 12.0%." }] };
+    expect(contentViolations(percentMatch)).toEqual([]);
+  });
+
+  it("does not collapse distinct integers above Number.MAX_SAFE_INTEGER", () => {
+    const distinct = {
+      ...field("Reference code 99999999999999999999 appears on the label."), path: "summary.text",
+      sources: [{ id: "e_6666666666666666", quote: "Reference code 99999999999999999998 appears on the label." }],
+    };
+    expect(contentViolations(distinct)).toContain("uncited_number");
+    const identical = { ...distinct, sources: [{ id: "e_7777777777777777", quote: "Reference code 99999999999999999999 appears on the label." }] };
+    expect(contentViolations(identical)).toEqual([]);
+  });
+
   it("confines unresolved ingredient terms to diagnostics, not consumer copy", () => {
     const diagnostic = field('Confirm what the label means by "Black Resin" with the owner.');
     expect(contentViolations(diagnostic)).toEqual([]);
