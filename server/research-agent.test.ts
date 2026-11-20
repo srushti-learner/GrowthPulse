@@ -294,6 +294,16 @@ https://www.amazon.in/dp/B000000001,Feedback product,Packaging leaks every time 
     ["Boiled ingredients for clothing", "oil clothing", false],
     ["Hair styling products", "Ayurvedic hair care", false],
     ["The store", "and or the", false],
+    ["Shop the best dry fruit and nut gift packs online.", "dry fruits and nuts", true],
+    ["Buy roasted makhanas, trail mixes and dried fruits.", "roasted makhana", true],
+    ["A healthy snack for every craving.", "healthy snacks", true],
+    ["Designer dress and sunglasses shop.", "dress", true],
+    ["Premium nut gift boxes and dried fruit.", "premium seeds", false],
+    ["Designer dress and sunglasses shop.", "glasses", false],
+    ["We bake fresh cookies daily.", "cookie", true],
+    ["Shop our range of spices online.", "spice", true],
+    ["Protective cases for every device.", "case", true],
+    ["Latest news articles every morning.", "New articles", false],
   ])("matches complete category words without requiring identical phrasing: %s", (quote, category, expected) => {
     expect(categoryEvidenceMatches(quote, category)).toBe(expected);
   });
