@@ -42,7 +42,7 @@ describe("conclusion-first research dashboard", () => {
     await act(async () => button.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
   }
 
-  it("shows a conclusion and one move by default, keeps the full report secondary, and respects reduced motion", async () => {
+  it("shows a conclusion and one move without the duplicate specialist archive, and keeps market research available", async () => {
     await render();
     const panel = visiblePanel();
     expect(container.querySelector('[role="tab"][data-state="active"]')?.textContent).toBe("At a glance");
@@ -51,6 +51,10 @@ describe("conclusion-first research dashboard", () => {
     expect(panel.textContent).toContain("Review buying detail 1");
     expect(panel.textContent).not.toContain("Review buying detail 2");
     expect(panel.textContent).not.toContain("An untested idea");
+    expect(container.querySelector(".specialist-archive")).toBeNull();
+    expect(container.textContent).not.toContain("Store briefing and saved specialist details");
+    expect(container.textContent).not.toContain("Saved research archive");
+    expect(container.querySelector('[aria-label="Research specialists"]')).toBeNull();
     expect(panel.querySelector(".research-overview")?.getAttribute("style")).not.toContain("opacity: 0");
     expect(panel.textContent).toContain("Partial research saved");
     expect(document.querySelector('[role="dialog"]')).toBeNull();
@@ -95,32 +99,15 @@ describe("conclusion-first research dashboard", () => {
     await render({ ...report, status: "running", steps: [] }, false);
     expect(visiblePanel().textContent).not.toContain(briefing.insights[0].text);
     expect(visiblePanel().textContent).toContain("Your first supported finding will appear here.");
+    expect(visiblePanel().textContent).toContain("Gathering evidence before your next move.");
+    expect(visiblePanel().textContent).not.toContain("No accepted recommendation");
+    expect(visiblePanel().textContent).not.toContain("A recommendation, not an action already taken.");
     await tab("Market intelligence");
     expect(visiblePanel().querySelector(".opportunity-card")).toBeNull();
     expect(visiblePanel().textContent).toContain("Market research is still running");
     await render({ ...report, status: "partial", steps: [] }, false);
     expect(container.querySelector('[role="tab"][data-state="active"]')?.textContent).toBe("Market intelligence");
     expect(visiblePanel().textContent).toContain("Not enough external evidence for a market conclusion yet.");
-  });
-
-  it("loads factual coverage on demand and provides keyboard-accessible area selection", async () => {
-    await render();
-    expect(container.querySelector(".research-coverage")).toBeNull();
-    await act(async () => visiblePanel().querySelector<HTMLDetailsElement>(".specialist-archive")!.open = true);
-    const coverage = visiblePanel().querySelector<HTMLDetailsElement>(".coverage-disclosure")!;
-    await act(async () => {
-      coverage.open = true; coverage.dispatchEvent(new Event("toggle"));
-      await import("./ResearchCoverage");
-    });
-    const rows = Array.from(visiblePanel().querySelectorAll(".research-coverage tbody tr"));
-    expect(rows).toHaveLength(6);
-    expect(rows.find((row) => row.querySelector("th")?.textContent === "Product opportunities")?.querySelector("td")?.textContent).toBe("9");
-    expect(rows.find((row) => row.querySelector("th")?.textContent === "Pricing intelligence")?.querySelector("td")?.textContent).toBe("0");
-    const button = Array.from(visiblePanel().querySelectorAll<HTMLButtonElement>('[aria-label="Research specialists"] button'))
-      .find((item) => item.textContent?.includes("Product opportunities"))!;
-    await act(async () => button.click());
-    expect(document.activeElement?.textContent).toBe("Product opportunities");
-    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("retains the last accepted Store context after a failed refresh without mixing its sources", async () => {

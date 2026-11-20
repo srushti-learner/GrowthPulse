@@ -41,7 +41,7 @@ export function GrowthJourney({ section, selectedBusinessId, onBusinessSelected,
   const business = businesses.find((item) => item.id === selectedBusinessId);
   const home = section === "overview";
   const progress = section === "progress";
-  const showProfile = home && view === "business";
+  const showProfile = home && (view === "business" || view === "manual");
   const showSetup = home && !showProfile && (view === "setup" || !businesses.length) && !!setup;
   const dashboard = home && !showProfile && !showSetup;
   const needsSnapshot = dashboard || progress;
@@ -104,7 +104,7 @@ export function GrowthJourney({ section, selectedBusinessId, onBusinessSelected,
               : { title: "Discover what matters in your market.", detail: "Explore saved evidence, its limitations and customer signals. Starting new research is a separate, explicit action.", label: "Explore my market", href: journeyLink("intelligence", business.id) };
 
   return <section className="growth-journey" aria-label="Your growth journey">
-    <div className="journey-toolbar">
+    {!showSetup && !(showProfile && !business) && <div className="journey-toolbar">
       <div className="journey-business">
         <label>Active business<select aria-label="Active business" value={business?.id ?? ""} disabled={loading} onChange={(event) => {
           setLoadError(""); onBusinessSelected(event.target.value);
@@ -118,7 +118,7 @@ export function GrowthJourney({ section, selectedBusinessId, onBusinessSelected,
           onBusinessSelected(""); window.location.hash = "#overview?view=setup&new=1";
         }}><Plus /><span>Add business</span></Button>
       </div>
-    </div>
+    </div>}
     {loadError && <p role="alert" className="form-error">{loadError} <button type="button" className="text-button" onClick={() => setReload((value) => value + 1)}>Reload journey</button></p>}
     {error && <p role="alert" className="form-error">Your saved journey could not be loaded: {error} <button type="button" className="text-button" onClick={() => setReload((value) => value + 1)}>Retry saved progress</button></p>}
     {showProfile && !loadError && profile}
@@ -129,8 +129,7 @@ export function GrowthJourney({ section, selectedBusinessId, onBusinessSelected,
       {dashboard && nextMove && !error && <Card className="journey-next">
         <CardHeader><CardDescription><Compass /> YOUR NEXT STEP{business ? ` / ${business.name}` : ""}</CardDescription>
           <CardTitle><h2>{nextMove.title}</h2></CardTitle></CardHeader>
-        <CardContent><p>{nextMove.detail}</p><Button asChild><a href={nextMove.href}>{nextMove.label}<ArrowRight /></a></Button>
-          <p className="field-note">Browsing does not start scans or paid AI analysis. Nothing is published automatically.</p></CardContent>
+        <CardContent><p>{nextMove.detail}</p><Button asChild><a href={nextMove.href}>{nextMove.label}<ArrowRight /></a></Button></CardContent>
       </Card>}
       {(dashboard || progress) && saved && <div className="journey-summary" aria-label="Saved journey summary">
         <Card><CardContent><strong>{saved.products.length}</strong><span>Catalogue products</span></CardContent></Card>
@@ -153,7 +152,9 @@ export function GrowthJourney({ section, selectedBusinessId, onBusinessSelected,
           : <ul className="journey-action-list">{growth.plan.map((item) => <li key={item.opportunity.id}>
             <span>{item.status === "completed" ? <CheckCircle2 /> : <Circle />}</span>
             <div><a href={journeyLink("actions", business.id, item.opportunity.id)}>{item.opportunity.title}<ArrowRight /></a>
-              <p>{({ planned: "Planned", in_progress: "In progress", completed: "Marked complete by you", dismissed: "Dismissed" })[item.status]} · Updated <time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleDateString()}</time></p></div>
+              <p>{({ planned: "Planned", in_progress: "In progress", completed: "Marked complete by you", dismissed: "Dismissed" })[item.status]} · Updated <time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleDateString()}</time></p>
+              {!!item.opportunity.work?.steps.length && <p className="field-note">{(["draft", "approved", "implemented", "measured"] as const).map((status) =>
+                `${item.opportunity.work!.steps.filter((step) => step.status === status).length} ${status === "measured" ? "with an owner-recorded result" : status}`).join(" · ")}</p>}</div>
           </li>)}</ul>}
         <Card className="journey-results"><CardHeader><CardTitle><h3>Did your business improve?</h3></CardTitle></CardHeader>
           <CardContent><p>Action status alone cannot answer this. Review your imported sales or owner-entered records separately; what-if projections are not actual results. Automatic campaign attribution is not available.</p>

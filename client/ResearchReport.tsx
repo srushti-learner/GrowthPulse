@@ -1,15 +1,13 @@
-import { lazy, Suspense, useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { competitorDimensions, competitorDimensionLabels, researchAgents, researchAgentLabels, type ResearchAgent, type ResearchReport as Report } from "../shared/research";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { competitorDimensions, competitorDimensionLabels, type ResearchReport as Report } from "../shared/research";
 import type { BriefingPreview, Understanding } from "../shared/understanding";
-import { BusinessBriefing, SupportingEvidence, type BriefingEvidence } from "./BusinessBriefing";
+import { SupportingEvidence, type BriefingEvidence } from "./BusinessBriefing";
 import { Icon } from "./Icon";
 import { ResearchOverview, type ResearchView } from "./ResearchDashboard";
 import { MarketIntelligence } from "./MarketIntelligence";
-import { describeLimitation, describeStepLimitations } from "./research-messages";
+import { describeLimitation } from "./research-messages";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { EvidenceExcerpt } from "./SourceDetails";
-
-const ResearchCoverage = lazy(() => import("./ResearchCoverage"));
 
 function MarketResearch({ report, businessName, topics = [...competitorDimensions], showSuggestions = true }: {
   report: Report; businessName: string; topics?: typeof competitorDimensions[number][]; showSuggestions?: boolean;
@@ -100,7 +98,6 @@ function MarketResearch({ report, businessName, topics = [...competitorDimension
               View source<Icon name="diagonal" /></button>}
           </article>;
         })}</div>
-        <p className="field-note">Not captured means unknown, not absent. Published prices may cover different packs, taxes, shipping or promotions.</p>
         {selectedBrand && selectedFact && selectedSource && <section id={evidenceId} ref={sourcePanel} tabIndex={-1} className="market-selected-fact" aria-label="Selected comparison evidence">
           <div className="market-source-heading"><p className="section-eyebrow">{selectedBrand.name} / {competitorDimensionLabels[selectedFact.dimension]}</p>
             <button type="button" className="text-button" onClick={() => { setSelected(null); sourceTrigger.current?.focus(); }}>Close source</button></div>
@@ -152,7 +149,7 @@ function MarketResearch({ report, businessName, topics = [...competitorDimension
   </section>;
 }
 
-export function ResearchReport({ report, businessName, briefing, evidence, briefingKey, previousBriefing, renderResearchOptions, initialView = "overview" }: {
+export function ResearchReport({ report, businessName, briefing, evidence, previousBriefing, renderResearchOptions, initialView = "overview" }: {
   report: Report; businessName: string; briefing?: BriefingPreview | null;
   evidence?: NonNullable<Understanding["briefing"]>; briefingKey: string;
   previousBriefing?: Understanding | null;
@@ -160,32 +157,7 @@ export function ResearchReport({ report, businessName, briefing, evidence, brief
   initialView?: ResearchView;
 }) {
   const [view, setView] = useState<ResearchView>(initialView);
-  const [showCoverage, setShowCoverage] = useState(false);
   useEffect(() => { setView(initialView); }, [initialView]);
-  const [selected, setSelected] = useState<ResearchAgent>("store");
-  const panelId = useId();
-  const heading = useRef<HTMLHeadingElement>(null);
-  const focusOnChange = useRef(false);
-  const position = researchAgents.indexOf(selected);
-  const previous = researchAgents[position - 1], next = researchAgents[position + 1];
-  function select(agent: ResearchAgent) {
-    if (agent === selected) { heading.current?.focus(); return; }
-    focusOnChange.current = true;
-    setSelected(agent);
-  }
-  useEffect(() => {
-    if (focusOnChange.current) { heading.current?.focus(); focusOnChange.current = false; }
-  }, [selected]);
-  function status(agent: ResearchAgent) {
-    const steps = report.steps.filter((step) => step.agent === agent);
-    return steps.some((step) => step.status === "running") ? "Working"
-      : steps.some((step) => step.status === "failed") ? "Needs attention"
-      : steps.some((step) => step.status === "limited") ? "Limited evidence"
-      : steps.length ? "Saved" : report.status === "running" ? "Waiting" : "Not reached";
-  }
-  const steps = report.steps.filter((step) => step.agent === selected);
-  const findings = steps.flatMap((step) => step.findings);
-  const limitations = [...new Set(steps.flatMap(describeStepLimitations))];
   const storeFindings = report.steps.filter((step) => step.agent === "store").flatMap((step) => step.findings);
   const summary = storeFindings.find((finding) => finding.title === "Your public storefront");
   const insights = storeFindings.filter((finding) => finding !== summary);
@@ -201,19 +173,12 @@ export function ResearchReport({ report, businessName, briefing, evidence, brief
     ...(summary ? { summary: { sources: summary.sources } } : {}), insights: insights.map((finding) => ({ sources: finding.sources })),
   } : undefined;
   const storeStep = report.steps.find((step) => step.key === "store");
-  const storeStreaming = report.status === "running" && (!storeStep || storeStep.status === "running");
   const provisionalBriefing = storeStep?.status === "failed" ? undefined : briefing;
   const currentBriefing = evidence ?? provisionalBriefing ?? savedSummary;
   const retained = !currentBriefing && previousBriefing?.briefing ? previousBriefing : null;
   const storeBriefing = currentBriefing ?? retained?.briefing;
   const storeEvidence = evidence ?? (provisionalBriefing ? undefined : savedEvidence) ?? retained?.briefing ?? undefined;
   const hasMarketResearch = report.steps.some((step) => step.key === "discovery-plan" || step.profile);
-  const needsMarketComparison = selected === "competitor" && report.status !== "running" && !hasMarketResearch
-    && (!report.enabled || report.usage.searches > 0);
-  const findingCards = findings.map((finding, index) => <div className="research-finding" key={`${finding.title}:${index}`}>
-    <p className="section-eyebrow">{finding.kind}</p><h5>{finding.title}</h5><p>{finding.detail}</p>
-    <SupportingEvidence sources={finding.sources} />
-  </div>);
   return <section className="research-report" aria-label="Saved research findings">
     <Tabs value={view} onValueChange={(value) => { if (value === "overview" || value === "intelligence") setView(value); }}>
       <TabsList className="research-view-tabs" aria-label="Business research views">
@@ -223,70 +188,12 @@ export function ResearchReport({ report, businessName, briefing, evidence, brief
       <TabsContent value="overview" forceMount hidden={view !== "overview"}>
         <ResearchOverview report={report} businessName={businessName} briefing={storeBriefing} evidence={storeEvidence}
           retainedAt={retained?.createdAt} onNavigate={setView} />
-      <details className="specialist-archive"><summary>Store briefing and saved specialist details</summary>
-    <div className="card-heading intelligence-heading"><h3>Saved research archive</h3>
-      <p>The original specialist outputs, including business context and strategy. Market research has its own focused view.</p>
-      {report.status === "partial" && <p role="status">Some research needs attention. Check the relevant area below.</p>}
-    </div>
-    <details className="coverage-disclosure" onToggle={(event) => setShowCoverage(event.currentTarget.open)}>
-      <summary>Visualise evidence across research areas</summary>
-      {showCoverage && <Suspense fallback={<p role="status">Loading evidence chart...</p>}><ResearchCoverage report={report} onSelect={select} /></Suspense>}
-    </details>
-    <div className="research-agent-nav" role="group" aria-label="Research specialists">{researchAgents.map((agent) =>
-      <button key={agent} type="button" aria-pressed={selected === agent} aria-controls={panelId} onClick={() => select(agent)}>
-        <span>{researchAgentLabels[agent]}</span><small>{status(agent)}{agent === "competitor" && hasMarketResearch && ` - ${report.steps.filter((step) => step.profile).length} brands`} - {report.steps.filter((step) => step.agent === agent).reduce((count, step) => count + step.findings.length, 0)} findings</small>
-      </button>)}</div>
-      <article id={panelId} className="research-agent-card" aria-label={researchAgentLabels[selected]}>
-        <div className="research-agent-heading"><h4 ref={heading} tabIndex={-1}>{researchAgentLabels[selected]}</h4>
-          <span className="field-note">{status(selected)}</span></div>
-        <div hidden={selected !== "store"}>
-          {storeStep?.status === "failed" && <p role="status">The latest Store analysis failed.
-            {retained ? " The cards below are your last successful briefing, not the output of this failed attempt." : " No new Store briefing was saved."}</p>}
-          {storeBriefing && <>
-            {retained && <div role="status" aria-label="Last successful Store briefing">
-              <h5>Last successful Store briefing</h5>
-              <p className="field-note">The latest attempt has not produced a replacement. Showing the previous accepted result, saved on <time dateTime={retained.createdAt}>{new Date(retained.createdAt).toLocaleString()}</time>.</p>
-            </div>}
-            {!storeEvidence && <p className="field-note">{storeStreaming ? "Live draft" : "Draft"} - sources have not been checked and this has not been saved as a completed briefing.</p>}
-            <BusinessBriefing key={retained?.id ?? briefingKey} businessName={businessName} briefing={storeBriefing} evidence={storeEvidence} streaming={storeStreaming && !storeEvidence} />
-          </>}
-        </div>
-        {selected === "competitor" && (needsMarketComparison
-          ? <section className="market-upgrade" aria-label="Updated market comparison">
-            <div className="market-upgrade-icon"><Icon name="chart" /></div>
-            <div><p className="section-eyebrow">Older saved report</p><h5>Build your visual market comparison</h5>
-              <p>{report.enabled
-                ? "This saved result predates verified-brand research. It does not contain the verified brand comparisons needed for these visuals."
-                : "This saved analysis covered your store only. New analyses include competitor research automatically."}</p>
-              <div className="market-upgrade-features"><span><Icon name="globe" />Brand landscape</span><span><Icon name="overview" />Visual comparisons</span><span><Icon name="shield" />Source-backed facts</span></div>
-              <p>{renderResearchOptions ? "Approve a new analysis here to build your comparison."
-                : <>Open <a href="#overview?view=business" className="text-button">Business details</a> in My growth journey and choose Manage website analysis to request a new comparison.</>} Refreshing this page does not regenerate the report.</p>
-              {view === "overview" && renderResearchOptions?.(true)}
-            </div>
-          </section>
-          : <MarketResearch report={report} businessName={businessName} />)}
-        {selected !== "store" && (needsMarketComparison
-          ? !!findings.length && <details className="agent-sources market-archive"><summary>Previous research findings (outdated)</summary>
-            <p>Archived text only. Earlier findings may mix marketplace listings or different products; do not use them as a validated price comparison.</p>
-            {findingCards}
-          </details>
-          : selected !== "competitor" && findingCards)}
-        {!!limitations.length && (selected !== "competitor" || needsMarketComparison) && <details className="agent-sources research-limitations" open={!findings.length && status(selected) !== "Working"}><summary>{steps.some((step) => step.status === "failed") ? "Analysis issues and evidence gaps" : "Evidence gaps and limitations"}</summary>
-          <ul>{limitations.map((limitation) => <li key={limitation}>{limitation}</li>)}</ul>
-        </details>}
-      </article>
-    <div className="research-navigation briefing-navigation" aria-label="Specialist navigation">
-      <button type="button" className="secondary-button" disabled={!previous} onClick={() => { if (previous) select(previous); }}>Previous specialist</button>
-      <p className="field-note" role="status">Specialist {position + 1} of {researchAgents.length}{!next && ". You've reached the last specialist."}</p>
-      <button type="button" className="primary-link" disabled={!next} onClick={() => { if (next) select(next); }}>{next ? `Next: ${researchAgentLabels[next]}` : "Last specialist"}</button>
-    </div>
-      </details>
       </TabsContent>
       <TabsContent value="intelligence" forceMount hidden={view !== "intelligence"}>
         <MarketIntelligence report={report} businessName={businessName} renderComparison={(saved, topics) =>
           <MarketResearch key={topics?.join(":") ?? "competitors"} report={saved} businessName={businessName} topics={topics} showSuggestions={false} />} />
       </TabsContent>
     </Tabs>
-    {!(view === "overview" && needsMarketComparison) && renderResearchOptions?.(view === "intelligence" && !hasMarketResearch)}
+    {renderResearchOptions?.(view === "intelligence" && !hasMarketResearch)}
   </section>;
 }

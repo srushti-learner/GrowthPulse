@@ -42,8 +42,8 @@ describe("truthful live analysis activity", () => {
     expect(container.textContent).not.toContain("Checking sources and saving");
     expect(container.querySelector('[aria-label="Research specialists"] li[data-status=completed]')?.textContent).toContain("Store intelligence");
     expect(container.querySelector('[aria-label="Research specialists"] li[data-status=running]')?.textContent).toContain("Competitor intelligence");
-    expect(container.textContent).toContain(search.search.query);
-    expect(container.textContent).toContain("A candidate is not a verified competitor");
+    expect(container.textContent).not.toContain(search.search.query);
+    expect(container.textContent).not.toContain("A candidate is not a verified competitor");
     expect(container.querySelector(".analysis-background")?.textContent).toBe("Your analysis continues if you leave this page.");
     expect(container.querySelector(".agent-progress-details")).toBeNull();
     await act(async () => vi.advanceTimersByTime(20_000));
@@ -78,24 +78,25 @@ describe("truthful live analysis activity", () => {
       limitations: ["This candidate could not be read within public-site safety rules."] };
     await render(withSteps(store, limited, failed));
     expect(container.querySelector('.analysis-stages li[data-status=limited]')?.textContent).toContain("Customer intelligenceLimited evidence");
-    expect(container.textContent).toContain(limited.limitations[0]);
-    expect(container.textContent).toContain(failed.limitations[0]);
-    expect(container.textContent).toContain("0 public pages captured");
+    expect(container.textContent).not.toContain(limited.limitations[0]);
+    expect(container.textContent).not.toContain(failed.limitations[0]);
+    expect(container.textContent).not.toContain("0 public pages captured");
     expect(container.textContent).not.toContain("No pages captured yet");
+    expect(container.querySelector(".analysis-check-failure")?.textContent).toBe("Some information couldn't be checked. Please review the available findings before deciding.");
     expect([...container.querySelectorAll(".analysis-counts dd")].map((node) => node.textContent)).toEqual(["1", "1"]);
     expect(container.querySelector(".analysis-stages li:nth-child(2)")?.textContent).toContain("More checks pending");
     expect(container.querySelector(".analysis-stages li:last-child")?.textContent).toContain("Not started");
   });
 
-  it("keeps earlier failures inspectable as activity grows and does not promise disabled specialists", async () => {
+  it("keeps earlier failures visible as activity grows and does not promise disabled specialists", async () => {
     const values = [step("store", "store", "failed"), ...Array.from({ length: 5 }, (_, i) => step(`discovery-search-${i}`, "competitor"))];
     values[0].limitations = ["The Store briefing could not be validated."];
     const value = withSteps(...values);
     value.research!.enabled = false;
     await render(value);
-    expect(container.querySelector(".analysis-recent details summary")?.textContent).toBe("Technical details (6 recorded steps)");
-    expect(container.querySelector(".analysis-recent details")?.textContent).toContain(values[0].limitations[0]);
-    expect(container.querySelector(".analysis-check-failure")?.textContent).toContain("Some checks could not finish");
+    expect(container.querySelector(".analysis-recent")).toBeNull();
+    expect(container.querySelector('.analysis-stages li[data-status=failed]')?.textContent).toContain("Store intelligenceCould not finish");
+    expect(container.querySelector(".analysis-check-failure")?.textContent).toBe("Some information couldn't be checked. Please review the available findings before deciding.");
     expect(container.querySelector(".analysis-check-failure")?.closest("details")).toBeNull();
     expect(container.querySelectorAll(".analysis-stages li")).toHaveLength(2);
     await render(null);
@@ -103,7 +104,7 @@ describe("truthful live analysis activity", () => {
     expect(container.querySelector(".agent-progress button")).toBeNull();
   });
 
-  it("keeps raw queries, candidate captures and technical limitations collapsed without duplicating steps", async () => {
+  it("omits the technical details disclosure and raw step log while keeping live activity", async () => {
     const search = { ...step("discovery-search-0", "competitor"), search: { query: "pickles official store -site:marketplace.example", domains: [] } };
     const capture = { ...step("competitor-site-0", "competitor", "running"), capture: { url: "https://brand.example.com/", pages: 0 } };
     const limited = { ...step("competitor-brand-0", "competitor", "limited"), limitations: [
@@ -111,40 +112,35 @@ describe("truthful live analysis activity", () => {
       "Static public HTML only: no JavaScript execution, authentication, or website changes.",
     ] };
     await render(withSteps(search, capture, limited), false);
-    const details = container.querySelector<HTMLDetailsElement>(".analysis-recent details")!;
-    expect(details.open).toBe(false);
-    expect(container.querySelectorAll(".analysis-recent li")).toHaveLength(3);
-    expect(container.querySelector(".analysis-recent > ul")).toBeNull();
+    expect(container.querySelector(".analysis-recent")).toBeNull();
+    expect(container.querySelector("details")).toBeNull();
+    expect(container.textContent).not.toContain("Technical details");
+    expect(container.textContent).not.toContain("recorded steps");
     expect(container.textContent).not.toContain("Behind the scenes");
     expect(container.textContent).not.toContain("All recorded steps");
-    expect(details.textContent).toContain(search.search.query);
-    expect(details.textContent).toContain("Public searches used: 2");
+    expect(container.textContent).not.toContain(search.search.query);
+    expect(container.textContent).not.toContain("Public searches used:");
     expect(container.querySelector(".analysis-counts")?.textContent).not.toContain("searches");
     expect(container.textContent).not.toContain("private AI reasoning");
     expect(container.textContent).not.toContain("recorded server activity");
-    expect(details.textContent).toContain("brand.example.com");
-    for (const text of limited.limitations) expect(details.textContent).toContain(text);
-    for (const node of container.querySelectorAll(".analysis-step-limit, .analysis-step-heading")) {
-      expect(node.closest("details")).toBe(details);
-    }
-    await act(async () => { details.open = true; });
-    expect(details.open).toBe(true);
+    expect(container.textContent).not.toContain("brand.example.com");
+    for (const text of limited.limitations) expect(container.textContent).not.toContain(text);
     expect(container.querySelector("[role=status]")?.textContent).toBe("Reviewing potential competitors' websites");
   });
 
-  it("replaces pricing implementation notes with one plain-language gap while preserving failures", async () => {
+  it("keeps pricing limitations and failures visible without exposing implementation notes", async () => {
     const pricing = { ...step("pricing", "pricing", "limited"), limitations: [
       "Pricing coverage is unavailable: captured structured products include 5 merchant and 0 verified-competitor record(s).",
       "Cross-store SKUs and similar names do not establish an exact match; only matching valid GTINs are identified here.",
       "No price delta or unit-price advantage is calculated: market, quantities, tax, shipping and promotion conditions have not all been established.",
     ] };
     await render(withSteps(pricing));
-    expect(container.querySelectorAll(".analysis-step-limit")).toHaveLength(1);
-    expect(container.querySelector(".analysis-step-limit")?.textContent).toBe("We couldn't find enough matching product prices to compare.");
     for (const text of pricing.limitations) expect(container.textContent).not.toContain(text);
     expect(container.querySelector('.analysis-stages li[data-status=limited]')?.textContent).toContain("Pricing intelligenceLimited evidence");
     const failure = "The pricing check could not read the saved evidence.";
     await render(withSteps({ ...pricing, status: "failed", limitations: [failure] }));
-    expect(container.querySelector(".analysis-step-limit")?.textContent).toBe(failure);
+    expect(container.textContent).not.toContain(failure);
+    expect(container.querySelector('.analysis-stages li[data-status=failed]')?.textContent).toContain("Pricing intelligenceCould not finish");
+    expect(container.querySelector(".analysis-check-failure")?.textContent).toBe("Some information couldn't be checked. Please review the available findings before deciding.");
   });
 });

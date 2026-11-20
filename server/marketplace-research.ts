@@ -4,7 +4,7 @@ import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import { parse, CsvError } from "csv-parse/sync";
 import { z } from "zod";
 import { normalizedGtin, productInputSchema, type Product } from "../shared/products.js";
-import { marketplaceLimits, marketplaceProgressSchema, marketplaceReportSchema, marketplaceThemesSchema, type MarketplaceListing, type MarketplaceProgress, type MarketplaceReport } from "../shared/marketplace.js";
+import { marketplaceLimits, marketplaceProgressSchema, marketplaceReportSchema, marketplaceAnalysisSchema, marketplaceFeedbackScope, matchedMarketplaceListings, type MarketplaceListing, type MarketplaceProgress, type MarketplaceReport } from "../shared/marketplace.js";
 import { AgentError, type AgentModel } from "./business-agent.js";
 import { productFingerprint } from "./product-intelligence.js";
 import { modelInputSchema } from "./model-schema.js";
@@ -12,6 +12,7 @@ import { publicUrl, ScanError } from "./public-http.js";
 import { ResearchToolError, type ResearchSearch } from "./tavily-mcp.js";
 import type { WebsiteScanner } from "./website-scanner.js";
 import { customerEvidence, customerEvidenceLimits } from "./customer-evidence.js";
+import { evidenceContains, unsupportedResearchClaim } from "./competitor-research.js";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const bounded = (value: unknown, length = 300) => typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, length) : "";
@@ -64,6 +65,27 @@ function review(text: unknown, stars: unknown, published: unknown) {
   const excerpt = bounded(redact(bounded(text, 2000)), 500);
   return excerpt.length < 10 ? null : { id: `r_${hash(excerpt.toLowerCase()).slice(0, 16)}`, text: excerpt, rating: rating(stars), date: date(published) };
 }
+const normalizedText = (value: string) => value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+function catalogueVariant(product: Product) {
+  const listings = [...product.listings].sort((a, b) => b.capturedAt.localeCompare(a.capturedAt));
+  return (listings.find((item) => item.source === "manual") ?? listings[0])?.data.variants ?? "";
+}
+function conflictingPack(product: Product, item: MarketplaceListing) {
+  const quantity = /\b(\d+(?:\.\d+)?)\s*(kg|kilograms?|g|gms?|grams?|ml|millilitres?|milliliters?|l|litres?|liters?)\b/g;
+  const packs = (text: string) => [...text.toLowerCase().matchAll(quantity)]
+    .map(([, number, unit]) => `${/^(?:kg|kilogram|g|gm|gram)/.test(unit) ? "g" : "ml"}:${Number(number) * (/^(?:kg|kilogram|l$|litre|liter)/.test(unit) ? 1000 : 1)}`);
+  const own = new Set(packs(`${product.name} ${catalogueVariant(product)}`));
+  const candidate = packs(`${item.title} ${item.variants}`);
+  if (own.size && candidate.length && candidate.some((value) => !own.has(value))) return true;
+  const variant = catalogueVariant(product);
+  const packCount = (text: string) => text.toLowerCase().match(/\bpack\s+of\s+(\d+)\b|\b(\d+)\s*(?:pack|x|×)\b/)?.slice(1).find(Boolean);
+  const ownCount = packCount(`${product.name} ${variant}`), candidateCount = packCount(`${item.title} ${item.variants}`);
+  if (ownCount && candidateCount && Number(ownCount) !== Number(candidateCount)) return true;
+  const qualifiers = (value: string) => normalizedText(value.toLowerCase().replace(quantity, "")
+    .replace(/\bpack\s+of\s+\d+\b|\b\d+\s*(?:pack|x|×)\b/g, ""));
+  const ownQualifier = qualifiers(variant), candidateQualifier = qualifiers(item.variants);
+  return !!(ownQualifier && candidateQualifier && ownQualifier !== candidateQualifier);
+}
 function report(product: Product, listings: MarketplaceListing[], limitations: string[]): MarketplaceReport {
   const seen = new Set<string>();
   let retained = 0;
@@ -73,13 +95,18 @@ function report(product: Product, listings: MarketplaceListing[], limitations: s
       seen.add(value.id); retained++; return true;
     });
     item.identifierMatch = !!product.gtin && !!item.gtin && normalizedGtin(product.gtin) === normalizedGtin(item.gtin);
+    if (item.status === "captured" && item.identifierMatch && !conflictingPack(product, item)) {
+      item.relation = "same_product";
+      item.matching = { method: "identifier", reason: "Matching GTIN; no conflicting captured pack or variant. Seller ownership is not established.",
+        productEvidence: product.gtin, listingEvidence: item.gtin };
+    }
   }
   return marketplaceReportSchema.parse({
     id: randomUUID(), productId: product.id, productName: product.name, fingerprint: productFingerprint(product),
-    createdAt: new Date().toISOString(), listings, themes: [], analysedAt: null,
+    createdAt: new Date().toISOString(), listings, themes: [], comparisons: [], analysedAt: null,
     limitations: [...new Set([
       "A bounded sample, not the whole market. Search snippets are discovery leads, not accepted evidence.",
-      "Confirm product, variant, pack size and seller before comparing. Shared GTINs do not establish seller ownership.",
+      "Automatic matches use captured product evidence. Uncertain matches stay separate; shared GTINs do not establish seller ownership.",
       "Published ratings and review counts are publisher claims, not verified orders or representative demand.",
       "Prices are dated offers; currency, quantity, shipping, tax and promotions may differ. No price advantage is calculated.",
       ...limitations,
@@ -111,7 +138,9 @@ async function capture(url: string, title: string, scanner: WebsiteScanner, sign
   const facts = product ?? {};
   item.status = "captured"; item.title = bounded(facts.name) || bounded(visible?.title); item.capturedAt = page.capturedAt;
   item.description = bounded(facts.description, 2000);
-  item.variants = bounded(facts.size, 1000);
+  item.brand = bounded(typeof facts.brand === "string" ? facts.brand : record(facts.brand).name, 200);
+  item.model = bounded(facts.model, 200);
+  item.variants = [bounded(facts.size, 600), bounded(facts.color, 150), bounded(facts.flavor ?? facts.flavour, 150)].filter(Boolean).join("; ");
   const gtin = productInputSchema.shape.gtin.safeParse(String(facts.gtin ?? facts.gtin13 ?? facts.gtin14 ?? facts.gtin12 ?? facts.gtin8 ?? ""));
   item.gtin = gtin.success ? gtin.data : "";
   const offer = record(first(facts.offers));
@@ -138,6 +167,8 @@ async function capture(url: string, title: string, scanner: WebsiteScanner, sign
   }
   source(item, "Product name", item.title);
   if (item.description) source(item, "Published description", item.description);
+  if (item.brand) source(item, "Published brand", item.brand);
+  if (item.model) source(item, "Published model", item.model);
   if (item.gtin) source(item, "Published GTIN", item.gtin);
   if (item.variants) source(item, "Published size", item.variants);
   if (item.seller) source(item, "Published seller", item.seller);
@@ -170,6 +201,52 @@ No automatic publication or catalogue changes. All proposed experiments are hypo
     const parsed = schema.safeParse(calls.length === 1 && calls[0].name === name ? calls[0].input : undefined);
     if (message.stop_reason !== "tool_use" || !parsed.success) throw new AgentError(502, "Marketplace analysis returned an incomplete or invalid response. Saved evidence is unchanged. No automatic retry was made.");
     return parsed.data;
+  }
+  async function matchProducts(saved: MarketplaceReport, product: Product, signal: AbortSignal): Promise<MarketplaceReport> {
+    if (saved.matchingVersion === 1) return saved;
+    const pending = saved.listings.filter((item) => item.status === "captured" && item.relation === "unconfirmed" && item.matching?.method !== "owner");
+    if (!pending.length) return { ...saved, matchingVersion: 1 };
+    if (!complete) return saved;
+    const schema = z.object({ matches: z.array(z.object({
+      listingId: z.string().regex(/^m_[a-f0-9]{16}$/),
+      relation: z.enum(["same_product", "alternative", "excluded", "unconfirmed"]),
+      productEvidence: z.string().max(300), listingEvidence: z.string().max(300),
+      reason: z.string().trim().min(1).max(350),
+    }).strict()).max(marketplaceLimits.listings) }).strict();
+    const catalogue = { name: product.name, description: product.description.slice(0, 1000), gtin: product.gtin, sku: product.sku, variants: catalogueVariant(product) };
+    const result = await tool(schema, "match_marketplace_products",
+      "Classify each captured listing against the catalogue product. same_product requires a specific matching product identity, brand/model/flavour and compatible pack/variant, not just a shared category. alternative requires evidence of a similar purpose or product type; a different brand or pack is allowed. excluded means clearly unrelated. Use unconfirmed for genuinely uncertain or contradictory identity. Cite exact identifying fragments from the supplied catalogue and listing fields in productEvidence and listingEvidence. Do not use customer reviews, search leads or seller names to prove identity. Never claim ownership of a listing or seller. For uncertain matches evidence may be empty. Return one decision per listing.",
+      { catalogue, listings: pending.map(({ id, title, description, gtin, variants, brand, model }) => ({ id, title, description: description.slice(0, 1000), gtin, variants, brand, model })) }, signal);
+    const decisions = new Map<string, MarketplaceListing>();
+    let rejected = 0;
+    for (const proposal of result.matches) {
+      const item = pending.find((value) => value.id === proposal.listingId);
+      const duplicated = result.matches.filter((value) => value.listingId === proposal.listingId).length !== 1;
+      if (!item || duplicated) { rejected++; continue; }
+      const supported = proposal.productEvidence.trim().length >= 3 && proposal.listingEvidence.trim().length >= 3
+        && Object.values(catalogue).some((field) => evidenceContains(field, proposal.productEvidence))
+        && [item.title, item.description.slice(0, 1000), item.gtin, item.variants, item.brand ?? "", item.model ?? ""].some((field) => evidenceContains(field, proposal.listingEvidence));
+      const publishedIdentity = !!item.brand && evidenceContains(product.name, item.brand)
+        || !!item.model && item.model.length >= 3 && evidenceContains(product.name, item.model);
+      const words = (text: string) => normalizedText(text).split(" ").filter((word) => word.length > 2
+        && !/^\d+$/.test(word) && !["the", "and", "for", "with", "pack", "gms", "gram", "grams", "kilogram", "kilograms"].includes(word));
+      const sharedIdentity = new Set(words(product.name).filter((word) =>
+        words(proposal.productEvidence).includes(word) && words(proposal.listingEvidence).includes(word)));
+      const specificName = sharedIdentity.size >= (publishedIdentity ? 2 : 3)
+        && evidenceContains(product.name, proposal.productEvidence) && evidenceContains(item.title, proposal.listingEvidence);
+      const conflictingIdentifier = !!product.gtin && !!item.gtin && normalizedGtin(product.gtin) !== normalizedGtin(item.gtin);
+      const conflictingBrand = !!item.brand && !evidenceContains(product.name, item.brand);
+      if (proposal.relation !== "unconfirmed" && (!supported
+        || proposal.relation === "same_product" && (!specificName || conflictingIdentifier || conflictingBrand || conflictingPack(product, item))
+        || proposal.relation === "alternative" && item.identifierMatch)) { rejected++; continue; }
+      decisions.set(item.id, { ...item, relation: proposal.relation,
+        matching: { method: "ai", reason: proposal.reason, productEvidence: proposal.productEvidence, listingEvidence: proposal.listingEvidence } });
+    }
+    const omitted = pending.filter((item) => !decisions.has(item.id)).length;
+    if (rejected || omitted) console.warn("Marketplace automatic matches omitted:", { rejected, omitted });
+    return marketplaceReportSchema.parse({ ...saved, matchingVersion: 1,
+      listings: saved.listings.map((item) => decisions.get(item.id) ?? item),
+      limitations: [...saved.limitations.slice(0, omitted ? 11 : 12), ...(omitted ? ["Some automatic matches could not be supported by captured product details. These listings remain uncertain and can be reviewed manually."] : [])] });
   }
   return {
     configured: !!complete, discoveryConfigured: search.configured,
@@ -233,7 +310,10 @@ No automatic publication or catalogue changes. All proposed experiments are hypo
         if (!candidates.size) limitations.push("No matching marketplace listing was discovered. This does not establish that the product is absent from these marketplaces.");
         if (listings.some((item) => item.status === "unavailable")) limitations.push("Some pages could not supply permitted structured evidence. No login, challenge, robots or retention bypass was attempted.");
         limitations.push("Flipkart tracking and variant query parameters are not fetched. Confirm the captured variant manually.");
-        return { result: report(product, listings, limitations) };
+        await progress?.({ stage: "matching", completed: 0, total: listings.length });
+        const result = await matchProducts(report(product, listings, limitations), product, signal);
+        await progress?.({ stage: "matching", completed: listings.length, total: listings.length });
+        return { result };
       }).addEdge(START, "discover_marketplace_listings").addEdge("discover_marketplace_listings", "capture_marketplace_evidence")
         .addEdge("capture_marketplace_evidence", END).compile();
       const result = await graph.invoke({}, { signal, recursionLimit: 4 });
@@ -241,26 +321,34 @@ No automatic publication or catalogue changes. All proposed experiments are hypo
       return result.result;
     },
     async analyse(saved: MarketplaceReport, product: Product, signal: AbortSignal): Promise<MarketplaceReport> {
-      const selected = saved.listings.filter((item) => item.status === "captured" && !["unconfirmed", "excluded"].includes(item.relation));
+      const matched = await matchProducts(saved, product, signal);
+      const selected = matchedMarketplaceListings(matched);
       const reviews = selected.flatMap((item) => item.reviews.map((value) => ({
         ...value, listingId: item.id, relation: item.relation, title: item.title,
       })));
-      if (reviews.length < 2) throw new AgentError(400, "Confirm relevant listings with at least two distinct review excerpts before analysing customer themes.");
-      const state = Annotation.Root({ themes: Annotation<MarketplaceReport["themes"]>({ reducer: (_, next) => next, default: () => [] }) });
+      if (reviews.length < 2) throw new AgentError(400, "Automatic matching could not find two relevant review excerpts. Review uncertain product matches or supply more review evidence.");
+      const state = Annotation.Root({ result: Annotation<z.infer<typeof marketplaceAnalysisSchema>>({ reducer: (_, next) => next, default: () => ({ themes: [], comparisons: [] }) }) });
       const graph = new StateGraph(state).addNode("analyse_confirmed_marketplace_reviews", async () => {
-        const result = await tool(marketplaceThemesSchema, "record_marketplace_themes",
-          "Group recurring attribute-level feedback in the supplied review sample into up to four cautious possible themes. Each theme needs 2-10 distinct supporting review IDs. Do not infer sentiment from aggregate ratings. Each theme must concern either own_product (my_listing / other_seller) or alternatives, never mix the two. Seller service and shipping complaints are not established physical product defects. Never infer seller ownership beyond owner confirmation. Propose one experiment per theme, not a proven gap, an unsupported product claim, a listing rewrite or a guaranteed outcome. Attribute catalogue descriptions to the owner and marketplace descriptions to their publisher. Return no themes if none recur.",
+        const result = await tool(marketplaceAnalysisSchema, "record_marketplace_themes",
+          "Group recurring attribute-level feedback into up to four cautious themes. Each theme needs 2-10 distinct supporting review IDs and concerns either own_product (my_listing / other_seller / same_product) or alternatives, never mixed. Also produce up to three comparative opportunities: ownProduct.summary describes what this product's reviewers praise, question or request; alternatives.summary describes feedback about similar products; each side requires 2-10 distinct review IDs from its own group. Explain the potential improvement in opportunity and propose a concrete test in experiment. Comparison summaries are interpretations of the cited review sample, not verified product facts. If either group lacks two reviews, return comparisons: [] and do not invent that side or treat silence as dissatisfaction. Do not infer sentiment from aggregate ratings, prices, sales, percentages, rankings or representative demand. Seller service and shipping complaints are not established physical product defects. Automatically matched identity is provisional and seller ownership is unverified. Propose experiments, not proven gaps, listing rewrites or guaranteed outcomes. Attribute catalogue and marketplace descriptions to their sources; they are not customer requests. Return no themes when none recur.",
           { reviewedCatalogue: { name: product.name, description: product.description },
             listings: selected.map(({ id, title, description, relation, variants }) => ({ id, title, description: description.slice(0, 500), relation, variants: variants.slice(0, 200) })),
             reviews: reviews.map(({ id, text, date, listingId, relation }) => ({ id, text, date, listingId, relation })) }, signal);
-        const issued = new Map(reviews.map((value) => [value.id, value.relation === "alternative" ? "alternatives" : "own_product"]));
+        const issued = new Map(reviews.map((value) => [value.id, marketplaceFeedbackScope(value.relation)]));
         if (result.themes.some((theme) => new Set(theme.reviewIds).size !== theme.reviewIds.length || theme.reviewIds.some((id) => issued.get(id) !== theme.scope))) {
           throw new AgentError(502, "The proposed customer themes did not reference distinct captured reviews. Saved evidence is unchanged.");
         }
-        return { themes: result.themes };
+        for (const comparison of result.comparisons) {
+          const sides = [[comparison.ownProduct, "own_product"], [comparison.alternatives, "alternatives"]] as const;
+          if (sides.some(([side, scope]) => new Set(side.reviewIds).size !== side.reviewIds.length || side.reviewIds.some((id) => issued.get(id) !== scope))
+            || unsupportedResearchClaim(`${comparison.title} ${comparison.ownProduct.summary} ${comparison.alternatives.summary} ${comparison.opportunity} ${comparison.experiment}`)) {
+            throw new AgentError(502, "The customer comparison contained unsupported claims or mismatched review citations. Saved evidence is unchanged.");
+          }
+        }
+        return { result };
       }).addEdge(START, "analyse_confirmed_marketplace_reviews").addEdge("analyse_confirmed_marketplace_reviews", END).compile();
       const output = await graph.invoke({}, { signal, recursionLimit: 3 });
-      return marketplaceReportSchema.parse({ ...saved, themes: output.themes, analysedAt: new Date().toISOString() });
+      return marketplaceReportSchema.parse({ ...matched, ...output.result, analysisVersion: 2, analysedAt: new Date().toISOString() });
     },
   };
 }
@@ -286,9 +374,10 @@ export function importMarketplaceCsv(product: Product, csv: string) {
     review: z.string().max(2000), rating: z.string().optional(), review_date: z.string().optional(),
     price: productInputSchema.shape.price.optional(), currency: productInputSchema.shape.currency.optional(), description: z.string().max(2000).optional(),
     gtin: productInputSchema.shape.gtin.optional(), variants: z.string().max(1000).optional(), seller: z.string().max(200).optional(),
+    brand: z.string().max(200).optional(), model: z.string().max(200).optional(),
   }).strict();
   const parsed = z.array(rowSchema).min(1).max(marketplaceLimits.reviews).safeParse(rows);
-  if (!parsed.success) throw new AgentError(400, "Use up to 50 CSV rows with product_url,title,review and optional description,rating,review_date,price,currency,gtin,variants,seller. Check field lengths and identifiers.");
+  if (!parsed.success) throw new AgentError(400, "Use up to 50 CSV rows with product_url,title,review and optional description,rating,review_date,price,currency,gtin,variants,seller,brand,model. Check field lengths and identifiers.");
   const listings = new Map<string, MarketplaceListing>();
   for (const [index, row] of parsed.data.entries()) {
     const url = marketplaceUrl(row.product_url);
@@ -299,17 +388,20 @@ export function importMarketplaceCsv(product: Product, csv: string) {
     let item = listings.get(url);
     if (!item) {
       item = { ...listing(url, row.title, "owner_export"), status: "captured", price: row.price ?? "", currency: row.currency ?? "",
-        gtin: row.gtin ?? "", variants: row.variants ?? "", seller: row.seller ?? "", description: row.description ?? "",
+        gtin: row.gtin ?? "", variants: row.variants ?? "", seller: row.seller ?? "", description: row.description ?? "", brand: row.brand, model: row.model,
         limitation: "Owner-supplied export, not independently fetched or verified. Review authenticity and completeness are unknown." };
       source(item, "Owner-supplied product", item.title);
       if (item.description) source(item, "Owner-supplied description", item.description);
+      if (item.brand) source(item, "Owner-supplied brand", item.brand);
+      if (item.model) source(item, "Owner-supplied model", item.model);
       if (item.price) source(item, "Owner-supplied offer", `${item.price} ${item.currency}`);
       if (item.gtin) source(item, "Owner-supplied GTIN", item.gtin);
       if (item.variants) source(item, "Owner-supplied variant", item.variants);
       if (item.seller) source(item, "Owner-supplied seller", item.seller);
       listings.set(url, item);
     } else if (item.title !== row.title || item.description !== (row.description ?? "") || item.gtin !== (row.gtin ?? "") || item.variants !== (row.variants ?? "")
-      || item.price !== (row.price ?? "") || item.currency !== (row.currency ?? "") || item.seller !== (row.seller ?? "")) {
+      || item.price !== (row.price ?? "") || item.currency !== (row.currency ?? "") || item.seller !== (row.seller ?? "")
+      || item.brand !== row.brand || item.model !== row.model) {
       throw new AgentError(400, `Row ${index + 1}: listing fields conflict with another row for this URL. Import variants separately using distinct listing paths.`);
     }
     const excerpt = review(row.review, stars, published);
@@ -417,7 +509,7 @@ export function marketplaceStore(database: SqlDatabase, getProduct: (ownerId: st
         await authorize(ownerId, businessId, productId); await expire();
         if ((await latest(productId))?.status === "running") throw new AgentError(409, "Wait for marketplace research to finish before changing its reviewed matches.");
         const current = await saved(productId);
-        if (!current || current.result_json !== JSON.stringify(expected)) throw new AgentError(409, "Marketplace evidence or reviewed matches changed. Reload before saving.");
+        if (!current?.result_json || JSON.stringify(marketplaceReportSchema.parse(JSON.parse(current.result_json))) !== JSON.stringify(expected)) throw new AgentError(409, "Marketplace evidence or reviewed matches changed. Reload before saving.");
         await database.prepare("UPDATE marketplace_research SET result_json = ? WHERE id = ?")
           .run(JSON.stringify(marketplaceReportSchema.parse(next)), current.id);
       })();

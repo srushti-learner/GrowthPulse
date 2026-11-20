@@ -14,7 +14,7 @@ const empty: BusinessInput = { name: "", category: "", description: "", website:
 function editable(business: Business): BusinessInput {
   return { name: business.name, category: business.category, description: business.description, website: business.website };
 }
-export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView = "overview", selectedBusinessId, onBusinessSelected, profileOnly = false, researchOnly = false, growthOnly = false, actionOnly = false, businessManaged = false, onPlanSaved }: {
+export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView = "overview", selectedBusinessId, onBusinessSelected, profileOnly = false, researchOnly = false, growthOnly = false, actionOnly = false, businessManaged = false, onPlanSaved, manualEntry = false }: {
   activityOnly: boolean; onSessionExpired: () => void; researchView?: ResearchView;
   selectedBusinessId?: string; onBusinessSelected?: (id: string) => void;
   profileOnly?: boolean;
@@ -23,6 +23,7 @@ export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView
   actionOnly?: boolean;
   businessManaged?: boolean;
   onPlanSaved?: () => void;
+  manualEntry?: boolean;
 }) {
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -174,8 +175,7 @@ export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView
         <a className="primary-link" href={`#growth?business=${selectedBusiness.id}`}>Next: choose my growth move<Icon name="arrow" /></a>
       </section>}
       {!growthOnly && !activityOnly && (!researchOnly || !selectedBusiness) && (
-        <details className="business-profile-settings" open={profileOnly || !selectedBusiness?.website || editing || !!notice}>
-          <summary>Business profile and settings</summary><div className="business-columns">
+        <section className="business-profile-settings"><div className="business-columns">
           {selectedBusiness && !editing ? (
             <section className="profile-card saved-profile" aria-labelledby="saved-profile-heading">
               <div className="saved-profile-header">
@@ -188,7 +188,6 @@ export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView
                 <div><dt>Website</dt><dd>{selectedBusiness.website || "Not provided"}</dd></div>
                 <div><dt>Business description</dt><dd>{selectedBusiness.description || "Not provided"}</dd></div>
               </dl>
-              <p className="field-note">{selectedBusiness.website ? "You choose which agent suggestions to save." : "Add a website for an agent review, or continue with manual information and CSV."}</p>
               <button className="primary-link" type="button" onClick={() => { setNotice(""); setEditing(true); }}><Icon name="sliders" />Edit profile</button>
               {profileOnly && selectedBusiness.website && <button className="secondary-button" type="button" aria-expanded={analysisVisible} onClick={() => { setAutoStartId(""); setAnalysisOpen(!analysisVisible); }}>
                 {analysisVisible ? "Hide website analysis" : "Manage website analysis"}
@@ -200,15 +199,15 @@ export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView
               </div>}
             </section>
           ) : <form className="workspace-form profile-card" onSubmit={(event) => void save(event)}>
-            <div className="card-heading"><p className="section-eyebrow">LET'S GET TO KNOW YOUR BUSINESS</p><h2>{selectedId ? "Your business, in your words." : "A name. A website. We'll take it from here."}</h2><p>{selectedId ? "Review your changes before saving. Nothing is applied to your website." : "Save your profile and let your agent prepare a business review. No website? You can still add information and products yourself."}</p></div>
+            <div className="card-heading"><p className="section-eyebrow">LET'S GET TO KNOW YOUR BUSINESS</p><h2>{selectedId ? "Your business, in your words." : manualEntry ? "Tell us about your business." : "A name. A website. We'll take it from here."}</h2><p>{selectedId ? "Review your changes before saving. Nothing is applied to your website." : manualEntry ? "No website needed. Save your business details, then add products manually or by CSV. No website analysis is started." : "Save your profile and let your agent prepare a business review. No website? You can still add information and products yourself."}</p></div>
             <fieldset disabled={saving}>
               <legend className="sr-only">Business profile</legend>
               <label>Business name<input ref={nameInput} name="businessName" value={form.name} required minLength={2} maxLength={120} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
-              <label>Website <span className="optional-label">(optional)</span><input name="website" type="url" value={form.website} maxLength={2048} placeholder="https://example.com" onChange={(event) => setForm({ ...form, website: event.target.value })} /><span className="field-note">Used for your automatic business and competitor analysis.</span></label>
-              <details className="optional-profile-details" open={!!selectedId}><summary>{selectedId ? "Review profile details" : "Add details yourself (optional)"}</summary><div>
+              {(!manualEntry || !!selectedId) && <label>Website <span className="optional-label">(optional)</span><input name="website" type="url" value={form.website} maxLength={2048} placeholder="https://example.com" onChange={(event) => setForm({ ...form, website: event.target.value })} /></label>}
+              <div>
                 <label>Category <span className="optional-label">(optional)</span><input name="category" value={form.category} maxLength={120} onChange={(event) => setForm({ ...form, category: event.target.value })} /></label>
                 <label>Business description <span className="optional-label">(optional)</span><textarea name="description" rows={5} value={form.description} maxLength={2000} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label>
-              </div></details>
+              </div>
               {!!form.website && <>
                 <p id="profile-analysis-notice" className="field-note">Saving starts your business and competitor analysis. By saving, you confirm you own this website or have permission to scan it. Provider charges may apply.</p>
                 <details className="optional-profile-details"><summary>How analysis uses public data</summary><p className="field-note">{businessAnalysisDisclosure} Profile suggestions still need your approval.</p></details>
@@ -216,11 +215,12 @@ export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView
               <div className="profile-actions">
                 <button type="submit" className="primary-link" aria-describedby={form.website ? "profile-analysis-notice" : undefined}>{saving ? "Saving..." : form.website ? "Save and understand my business" : "Save business profile"}<Icon name="arrow" /></button>
                 {selectedBusiness && <button className="secondary-button" type="button" onClick={() => select(selectedBusiness.id)}>Cancel</button>}
+                {!selectedBusiness && <a className="text-button" href="#overview?view=setup&new=1">Back to website setup</a>}
               </div>
             </fieldset>
           </form>}
-          <aside className="ownership-card"><Icon name="shield" /><h2>The start of your story.</h2><p>This profile gives your workspaces a shared business context. Review suggestions before saving them, then explore your market or work on your products.</p><p className="field-note">Only your signed-in account can manage this profile. A website is optional.</p></aside>
-        </div></details>
+          <aside className="ownership-card"><Icon name="shield" /><h2>The start of your story.</h2><p>This profile gives your workspaces a shared business context. Review suggestions before saving them, then explore your market or work on your products.</p></aside>
+        </div></section>
       )}
       {activityOnly && !selectedId && <div className="profile-card"><h2>Select a saved business to see its history.</h2><a href="#overview?view=setup&new=1" className="text-button">Create a business profile <Icon name="arrow" /></a></div>}
       {activityOnly && selectedId && <section className="activity-card" aria-labelledby="history-heading"><div className="card-heading"><p className="section-eyebrow">YOUR BUSINESS UPDATES</p><h2 id="history-heading">Activity history</h2><p>Your latest saved profile, product and website updates.</p></div>

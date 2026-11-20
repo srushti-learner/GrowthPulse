@@ -114,6 +114,38 @@ describe("analytics owner workflows", () => {
     expect(container.textContent).toContain("£85.00");
     expect(container.textContent).toContain("£45.00");
   });
+  it("shows saving feedback, blocks repeated confirmation and opens actual sales after saving from the simulator", async () => {
+    let finish!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => { finish = resolve; });
+    const fetch = fetcher(empty, (path) => path.includes("/commit") ? pending : path.includes("mode=headers") ? json(headers) : json({ draft }, 201));
+    await act(async () => root.render(<AnalyticsWorkspace studio onSessionExpired={expired} />));
+    await click("Import sales"); await chooseCurrency(); await chooseFile();
+    await act(async () => container.querySelector<HTMLInputElement>('.a-review input[type="checkbox"]')!.click());
+    await click("Confirm sales import");
+    const saving = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("Saving sales..."))!;
+    expect(saving.disabled).toBe(true);
+    expect(container.textContent).toContain("Saving your reviewed sales history");
+    await act(async () => saving.click());
+    expect(fetch.mock.calls.filter(([path]) => path.includes("/commit"))).toHaveLength(1);
+    await act(async () => { finish(json({ analytics: loaded })); });
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("My sales");
+    expect(container.querySelector('[aria-label="Review sales import"]')).toBeNull();
+    expect(document.activeElement?.textContent).toContain("Sales baseline saved");
+  });
+  it.each([409, 500])("makes an HTTP %s confirmation failure visible while preserving the reviewed upload", async (status) => {
+    const message = status === 409 ? "History changed while reviewing. Reload and review this import again." : "Sales could not be saved. Please retry.";
+    fetcher(empty, (path) => path.includes("/commit") ? json({ error: message }, status) : path.includes("mode=headers") ? json(headers) : json({ draft }, 201));
+    await render(); await click("Import sales"); await chooseCurrency(); await chooseFile();
+    await act(async () => container.querySelector<HTMLInputElement>('.a-review input[type="checkbox"]')!.click());
+    await click("Confirm sales import");
+    const review = container.querySelector('[aria-label="Review sales import"]')!;
+    expect(review.textContent).toContain(`Sales import was not confirmed: ${message}`);
+    expect(review.textContent).not.toContain("Saving sales...");
+    expect(document.activeElement).toBe(container.querySelector('[role="alert"]'));
+    expect(container.textContent).not.toContain("Sales baseline saved");
+    expect(review.querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked).toBe(true);
+    expect([...review.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("Confirm sales import"))!.disabled).toBe(false);
+  });
   it("lets owners correct suggestions, blocks missing/duplicate fields, and invalidates previews on edits", async () => {
     const customHeaders = { headers: ["Ticket", "When", "Count", "Each", "Email"], suggestions: [null, null, null, null, null], issues: [] };
     const fetch = fetcher(empty, (path) => path.includes("mode=headers") ? json(customHeaders) : json({ draft }, 201));

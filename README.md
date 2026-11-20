@@ -42,8 +42,11 @@ The shared **Active business** selector follows the owner across My growth journ
 Market intelligence, My growth plan, My actions, Products, Website evidence and sales tools.
 Sidebar and journey links retain the business ID; changing businesses clears
 product/import/action context rather than attaching it to another business.
-An empty signed-in account starts with website setup; a website-less business can
-add its details and products manually. Business details are nested inside
+An empty signed-in account starts with website setup without an empty business selector.
+**I don't have a website** opens a visible manual name/category/description form,
+without asking for the website again, and includes **Back to website setup**.
+The primary setup page keeps a short, visible permission/provider/cost notice,
+not a repeated analysis-details dropdown. Business details are nested inside
 **My growth journey**, not a separate sidebar tab. Legacy `#business` links still
 open that nested view. **Add business** starts the same guided setup.
 Other pages keep only the shared business selector above their own content;
@@ -53,6 +56,15 @@ not another guided analysis step. It exposes captured public pages and scanner
 results; the business agent remains the guided starting point.
 The full weekly sales and outcome review lives in **My progress**, not on both
 the overview and progress page.
+
+**Future features** (`#future`) is a signed-in roadmap page, not a working
+connector screen. It describes permission-based Instagram professional-account
+and WhatsApp Business connections for businesses without websites, plus
+photo-to-product drafts, connected order history, conversation insights and
+scheduled weekly check-ins. All are explicitly planned; there are no connection
+buttons, release-date promises or background research requests. The page links
+to the existing website-free manual business setup and Contact us. It retains
+the selected business in sidebar navigation without loading its private data.
 
 Before authentication, four manually advanced animated frames introduce the
 business, connected evidence, and a chosen next action, then show account creation.
@@ -138,12 +150,32 @@ Strategies contain the saved AI recommendation plus a clearly labeled planning
 scaffold, a suggested metric and an experiment proposal to refine before acting.
 No new model/research call occurs when opening this tab, adding an action or
 saving an assessment. Completed status is owner-reported work, not measured uplift.
-Strategy drawers and saved plan actions can open Products with the selected
-recommendation and its source evidence. The owner chooses the relevant product;
-the app does not guess product associations. That action context survives
-opening a product and returning to the catalogue, and a return link reopens the
-exact saved plan action. Non-product recommendations can still be managed as
-plan actions; no content/campaign execution capability is implied.
+Strategy drawers and saved actions share **connected action work**. After explicitly
+adding an action to the plan, owners choose one product, several products, business/
+website/channel work, or a new-product concept. Known product origin is preserved
+as a starting target, not proof that scope is single-product. An explicit AI request
+can classify other recommendations, rank evidence-backed catalogue candidates,
+explain their fit, or report uncertainty without forcing a match. Owners confirm
+or override scope and targets. Changed/deleted product evidence requires review
+and renewed confirmation. Browsing never starts matching or scans.
+
+**Generate action-specific steps** sends the actual saved recommendation and confirmed
+target excerpts to Anthropic; it does not reuse a generic product analysis. AI
+charges may apply. Draft supporting steps stay under the original action, with
+owner-recorded draft/approved/implemented/result states. Recording a result requires
+notes; it is not verified uplift or automatic attribution. Manual supporting steps
+remain available without AI. Target changes reset unapproved action-generated
+drafts; reviewed steps must be returned to draft first. Plan revisions guard
+concurrent updates, and existing saved plans do not need reanalysis.
+
+Products separates **Work on this growth action** from **Review products independently**.
+Independent product recommendations remain product-only. Owners may add one as
+a separate growth action or explicitly confirm its relevance and attach it as a
+draft supporting step to an existing action, without duplicating that action.
+Origin, selected targets, independent suggestions and contextual AI work remain
+distinct. No website publishing, content/campaign execution or product-specific
+sales forecasting capability is implied; simulations still use business-level
+records and owner-entered assumptions.
 
 **My progress** (`#progress`) reviews saved action statuses, dates and the
 Weekly Growth Review pilot described below. Sales-record links open the existing
@@ -151,6 +183,11 @@ sales view, while Growth Simulator remains a separate what-if tool. Neither a
 completed task nor a simulation is presented as measured uplift or attribution.
 The existing LangGraph research workflow and durable SQL checkpointer still run inside
 the analysis worker; the saved-result Market and Growth views do not replace them.
+Live analysis shows current activity, specialist statuses and source/finding counts,
+without a technical step-log dropdown. Incomplete checks remain visibly flagged.
+Empty recommendation cards use **Gathering evidence before your next move**.
+Market cards distinguish research still running from candidate-verification or
+website-reading failures, without presenting unverified leads as competitors.
 Live analytics connectors and experiment execution are not implemented. Outcome
 reviews require explicitly supplied sales records and an owner decision; they are
 not automatic campaign attribution. Earlier plans retain their evidence snapshots when research
@@ -161,17 +198,22 @@ edits are rejected instead of silently overwriting another view.
 
 Open **Market intelligence → Customer voice**, choose a reviewed catalogue product,
 read the provider disclosure and select **Find customer feedback**. Collection,
-listing confirmation, authorized imports and **Analyse confirmed reviews** are
+automatic product matching, authorized imports and **Analyse customer feedback** are
 available here; there is no separate "above" workflow to locate. For a profile
 without a website, the same feedback workflow is shown directly in Market intelligence.
-The page leads with confirmed customer takeaways and visible review quotes, with
+The page leads with matched customer takeaways and visible review quotes, with
 own-product and comparable-product feedback kept separate. If no review text was
 captured, it shows a clear empty state rather than treating listing descriptions,
 star ratings or published review counts as feedback. Excerpts awaiting product
-confirmation stay out of insights; **Review product matches** opens the initially
+matching stay out of insights; **Review product matches** opens the initially
 collapsed source checks. Listing facts and capture failures remain available on
 demand below the feedback. Finding fresh feedback, importing reviews and running
 analysis still require explicit actions.
+Each takeaway identifies praise, a concern or mixed feedback, then shows a
+suggested next step and expandable original supporting reviews. Repeated sample
+disclaimers and informational footnotes have been removed from the customer,
+market, overview, growth and product workspaces; source attribution, essential
+consent, unavailable-data states, stale-evidence warnings and errors remain.
 The existing Market Intelligence agent exposes a bounded LangGraph marketplace
 workflow using the existing server-only Anthropic/Tavily configuration; no extra AI
 provider or autonomous agent fleet is introduced.
@@ -198,21 +240,39 @@ provider or autonomous agent fleet is introduced.
   explicit per-source gaps, with listing-link/export recovery actions. This is **not**
   a comprehensive live Amazon/Flipkart review feed or an official marketplace API
   integration. Flipkart query parameters are dropped; verify the captured variant.
-- Confirm each captured listing as **My listing**, **My product, another seller**,
-  **Comparable product**, or **Not relevant**. A matching GTIN is only a hint;
-  neither a shared identifier nor a similar name establishes seller ownership.
-  Confirmations never overwrite the reviewed catalogue.
-- **Analyse confirmed reviews** uses only confirmed listings with at least two
+- Matching GTINs automatically identify **Same product (seller unverified)** when
+  captured pack/variant details do not conflict. One bounded AI matching call
+  handles remaining listings using exact captured catalogue/listing fragments.
+  Specific identifying name fragments and compatible captured identity are
+  required for name-based same-product matching, including expanded/reordered
+  titles; shared categories alone cannot prove identity.
+  Comparable products require source-backed relevance, while unsupported,
+  contradictory or uncertain proposals remain separate. Published brand/model
+  fields are retained when available. You can correct relationships, confirm
+  **My listing** or **My product, another seller**, or exclude a source. Automatic
+  matching never establishes seller ownership or changes the reviewed catalogue.
+  Owner corrections are not overwritten during analysis.
+- **Analyse customer feedback** uses matched listings with at least two
   distinct review excerpts. At most 50 excerpts of 500 characters are retained;
   duplicates are conservatively removed across the sample. Possible themes cite
   their supporting excerpts and separate own-product feedback from alternatives.
   Experiments are hypotheses, not established product defects or unmet demand.
+  The same analysis call returns up to three side-by-side comparative opportunities:
+  what this product's reviewers praise/request, comparable-product feedback,
+  a potential improvement and a concrete test. Each side requires at least two
+  distinct original review references from its own group; invented, duplicated
+  or cross-scope citations are rejected. A missing side is shown as an evidence
+  gap, never manufactured from the other product's reviews. Changes to a listing's
+  relationship clear both themes and comparisons. Legacy reports remain readable
+  and can be explicitly upgraded; opening a saved report performs no matching or
+  analysis. Discovery and analysis each make at most two model requests (including
+  any remaining matching), with no per-listing model calls or automatic retries.
   Reviewer author fields are not retained; email/phone-like strings in review
   excerpts are redacted. Owners must still exclude private/customer information.
 - Optional listing URLs and authorized review CSVs are fallbacks. CSV uploads
   are at most 48 KiB, 50 rows and six listing paths. Required headers:
   `product_url,title,review`. Optional:
-  `description,rating,review_date,price,currency,gtin,variants,seller`.
+  `description,rating,review_date,price,currency,gtin,variants,seller,brand,model`.
   Use YYYY-MM-DD dates, ratings from 0 to 5, a valid GTIN when supplied, and an ISO
   currency with price. Repeat consistent listing fields for every review of that
   URL. Unknown columns are rejected. Imports are labeled owner-supplied, not
@@ -223,11 +283,11 @@ provider or autonomous agent fleet is introduced.
   advantages, catalogue rewrites, publishing or monitoring are inferred.
 - **Customer voice** owns the selected product's research controls and status,
   independent of the business/competitor research badge. Actual discovery,
-  per-listing capture counts and analysis stages are persisted in SQLite/MySQL
-  and reloaded on return; listing confirmation remains an explicit owner action.
+  per-listing capture counts, automatic matching and analysis stages are persisted
+  in SQLite/MySQL and reloaded on return; corrections remain explicit owner actions.
   Finding listings is not reported as successfully collecting reviews.
   It shows review excerpts only from captured,
-  owner-confirmed listings, with separate own-product and comparable-product
+  automatically matched or owner-selected listings, with separate own-product and comparable-product
   samples, source links, capture dates, known review dates and export provenance.
   Saved AI themes cite their supporting excerpts; reading feedback never runs
   analysis. Confirmations, imports and completed research update the same view.
@@ -263,6 +323,9 @@ the business selected elsewhere in the dashboard.
   warnings, net sales, dates and currency, then explicitly confirm.
   Confirmation **replaces the imported baseline**, not appends to it. Previous
   imports remain saved; owner-entered dates cannot be overwritten by an import.
+  Confirmation shows saving progress, then opens **My sales** and focuses the
+  saved notice. Failures retain the preview, appear beside the confirmation
+  button, and focus the workspace error instead of failing out of view.
   The template uses `order_id,date,quantity,unit_price`, with optional
   `sku,product,line_discount_amount,currency,status`. These exact headings are not required:
   deterministic suggestions recognize common names, and owners can map each
@@ -410,11 +473,11 @@ including an intentional local MySQL experiment with exported `DB_*` settings.
    disposable test credentials (new passwords need at least 12 characters).
    In **My growth journey**, enter a public website you own or have permission to read
    and choose **Start AI analysis**. There is no separate permission checkbox;
-   scope, provider and charge notices are collapsed under **Analysis details**. This single action
+   scope, provider and charge notices are visible below the start button. This single action
    approves reading the website, saving the findings and a combined
    business and competitor analysis: public research queries go to Tavily and
    captured public merchant/competitor evidence goes to Anthropic. The notice
-   includes the bounded provider budget and possible charges.
+   explains possible charges and that suggestions need review before application.
 2. The agent reads permitted pages and continues directly into AI analysis,
    without a separate scan-results review or confirmation screen. A matching,
    usable, unexpired setup scan is reused; a changed website or expired scan is read again.
@@ -427,16 +490,11 @@ including an intentional local MySQL experiment with exported `DB_*` settings.
 3. The profile saves first; the agent starts automatically in the same workspace.
    Start with the short **At a glance** view, then open **Growth intelligence**
    to review recommendations and plan work, or **Market intelligence** for external
-   research. Expand **Store briefing and saved specialist details** in At a glance
-   for the full business briefing: a sourced summary,
-   supported observations with why they matter, explicit unknowns, and recommended
-   next checks with reasons. The Store briefing remains a guided deck: one card at a time, with
-   **Previous** / **Next card** controls and direct jumps to **Business**,
-   **Findings**, **Unknowns**, or **Next moves**. Reasons and source quotes
-   expand on demand instead of filling the screen. Cards never auto-advance.
-   New cards appear as content arrives, without interrupting the selected card;
-   validation and profile saving preserve your reading position. Transitions
-   respect reduced-motion preferences. Navigating cards never calls the LLM again.
+   research. **At a glance** shows a supported finding and one next move, with
+   reasons and source quotes available on demand. The duplicate specialist
+   archive is not shown in My growth journey; market research stays in its
+   dedicated views and saved research is not deleted. Transitions respect
+   reduced-motion preferences. Browsing findings never calls the LLM again.
    New runs stream text as Haiku generates it, after the public scan.
    Live text is clearly marked provisional: source checks and saving happen only
    after generation finishes. Quotes and source links appear on the finalized
@@ -497,8 +555,9 @@ remain supported. Listing rewrites are part of that one product-analysis call,
 not separate invented AI stages.
 
 Marketplace and customer-feedback views share the same saved collection stages,
-checked-listing counts, timestamps and explicit failure reasons. Confirming
-matches remains an owner decision, not an automated progress step. Prior saved
+checked-listing counts, timestamps and explicit failure reasons. Automatic product
+matching is a real progress step; seller-ownership confirmation and corrections
+remain owner decisions. Prior saved
 sources and results stay readable while a fresh run works. Website scanning
 instead streams actual robots checks, sitemap discovery, captured-page/product
 counts and page limitations. **Keep the scan page open**: it is request-scoped,
@@ -806,7 +865,7 @@ the latest saved report for at most six products with the most recent saved repo
 belonging to this owner and business, and reuses up to three themes with two distinct original
 review excerpts each. Reports must be analysed, match the current reviewed product
 fingerprint and have no active refresh. Review references must resolve uniquely
-to captured, owner-confirmed same-product or alternative listings; these scopes
+to captured, automatically matched or owner-selected same-product or alternative listings; these scopes
 remain separate. Unconfirmed/excluded listings, stale catalogue matches,
 duplicate review text and unsupported references are omitted explicitly.
 No new review collection or customer-analysis call is made.
@@ -925,6 +984,15 @@ account-wide, not guaranteed by this application: check current credits and
 disable any pay-as-you-go billing in Tavily if required. Anthropic is billed
 separately. Explicit new attempts have fresh caps; they are not a monthly spend
 limit across businesses or retries.
+
+A specialist that proposes findings but has none accepted can make one metered
+correction using the same captured evidence and validation paths. Partially valid
+or intentionally empty responses are not retried. Corrections share the existing
+request and context budgets; exhausted budgets preserve the validation diagnostic
+and explicitly report why correction could not run. Citation and unsupported-claim
+checks still apply. A wrong existing category citation can be repaired from
+another supplied quote that supports the grounded category, without another model
+call; unknown source IDs and unsupported categories remain rejected.
 
 Candidate selection uses actual literal choices for the supplied zero-based
 indices, not numeric bounds moved into schema descriptions. Each choice is
@@ -1389,8 +1457,9 @@ analysis. Visitors select an enquiry type and enter their name, email, optional
 company and message. No sign-in, website scan or AI call is involved.
 The welcome page and workspace link to it.
 
-`POST /api/contact` validates the submission and emails plain text only to
-`hello@growthpulse.live`. The visitor is the Reply-To address, not the sender or
+`POST /api/contact` validates the submission and emails plain text only to the
+server-configured recipient (the public contact mailbox is `hello@growthpulse.live`).
+The visitor is the Reply-To address, not the sender or
 recipient; enquiry categories become fixed subject labels. Messages are not
 stored in the application database. The domain mailbox still retains the email,
 so mailbox access and retention must be managed separately. There is no
@@ -1401,16 +1470,22 @@ server/hosting environment, never in frontend code, GitHub or a chat:
 
 ```dotenv
 CONTACT_EMAIL_ENABLED=true
-SMTP_HOST=smtp.titan.email
-SMTP_PORT=587
-SMTP_USER=hello@growthpulse.live
-SMTP_PASSWORD=<enter privately>
+CONTACT_FORM_RECIPIENT_EMAIL=hello@growthpulse.live
 ```
 
-Use the SMTP host confirmed by your mailbox provider. Port 587 requires STARTTLS;
-465 uses implicit TLS. Certificate validation stays enabled. Keep `APP_ORIGIN`
+On **GoDaddy Node.js Hosting**, a configured recipient selects the built-in HTTP
+email gateway at `127.0.0.1:2525`. Outbound SMTP is not routable on this platform;
+mailbox passwords and SMTP ports cannot fix it. No SMTP credentials or external
+email API key are needed. The gateway chooses the verified sender; the visitor
+cannot choose a sender or recipient. Confirm these settings in both Preview and
+Publish. The gateway is not available on a normal local development machine.
+See [GoDaddy's official email guide](https://github.com/godaddy/nodejs-hosting-agent-skill/blob/main/skills/godaddy-nodejs-hosting/email.md).
+
+For other hosting or local SMTP testing, omit `CONTACT_FORM_RECIPIENT_EMAIL` and
+configure `SMTP_HOST`, `SMTP_USER` and `SMTP_PASSWORD` instead. Port 587 requires
+STARTTLS; 465 uses implicit TLS. Certificate validation stays enabled. Keep `APP_ORIGIN`
 equal to the exact public origin (`https://growthpulse.live` when deployed there).
-Missing SMTP settings while enabled stop startup with field names only.
+Invalid enabled-email configuration stops startup with field names only.
 Disabled email returns a truthful 503 and a direct-email alternative.
 
 Submissions require the configured Origin, pass a honeypot and strict bounded
@@ -1421,8 +1496,12 @@ disabled until the hosting proxy topology is verified. Server failures retain
 the browser draft; there are no automatic retries. Network interruption can leave
 delivery uncertain, so check before submitting again.
 
-The confirmation means **SMTP accepted the message**, not that inbox delivery was
-verified. After an explicitly authorized deployment and private SMTP setup,
+The confirmation means **the delivery provider accepted the message**, not that
+inbox delivery was verified. Gateway acceptance requires a successful HTTP response,
+`success: true` and a nonempty message ID. Its 30-second deadline covers response
+body reads as well as connection and headers; failures never produce a success
+confirmation. Server logs report only safe failure categories and HTTP status.
+After an explicitly authorized deployment and private email setup,
 manually send a non-sensitive contact-form message and confirm it appears in the
 domain mailbox (including checking spam). Confirm Reply-To points to the visitor.
 Also verify a direct inbound email to the mailbox for the hackathon criterion.
@@ -1444,8 +1523,9 @@ Local mocked tests do not satisfy either live receipt check.
 | `TRUST_PROXY_HOPS` | `0` | Integer 0-5; set only after verifying the hosting proxy topology |
 | `ANTHROPIC_API_KEY` | unset | Optional server-only Anthropic key; required for live business-agent reviews |
 | `ANTHROPIC_MODEL` | `claude-haiku-4-5` | Tool-capable Claude model available to your Anthropic account |
-| `CONTACT_EMAIL_ENABLED` | `false` | Explicit `true` enables the public contact SMTP sender |
-| `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD` | unset | Provider host, full domain mailbox username and server-only password; required when contact email is enabled |
+| `CONTACT_EMAIL_ENABLED` | `false` | Explicit `true` enables public contact email |
+| `CONTACT_FORM_RECIPIENT_EMAIL` | unset | Server-only fixed recipient; when enabled, selects GoDaddy's built-in HTTP email gateway without SMTP credentials |
+| `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD` | unset | Required for SMTP delivery only when enabled and no gateway recipient is configured; not usable on GoDaddy Node.js Hosting |
 | `SMTP_PORT` | `587` | `587` requires STARTTLS; `465` uses implicit verified TLS |
 
 Use the same hostname in the browser and `APP_ORIGIN`; `localhost` and

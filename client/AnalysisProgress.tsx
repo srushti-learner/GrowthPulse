@@ -3,7 +3,6 @@ import { activeAnalysis, type AnalysisJob } from "../shared/analysis";
 import { researchAgents, researchAgentLabels, researchLimits, type ResearchStep } from "../shared/research";
 import { understandingTimeoutMs } from "../shared/understanding";
 import { Icon } from "./Icon";
-import { describeStepLimitations } from "./research-messages";
 import "./analysis-progress.css";
 
 const phaseLabels = {
@@ -35,16 +34,6 @@ function duration(milliseconds: number) {
   const seconds = Math.max(0, Math.floor(milliseconds / 1000));
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
-function ActivityStep({ step }: { step: ResearchStep }) {
-  return <li data-status={step.status}>
-    <div className="analysis-step-heading"><strong>{stepLabel(step)}</strong><span>{statusLabels[step.status]}{step.reused ? " - Reused saved work" : ""}</span></div>
-    {step.search && <p>Search sent: <q>{step.search.query}</q>. Search leads still need verification.</p>}
-    {step.capture && <p>Candidate site: {new URL(step.capture.url).hostname} - {step.capture.pages === 0 && step.status === "running"
-      ? "No pages captured yet" : `${step.capture.pages} public pages captured`}. A candidate is not a verified competitor.</p>}
-    {(step.status === "limited" || step.status === "failed") && describeStepLimitations(step).map((text) => <p key={text} className="analysis-step-limit">{text}</p>)}
-  </li>;
-}
-
 export function AnalysisProgress({ job, phase, reusingScan, showDetails, onCancel }: {
   job: AnalysisJob | null; phase: AnalysisJob["phase"]; reusingScan: boolean;
   showDetails: boolean; onCancel: () => void;
@@ -103,13 +92,7 @@ export function AnalysisProgress({ job, phase, reusingScan, showDetails, onCance
           </li>;
         })}
       </ol>
-      {hasFailedChecks && <p className="analysis-check-failure" role="status">Some checks could not finish. Open technical details to see what happened.</p>}
-      <div className="analysis-recent">
-        <details className="agent-sources"><summary>Technical details ({steps.length} recorded steps)</summary>
-          <p>Public searches used: {research.usage.searches}</p>
-          <ul>{ordered.map((step) => <ActivityStep key={step.key} step={step} />)}</ul>
-        </details>
-      </div>
+      {hasFailedChecks && <p className="analysis-check-failure" role="status">Some information couldn't be checked. Please review the available findings before deciding.</p>}
     </>}
     {!steps.length && !queued && <div className="analysis-starting"><Icon name="shield" /><p>{reusingScan
       ? "Using your saved website information." : "Checking your website's permitted public pages."}</p></div>}

@@ -107,12 +107,11 @@ describe("signed-in website onboarding", () => {
     expect(container.querySelector('[type="submit"]')?.textContent).toContain("Start AI analysis");
     expect(analyses(fetch)).toHaveLength(0);
     expect(container.querySelector('input[type="checkbox"]')).toBeNull();
-    const details = container.querySelector("details");
-    expect(details?.hasAttribute("open")).toBe(false);
-    expect(details?.textContent).toContain("Starting analysis confirms");
-    expect(details?.textContent).toContain("Competitor research is included.");
-    expect(details?.textContent).toContain("Tavily");
-    expect(details?.textContent).toContain("charges may apply");
+    expect(container.querySelector("details")).toBeNull();
+    expect(container.textContent).toContain("Starting confirms you own this website");
+    expect(container.textContent).toContain("Anthropic");
+    expect(container.textContent).toContain("Tavily");
+    expect(container.textContent).toContain("charges may apply");
     await set("onboardingUrl", business.website);
     await startAnalysis();
     expect(container.textContent).toContain("Your business, explained.");
@@ -265,7 +264,7 @@ describe("signed-in website onboarding", () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("No AI analysis was started");
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("Publisher restriction.");
     expect(container.querySelector(".onboarding-continue")).toBeNull();
-    expect(container.querySelector(".first-visit > p a")?.getAttribute("href")).toBe("#overview?view=business&new=1");
+    expect(container.querySelector(".first-visit > p a")?.getAttribute("href")).toBe("#overview?view=manual&new=1");
     expect(fetch.mock.calls.some(([path]) => path.endsWith("/claim"))).toBe(false);
     expect(analyses(fetch)).toHaveLength(0);
   });

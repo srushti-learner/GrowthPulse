@@ -86,6 +86,7 @@ describe("product-specific saved intelligence", () => {
     const analysis = (await analyse(user).expect(200)).body.analysis;
     const input = { analysisId: analysis.id, index: 0 };
     const planned = (await post(user, "growth-plan", input).expect(201)).body.item;
+    expect(planned.opportunity.originProductId).toBe(user.product.id);
     expect((await post(user, "growth-plan", input).expect(200)).body.item).toEqual(planned);
     const growth = await request(app).get(`/api/businesses/${user.businessId}/growth`).set("Cookie", user.cookie).expect(200);
     expect(growth.body.plan).toHaveLength(1);
@@ -102,6 +103,26 @@ describe("product-specific saved intelligence", () => {
     const summaries = await request(app).get(`/api/businesses/${user.businessId}/product-intelligence`).set("Cookie", user.cookie).expect(200);
     expect(productAnalysisSummariesSchema.parse(summaries.body).analyses).toEqual([]);
     expect(complete).toHaveBeenCalledOnce();
+  });
+  it("attaches an independent suggestion under an explicitly selected action without a duplicate action or overriding the parent's status", async () => {
+    const user = await owner(), foreign = await owner();
+    const analysis = (await analyse(user).expect(200)).body.analysis;
+    const standalone = (await post(user, "growth-plan", { analysisId: analysis.id, index: 0 }).expect(201)).body.item;
+    const parent = await store.addGrowthPlan(user.id, user.businessId, {
+      ...standalone.opportunity, id: "b".repeat(64), title: "Improve product-page guidance", detail: "Coordinate useful product-page information.",
+    });
+    const input = { analysisId: analysis.id, index: 0, attachTo: { actionId: parent.opportunity.id, revision: parent.revision } };
+    await post(user, "growth-plan", { ...input, attachTo: { actionId: parent.opportunity.id, revision: 99 } }).expect(409);
+    const attached = (await post(user, "growth-plan", input).expect(200)).body.item;
+    expect(attached.opportunity.id).toBe(parent.opportunity.id); expect(attached.status).toBe(parent.status);
+    expect(attached.opportunity.work.steps).toMatchObject([{ productId: user.product.id, origin: "product", status: "draft" }]);
+    expect((await post(user, "growth-plan", input).expect(200)).body.item).toEqual(attached);
+    expect((await store.listGrowthPlan(user.id, user.businessId))).toHaveLength(2);
+    expect((await store.listGrowthPlan(user.id, user.businessId)).find((item) => item.opportunity.id === standalone.opportunity.id)).toEqual(standalone);
+    const foreignAnalysis = (await analyse(foreign).expect(200)).body.analysis;
+    await post(foreign, "growth-plan", { ...input, analysisId: foreignAnalysis.id }).expect(404);
+    await store.saveProduct(user.id, user.businessId, { ...emptyProduct, name: "Changed cotton tee" }, user.product.id);
+    await post(user, "growth-plan", { ...input, attachTo: { ...input.attachTo, revision: attached.revision } }).expect(409);
   });
 
   it("admits async analysis once and persists real stages for a reopening client", async () => {

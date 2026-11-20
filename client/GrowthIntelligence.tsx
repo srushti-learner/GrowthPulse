@@ -14,6 +14,7 @@ import { Button } from "./components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "./components/ui/sheet";
 import { journeyLink } from "./GrowthJourney";
+import { GrowthActionWork } from "./GrowthActionWork";
 
 const statusLabels = { planned: "Planned", in_progress: "In progress", completed: "Completed", dismissed: "Dismissed" };
 const assessmentLabels = { unknown: "Not assessed", low: "Low", medium: "Medium", high: "High" };
@@ -60,25 +61,28 @@ function ActionPlan({ opportunity }: { opportunity: GrowthOpportunity }) {
         <SupportingEvidence sources={opportunity.sources} />
         <details className="action-research-notes"><summary>Research notes</summary>
           <p>{opportunity.reviewReason}</p>
-          <p className="field-note">Suggested steps, not completed work. Check sources, costs and a baseline before acting. Results are not tracked automatically; marking an action complete does not establish improved sales.</p>
         </details>
       </div>
     </details>
   </div>;
 }
-function Strategy({ opportunity, businessId, planned = false }: { opportunity: GrowthOpportunity; businessId: string; planned?: boolean }) {
+function Strategy({ opportunity, businessId, planned = false, onSessionExpired, onSaved }: {
+  opportunity: GrowthOpportunity; businessId: string; planned?: boolean;
+  onSessionExpired: () => void; onSaved: (item: GrowthPlanItem) => void;
+}) {
   return <Sheet><SheetTrigger asChild><Button variant="outline">Explore strategy<ArrowRight /></Button></SheetTrigger>
     <SheetContent className="research-drawer"><SheetHeader>
       <p className="section-eyebrow">GROWTH RECOMMENDATION</p><SheetTitle>{recommendationTitle(opportunity.title)}</SheetTitle>
       <SheetDescription>Review the recommendation and plan your next steps. Nothing has been launched or changed for you.</SheetDescription>
     </SheetHeader><div className="research-drawer-body growth-strategy">
       <ActionPlan opportunity={opportunity} />
+      <GrowthActionWork businessId={businessId} actionId={opportunity.id} showAction={false} onSessionExpired={onSessionExpired} onSaved={onSaved} />
       {planned && <div className="journey-actions strategy-work-link"><Button asChild><a href={journeyLink("actions", businessId, opportunity.id)}>Work on this action<ArrowRight /></a></Button></div>}
       <section className="strategy-tools" aria-label="Optional tools">
         <h3>Continue with a tool</h3>
-        <p>Choose a product to review, or explore a sales scenario. These tools are optional.</p>
+        <p>Work on confirmed targets in Products, or explore a business-level sales scenario using your own assumptions.</p>
         <div className="strategy-tool-links">
-          <Button asChild><a href={journeyLink("products", businessId, opportunity.id)}>Review a product<ArrowRight /></a></Button>
+          <Button asChild><a href={journeyLink("products", businessId, opportunity.id)}>Open connected product workspace<ArrowRight /></a></Button>
           <Button asChild variant="outline"><a href={`#simulator?${new URLSearchParams({ business: businessId, action: opportunity.id })}`}>Explore in Growth Simulator<ArrowRight /></a></Button>
         </div>
       </section>
@@ -126,6 +130,7 @@ export function GrowthIntelligence({ business, onSessionExpired, onPlanSaved, ac
   const [reload, setReload] = useState(0);
   const [showAll, setShowAll] = useState(false);
   const [workView, setWorkView] = useState<"active" | "completed" | "dismissed">("active");
+  const [expandedActionId, setExpandedActionId] = useState("");
   const controller = useRef<AbortController | null>(null);
   useEffect(() => {
     const followLink = () => setContext(new URLSearchParams(window.location.hash.split("?")[1] ?? ""));
@@ -162,6 +167,10 @@ export function GrowthIntelligence({ business, onSessionExpired, onPlanSaved, ac
     else if (target) target.focus();
     else if (!actionOnly && data?.opportunities.some((item) => item.id === actionId)) setShowAll(true);
   }, [business.id, context, data, actionOnly, workView, showAll]);
+  function acceptSaved(saved: GrowthPlanItem) {
+    setData((current) => current && ({ ...current, plan: [...current.plan.filter((entry) => entry.opportunity.id !== saved.opportunity.id), saved] }));
+    onPlanSaved?.();
+  }
   async function save(opportunity: GrowthOpportunity, item?: GrowthPlanItem, event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
     if (savingId || !controller.current || controller.current.signal.aborted) return;
@@ -178,8 +187,7 @@ export function GrowthIntelligence({ business, onSessionExpired, onPlanSaved, ac
         method: item ? "PATCH" : "POST", body: JSON.stringify(input), signal,
       });
       if (signal.aborted) return;
-      setData((current) => current && ({ ...current, plan: [...current.plan.filter((entry) => entry.opportunity.id !== saved.opportunity.id), saved] }));
-      onPlanSaved?.();
+      acceptSaved(saved);
       setNotice(item ? `${actionOnly ? "Your action status" : "Your planning assessment"} is saved. Completion is owner-reported, not measured growth.` : "Added to your growth plan. No website change or campaign has been made.");
     } catch (error) {
       if (signal.aborted) return;
@@ -227,13 +235,16 @@ export function GrowthIntelligence({ business, onSessionExpired, onPlanSaved, ac
         <p>{!data.plan.length ? "Choose an opportunity in Decide and add it to your plan. Your product catalogue stays separate."
           : "Use the filters to review your saved work, or return to Decide to choose another action."}</p>
         <Button asChild variant="outline"><a href={journeyLink("growth", business.id)}>Review opportunities<ArrowRight /></a></Button></CardContent></Card>}
-      {visible.map((item, index) => <details className="agent-sources growth-plan-item" open={index === 0} key={item.opportunity.id} id={`growth-action-${item.opportunity.id}`}>
+      {visible.map((item, index) => <details className="agent-sources growth-plan-item" open={index === 0} key={item.opportunity.id} id={`growth-action-${item.opportunity.id}`}
+        onToggle={(event) => { if (event.currentTarget.open) setExpandedActionId(item.opportunity.id); }}>
         <summary>{recommendationTitle(item.opportunity.title)} <Badge variant="outline">{item.status === "completed" ? "Marked complete by you" : statusLabels[item.status]}</Badge></summary>
         <div className="growth-plan-body">
           <ActionPlan opportunity={item.opportunity} />
+          {(expandedActionId === item.opportunity.id || requestedAction === item.opportunity.id || !requestedAction && index === 0) &&
+            <GrowthActionWork businessId={business.id} actionId={item.opportunity.id} showAction={false} onSessionExpired={onSessionExpired} onSaved={acceptSaved} />}
           <details className="agent-sources action-tools"><summary>Optional tools for this action</summary>
-            <p>Choose a product to review, or use your sales data to explore a scenario.</p>
-            <div className="journey-actions"><Button asChild variant="outline"><a href={journeyLink("products", business.id, item.opportunity.id)}>Review a relevant product<ArrowRight /></a></Button>
+            <p>Open the same action and targets in Products, or explore a business-level sales scenario.</p>
+            <div className="journey-actions"><Button asChild variant="outline"><a href={journeyLink("products", business.id, item.opportunity.id)}>Open connected product workspace<ArrowRight /></a></Button>
               <Button asChild variant="ghost"><a href={journeyLink("simulator", business.id, item.opportunity.id)}>Explore a what-if<ArrowRight /></a></Button></div>
           </details>
           <ActionStatusForm key={`${item.opportunity.id}:${item.revision}`} item={item} saving={!!savingId} onSave={(event, item) => void save(item.opportunity, item, event)} />
@@ -254,12 +265,11 @@ export function GrowthIntelligence({ business, onSessionExpired, onPlanSaved, ac
     {(primary || !data.plan.length) && <BlurFade duration={0.25} blur="2px"><Card className="growth-next-move">
       <CardHeader id={primary ? `growth-opportunity-${primary.id}` : undefined} tabIndex={primary ? -1 : undefined}>
         <CardDescription>{primary ? "Suggested experiment" : "Growth plan"}</CardDescription>
-        <CardTitle><h2>{primary ? recommendationTitle(primary.title) : "Gather evidence before choosing a growth move."}</h2></CardTitle></CardHeader>
+        <CardTitle><h2>{primary ? recommendationTitle(primary.title) : "Gathering evidence before your next move."}</h2></CardTitle></CardHeader>
       <CardContent>{primary ? <><p className="dashboard-clamped growth-experiment-description">{primary.detail}</p>
-        <p className="field-note">{primary.reviewReason} Impact / effort: not assessed.</p>
-        <div className="growth-card-actions"><Strategy opportunity={primary} businessId={business.id} /><Button disabled={!!savingId} onClick={() => void save(primary)}>
+        <div className="growth-card-actions"><Strategy opportunity={primary} businessId={business.id} onSessionExpired={onSessionExpired} onSaved={acceptSaved} /><Button disabled={!!savingId} onClick={() => void save(primary)}>
           {savingId === primary.id ? "Saving..." : "Add to my growth plan"}</Button></div></>
-        : <><p>No accepted growth suggestions are available. Missing evidence is not proof of a business problem.</p>
+        : <><p>Your next recommendation will appear here after the evidence is reviewed.</p>
           <a className="text-button" href={`#overview?view=business&business=${business.id}`}>Manage website analysis<ArrowRight className="inline size-4" /></a></>}
       </CardContent>
     </Card></BlurFade>}
@@ -276,8 +286,7 @@ export function GrowthIntelligence({ business, onSessionExpired, onPlanSaved, ac
         <CardHeader id={`growth-opportunity-${opportunity.id}`} tabIndex={-1}><Badge variant="secondary">{opportunity.agents.map((agent) => researchAgentLabels[agent]).join(" + ")}</Badge>
           <CardTitle><h4>{recommendationTitle(opportunity.title)}</h4></CardTitle></CardHeader>
         <CardContent><p className="dashboard-clamped">{opportunity.detail}</p>
-          <p className="field-note">Impact / effort: not assessed. Evidence: {new Set(opportunity.sources.map((source) => source.url)).size} captured page(s), needs validation.</p>
-          <div className="growth-card-actions"><Strategy opportunity={opportunity} businessId={business.id} /><Button disabled={!!savingId} onClick={() => void save(opportunity)}>
+          <div className="growth-card-actions"><Strategy opportunity={opportunity} businessId={business.id} onSessionExpired={onSessionExpired} onSaved={acceptSaved} /><Button disabled={!!savingId} onClick={() => void save(opportunity)}>
             {savingId === opportunity.id ? "Saving..." : "Add to my growth plan"}</Button></div>
         </CardContent>
       </Card>)}</div>
@@ -307,7 +316,7 @@ export function GrowthIntelligence({ business, onSessionExpired, onPlanSaved, ac
           <summary>{recommendationTitle(item.opportunity.title)} <Badge variant="outline">{statusLabels[item.status]}</Badge></summary>
           <div className="growth-plan-body">
             <section className="growth-plan-overview"><h4>Suggested action</h4><p>{item.opportunity.detail}</p></section>
-            <div className="journey-actions growth-plan-actions"><Strategy opportunity={item.opportunity} businessId={business.id} planned />
+            <div className="journey-actions growth-plan-actions"><Strategy opportunity={item.opportunity} businessId={business.id} planned onSessionExpired={onSessionExpired} onSaved={acceptSaved} />
               <Button asChild><a href={journeyLink("actions", business.id, item.opportunity.id)}>Work on this action<ArrowRight /></a></Button></div>
             <details className="agent-sources growth-plan-notes"><summary>About this saved recommendation</summary>
               <p>Based on the evidence available when you added this action. New research does not update it automatically.</p>

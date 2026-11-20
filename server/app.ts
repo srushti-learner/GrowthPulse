@@ -14,10 +14,11 @@ import { GrowthError } from "./growth-store.js";
 import type { ProductAnalyst } from "./product-intelligence.js";
 import { SalesError } from "./sales-imports.js";
 import type { ContactSender } from "./contact.js";
+import type { GrowthAdvisor } from "./growth-advisor.js";
 
 const defaultClientDirectory = fileURLToPath(new URL("../client/", import.meta.url));
 
-export function createApp(options: { store: Store; origin?: string; production?: boolean; trustProxyHops?: number; clientDirectory?: string; scanner?: WebsiteScanner; agent?: BusinessAgent; productAnalyst?: ProductAnalyst; contactSender?: ContactSender }) {
+export function createApp(options: { store: Store; origin?: string; production?: boolean; trustProxyHops?: number; clientDirectory?: string; scanner?: WebsiteScanner; agent?: BusinessAgent; productAnalyst?: ProductAnalyst; contactSender?: ContactSender; growthAdvisor?: GrowthAdvisor }) {
   const app = express();
   app.disable("x-powered-by");
   if (options.trustProxyHops) app.set("trust proxy", options.trustProxyHops);
@@ -28,7 +29,7 @@ export function createApp(options: { store: Store; origin?: string; production?:
     response.set("Cache-Control", "no-store").json({ status: "ok", service: "growthpulse-api", database: { engine: options.store.engine, status: "ok" } });
   });
 
-  const api = createApi(options.store, options.origin ?? "http://127.0.0.1:5173", options.production ?? false, options.scanner, options.agent, options.productAnalyst, options.contactSender);
+  const api = createApi(options.store, options.origin ?? "http://127.0.0.1:5173", options.production ?? false, options.scanner, options.agent, options.productAnalyst, options.contactSender, options.growthAdvisor);
   app.use("/api", api);
 
   app.use("/api", (_request, response) => {

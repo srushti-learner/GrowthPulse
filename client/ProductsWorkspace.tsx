@@ -11,7 +11,7 @@ import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { BlurFade } from "./components/ui/blur-fade";
 import { ProductVariants, readableAvailability, SourceReference } from "./SourceDetails";
-import { GrowthTaskContext } from "./GrowthTaskContext";
+import { GrowthActionWork } from "./GrowthActionWork";
 
 function ProductThumbnail({ name, src }: { name: string; src?: string }) {
   const [failedSource, setFailedSource] = useState<string>();
@@ -27,6 +27,7 @@ export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusi
   businessManaged?: boolean;
 }) {
   const [context, setContext] = useState(() => new URLSearchParams(window.location.hash.split("?")[1] ?? ""));
+  const [reviewMode, setReviewMode] = useState<"action" | "independent">("action");
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [businessId, setBusinessId] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
@@ -59,6 +60,7 @@ export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusi
       const next = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
       const requestedBusiness = next.get("business");
       if (requestedBusiness && !businesses.some((item) => item.id === requestedBusiness)) return;
+      if (next.get("action") !== context.get("action") || next.get("business") !== context.get("business")) setReviewMode("action");
       setContext(next);
       if (requestedBusiness && requestedBusiness !== businessId) {
         setBusinessId(requestedBusiness); requestedSelection.current.onSelected?.(requestedBusiness);
@@ -209,6 +211,8 @@ export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusi
   const reviewRows = draft?.rows.filter((row) => row.data && !row.errors.length) ?? [];
   const skippedRows = draft?.rows.filter((row) => !row.data || row.errors.length) ?? [];
   const selectedProduct = products.find((product) => product.id === selectedProductId);
+  const actionId = context.get("business") === businessId ? context.get("action") : null;
+  const actionReview = !!actionId && reviewMode === "action";
   const needsAttention = (product: Product) => productReadiness(product).some((check) => !check.present);
   const visibleProducts = products.filter((product) => (filter === "all" || filter === "attention" && needsAttention(product)
     || filter === "analysed" && analyses.some((item) => item.productId === product.id))
@@ -223,6 +227,11 @@ export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusi
     window.history.replaceState(null, "", `#products?${next}`);
     setContext(next);
   }
+  function closeProduct() {
+    setSelectedProductId("");
+    const next = new URLSearchParams(context); next.delete("product"); next.set("business", businessId);
+    window.history.replaceState(null, "", `#products?${next}`); setContext(next);
+  }
   if (loading) return <p className="loading-message">Loading your product workspace...</p>;
   return <section className="products-workspace">
     {error && <p role="alert" className="form-error">{error} <button type="button" className="text-button" disabled={busy} onClick={() => businesses.length ? setRevision((value) => value + 1) : setReload((value) => value + 1)}>Reload catalogue</button></p>}
@@ -234,15 +243,18 @@ export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusi
     }}><option value="" disabled>Choose a business</option>{businesses.map((business) => <option key={business.id} value={business.id}>{business.name}</option>)}</select></label></div>}
     {!businessId ? <p>Create a <a href="#overview?view=setup&new=1" className="text-button">business profile</a> before adding products.</p> : <>
       {reading && <p className="loading-message">Loading catalogue and saved scans...</p>}
-      <GrowthTaskContext key={businessId} businessId={businessId}
-        actionId={context.get("business") === businessId ? context.get("action") : null} onSessionExpired={onSessionExpired} />
+      {actionId && <div className="journey-actions" role="group" aria-label="Product review mode">
+        <Button variant={actionReview ? "default" : "outline"} aria-pressed={actionReview} onClick={() => setReviewMode("action")}>Work on this growth action</Button>
+        <Button variant={!actionReview ? "default" : "outline"} aria-pressed={!actionReview} onClick={() => setReviewMode("independent")}>Review products independently</Button>
+      </div>}
+      {actionReview && <GrowthActionWork key={`${businessId}:${actionId}`} businessId={businessId} actionId={actionId!} onSessionExpired={onSessionExpired} />}
       {!selectedProduct && <BlurFade className="product-catalogue-intro"><p className="section-eyebrow">PRODUCT INTELLIGENCE</p>
         <h2>Make every listing clearer.</h2><p>Products found in saved website scans appear here automatically, with their own product workspace. Add anything the scan missed manually.</p>
         <dl className="product-catalogue-metrics" aria-label="Saved product overview" aria-busy={reading}>
           <div><dt>Saved products</dt><dd>{reading ? "..." : products.length}</dd></div>
           <div><dt>Current analyses</dt><dd>{reading ? "..." : new Set(analyses.map((item) => item.productId)).size}</dd></div>
           <div><dt>Information to review</dt><dd>{reading ? "..." : products.filter(needsAttention).length}</dd></div>
-        </dl><p className="field-note">Counts cover saved catalogue products, not your complete website inventory. Review flags describe recorded fields, not product quality or sales.</p>
+        </dl>
       </BlurFade>}
       {!selectedProduct && <Button variant="outline" disabled={disabled} onClick={() => {
         setEditingId(""); setForm(emptyProduct); setDraft(null);
@@ -282,7 +294,6 @@ export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusi
             <button type="button" className="primary-link" disabled={!csv.trim() || !sourceName.trim()} onClick={() => void preview("csv")}>Preview CSV</button>
             <hr />
             <label>Saved website scan<select name="productScan" value={scanId} onChange={(event) => { setScanId(event.target.value); setDraft(null); }}><option value="">Choose a saved scan</option>{scans.map((scan) => <option key={scan.id} value={scan.id}>{new Date(scan.completedAt).toLocaleString()} · {scan.pageCount} pages · {scan.requestedUrl}</option>)}</select></label>
-            <p className="field-note">Only needed to resolve uncertain matches or inspect older records. Usable products from new scans are already in your catalogue.</p>
             <button className="primary-link" type="button" disabled={!scanId} onClick={() => void preview("website")}>Preview website products</button><a href="#website" className="text-button">Open website scanner</a>
           </fieldset>
         </aside>
@@ -338,9 +349,12 @@ export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusi
         </details>}
         <div className="profile-actions"><button className="primary-link" disabled={disabled || !reviewRows.length} onClick={() => void commit()}>Confirm import</button><button className="secondary-button" disabled={disabled} onClick={() => setDraft(null)}>Cancel import</button></div>
       </section>}
-      {selectedProduct ? <ProductIntelligence key={`${businessId}:${selectedProduct.id}`} businessId={businessId} product={selectedProduct} products={products}
+      {selectedProduct && actionReview ? <section className="profile-card"><h3>{selectedProduct.name}</h3><p>{selectedProduct.description || "No saved description."}</p>
+        <Button variant="outline" onClick={() => setReviewMode("independent")}>Review this product independently</Button>
+        <Button variant="ghost" onClick={closeProduct}>Back to catalogue</Button></section>
+      : selectedProduct ? <ProductIntelligence key={`${businessId}:${selectedProduct.id}`} businessId={businessId} product={selectedProduct} products={products}
         thumbnail={<ProductThumbnail name={selectedProduct.name} src={productImage(selectedProduct)} />}
-        onBack={() => { setSelectedProductId(""); const next = new URLSearchParams(context); next.delete("product"); next.set("business", businessId); window.history.replaceState(null, "", `#products?${next}`); setContext(next); }}
+        onBack={closeProduct}
         onProductSaved={(product) => { setProducts((current) => current.map((item) => item.id === product.id ? product : item)); setAnalyses((current) => current.filter((item) => item.productId !== product.id)); }}
         onAnalysed={(analysis) => setAnalyses((current) => current.some((item) => item.productId === analysis.productId && item.fingerprint === analysis.fingerprint) ? current
           : [...current.filter((item) => item.productId !== analysis.productId), { productId: analysis.productId, fingerprint: analysis.fingerprint, createdAt: analysis.createdAt }])}

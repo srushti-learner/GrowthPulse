@@ -64,6 +64,15 @@ describe("bounded reuse of confirmed customer review evidence", () => {
     saved.report.themes[0].scope = "own_product";
     expect(customerEvidence([saved]).findings[0].sources[0].customerReview?.relation).toBe("other_seller");
   });
+  it("reuses automatically matched same-product themes without claiming owner confirmation or seller ownership", () => {
+    const saved = fixture();
+    saved.report.listings[0].relation = "same_product";
+    saved.report.listings[0].matching = { method: "identifier", reason: "Same captured GTIN; seller ownership is unknown." };
+    const finding = researchFindingSchema.parse(customerEvidence([saved]).findings[0]);
+    expect(finding.sources[0].customerReview?.relation).toBe("same_product");
+    expect(finding.detail).toContain("matched same-product");
+    expect(finding.detail).not.toContain("owner-confirmed");
+  });
 
   it("omits duplicated themes and bounds the reusable sample across product reports", () => {
     const saved = fixture();

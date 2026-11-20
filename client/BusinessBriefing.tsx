@@ -102,12 +102,9 @@ export function BusinessBriefing({ businessName, briefing, evidence, streaming =
         <p className="briefing-card-text">{current.text}</p>
         {current.detail && <details className="briefing-card-detail"><summary>Why it matters</summary><p>{current.detail}</p></details>}
         {current.sources && <SupportingEvidence sources={current.sources} />}
-        {current.section === "unknowns" && <p className="field-note">Missing evidence is not proof that your business lacks this.</p>}
-        {current.section === "next" && <p className="field-note">A recommendation to consider, not a change already made.</p>}
       </article>
       <div className="briefing-navigation" aria-label="Finding navigation">
         <button type="button" className="secondary-button" disabled={position === 0} onClick={() => select(cards[position - 1])}>Previous</button>
-        <p className="field-note">{position === cards.length - 1 ? streaming ? "More cards may arrive." : "You've reached the last card." : ""}</p>
         <button type="button" className="primary-link" disabled={position === cards.length - 1} onClick={() => select(cards[position + 1])}>Next card <Icon name="arrow" /></button>
       </div>
     </> : <p className="field-note">{streaming ? "Waiting for the first finding..." : "No briefing cards were saved."}</p>}

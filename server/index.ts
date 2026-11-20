@@ -6,7 +6,8 @@ import { createTavilySearch } from "./tavily-mcp.js";
 import { createAnalysisWorker } from "./analysis-worker.js";
 import { createProductAnalyst } from "./product-intelligence.js";
 import { openMysqlStore } from "./mysql-store.js";
-import { createContactSender } from "./contact.js";
+import { createContactSender, createGoDaddyContactSender } from "./contact.js";
+import { createGrowthAdvisor } from "./growth-advisor.js";
 
 async function main() {
   const config = loadConfig();
@@ -20,13 +21,16 @@ async function main() {
     const productAnalyst = createProductAnalyst({ apiKey: config.ANTHROPIC_API_KEY, model: config.ANTHROPIC_MODEL });
     const app = createApp({
       store, origin: config.APP_ORIGIN, agent, productAnalyst,
+      growthAdvisor: createGrowthAdvisor({ apiKey: config.ANTHROPIC_API_KEY, model: config.ANTHROPIC_MODEL }),
       production: config.NODE_ENV === "production", trustProxyHops: config.TRUST_PROXY_HOPS,
-      contactSender: config.smtp ? createContactSender(config.smtp) : undefined,
+      contactSender: config.godaddyEmail ? createGoDaddyContactSender(config.godaddyEmail)
+        : config.smtp ? createContactSender(config.smtp) : undefined,
     });
     const worker = createAnalysisWorker({ store, agent });
     const server = app.listen(config.PORT, () => {
       worker.start();
       console.log(`GrowthPulse API listening on port ${config.PORT} (${config.NODE_ENV})`);
+      console.log("Contact email delivery:", config.godaddyEmail ? "GoDaddy gateway" : config.smtp ? "SMTP" : "disabled");
     });
     let closing = false;
 

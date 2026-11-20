@@ -10,6 +10,7 @@ import { ProductsWorkspace } from "./ProductsWorkspace";
 import { FirstVisit } from "./FirstVisit";
 import { GrowthJourney } from "./GrowthJourney";
 import { ContactPage } from "./ContactPage";
+import { FutureFeatures } from "./FutureFeatures";
 const AnalyticsWorkspace = lazy(() => import("./AnalyticsWorkspace").then((module) => ({ default: module.AnalyticsWorkspace })));
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarInset,
@@ -28,6 +29,7 @@ const sections = [
   { id: "progress", label: "My progress", icon: "check", description: "Review your saved actions. Separate work completed from results measured." },
   { id: "improvements", label: "Improvements", icon: "sliders", description: "Review changes before anything is applied.", checkpoint: 10 },
   { id: "activity", label: "Activity History", icon: "history", description: "See what changed and why.", checkpoint: 2 },
+  { id: "future", label: "Future features", icon: "spark", description: "A look ahead at connections and tools we want to build." },
 ] as const;
 
 type Connection = { state: "checking" } | { state: "connected" } | { state: "error"; message: string };
@@ -51,6 +53,7 @@ function WorkspaceNavigation({ active, businessId }: { active: typeof sections[n
     <p className="nav-caption">YOUR NEXT CHAPTERS</p>{links(["intelligence", "growth", "actions", "progress"])}
     <p className="nav-caption">EVIDENCE & TOOLS</p>{links(["products", "website", "simulator", "activity"])}
     <details className="planned-navigation" open={planned.has(active)}><summary>Planned tools</summary>{links(["whatsapp", "improvements"])}</details>
+    {links(["future"])}
   </nav>;
 }
 
@@ -207,7 +210,7 @@ export function App() {
         </SidebarHeader>
         <SidebarContent><WorkspaceNavigation active={activeSection.id} businessId={selectedBusinessId} /></SidebarContent>
         <SidebarFooter>
-        <a className="text-button" href="#contact">Contact us <Icon name="chat" /></a>
+        <a className="text-button sidebar-contact-link" href="#contact">Contact us <Icon name="chat" /></a>
         <div className="session-actions"><button className="secondary-button" type="button" disabled={logoutPending} onClick={() => void logout()}>{logoutPending ? "Logging out..." : "Log out"}</button></div>
         <div className="sidebar-note">
           <Icon name="shield" />
@@ -225,20 +228,21 @@ export function App() {
           {logoutError && <p className="form-error" role="alert">{logoutError}</p>}
           <div className="page-heading">
             <div>
-              <h1>{activeSection.id === "overview" && journeyView === "business" ? "Your business" : activeSection.label}</h1>
-              <p className="page-description">{activeSection.id === "overview" && journeyView === "business" ? "Review and update your saved business details." : activeSection.description}</p>
+              <h1>{activeSection.id === "overview" && (journeyView === "business" || journeyView === "manual") ? "Your business" : activeSection.label}</h1>
+              <p className="page-description">{activeSection.id === "overview" && journeyView === "manual" ? "Start with your business details. No website is needed." : activeSection.id === "overview" && journeyView === "business" ? "Review and update your saved business details." : activeSection.description}</p>
             </div>
           </div>
-          <GrowthJourney section={activeSection.id} selectedBusinessId={selectedBusinessId} view={journeyView}
+          {activeSection.id !== "future" && <GrowthJourney section={activeSection.id} selectedBusinessId={selectedBusinessId} view={journeyView}
             onBusinessSelected={setSelectedBusinessId} onSessionExpired={onSessionExpired} revision={journeyRevision}
             setup={<FirstVisit onSessionExpired={onSessionExpired} />}
-            profile={<BusinessWorkspace key={session.user.id} activityOnly={false} profileOnly
+            profile={<BusinessWorkspace key={`${session.user.id}:${journeyView}`} activityOnly={false} profileOnly manualEntry={journeyView === "manual"}
               selectedBusinessId={selectedBusinessId} onBusinessSelected={(id) => {
                 setSelectedBusinessId(id);
                 const query = new URLSearchParams({ view: "business", business: id });
                 window.history.replaceState(null, "", `#overview?${query}`);
-              }} onSessionExpired={onSessionExpired} businessManaged />} />
+              }} onSessionExpired={onSessionExpired} businessManaged />} />}
           {activeSection.id === "overview" || activeSection.id === "progress" ? null
+            : activeSection.id === "future" ? <FutureFeatures />
             : activeSection.id === "website" ? <WebsiteWorkspace key={`${session.user.id}:${selectedBusinessId ?? ""}`}
                 authenticated onSessionExpired={onSessionExpired} selectedBusinessId={selectedBusinessId} onBusinessSelected={setSelectedBusinessId} businessManaged />
             : activeSection.id === "activity" || activeSection.id === "products" || activeSection.id === "intelligence" || activeSection.id === "growth" || activeSection.id === "actions" || activeSection.id === "simulator" ? (
@@ -261,7 +265,7 @@ export function App() {
               <p className="section-eyebrow">COMING SOON</p>
               <h2 id="upcoming-heading">The next piece of the picture.</h2>
               <p>This feature is coming soon. You can keep working on your business, products and growth plan.</p>
-              <a href="#website" className="text-button">Open website evidence <Icon name="arrow" /></a><br />
+              <a href="#future" className="text-button">Explore future features <Icon name="arrow" /></a><br />
               <a href="#overview" className="primary-link">Back to overview <Icon name="arrow" /></a>
             </section>
           )}

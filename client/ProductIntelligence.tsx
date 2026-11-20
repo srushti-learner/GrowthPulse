@@ -14,6 +14,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./com
 import { BlurFade } from "./components/ui/blur-fade";
 import { EvidenceExcerpt, SourceReference } from "./SourceDetails";
 import { WorkflowActivity } from "./WorkflowActivity";
+import { AttachProductImprovement } from "./AttachProductImprovement";
 
 const productStages = [
   { key: "preparing", label: "Prepare evidence" }, { key: "analysing", label: "Analyse and draft" },
@@ -215,8 +216,7 @@ export function ProductIntelligence({ businessId, product, products, thumbnail, 
               : <p>Run a product analysis above to create a grounded draft. No claims or product details will be invented to fill gaps.</p>}
           </section></div>
         {analysis && <><label className="product-approval"><input type="checkbox" checked={approved} disabled={busy || data?.stale} onChange={(event) => setApproved(event.target.checked)} />I have checked the facts and approve this title and description for my local catalogue.</label>
-          <Button disabled={busy || data?.stale || !approved || !rewrite.title.trim()} onClick={() => void saveListing()}>Save approved local listing</Button>
-          <p className="field-note">This does not update your website or overwrite imported listings. No publishing integration is connected.</p></>}
+          <Button disabled={busy || data?.stale || !approved || !rewrite.title.trim()} onClick={() => void saveListing()}>Save approved local listing</Button></>}
       </CardContent></Card>}
       {area === "seo" && <Card><CardHeader><CardTitle>Discoverability starts with clear product information</CardTitle>
         <CardDescription>These are catalogue checks and suggested copy, not a ranking, indexing or technical SEO audit.</CardDescription></CardHeader><CardContent>
@@ -226,24 +226,23 @@ export function ProductIntelligence({ businessId, product, products, thumbnail, 
           {analysis && <div className="product-seo-drafts"><h4>Suggested search snippet</h4>
             <label>SEO title draft<textarea rows={2} maxLength={70} value={rewrite.seoTitle} onChange={(event) => setRewrite((value) => ({ ...value, seoTitle: event.target.value }))} /></label>
             <label>Meta description draft<textarea rows={3} maxLength={170} value={rewrite.metaDescription} onChange={(event) => setRewrite((value) => ({ ...value, metaDescription: event.target.value }))} /></label>
-            <p className="field-note">Draft text for manual review and copying. Not a measurement of existing page metadata, and not published by GrowthPulse.</p>
             <Evidence evidence={analysis.evidence} references={analysis.result.rewrite.references} /></div>}
           <details className="agent-sources"><summary>What still needs a live-page check</summary><p>Actual title tags, meta descriptions, image alt text, indexing, internal links and current structured-data validity have not been assessed. A saved product record or image URL cannot establish these.</p></details>
       </CardContent></Card>}
       {area === "opportunities" && <div className="product-recommendations">
-        <p className="field-note">Product-specific proposals for owner validation, not proven customer demand or promised sales. Add selected ideas to Growth intelligence to prioritize and plan them.</p>
         {analysis ? [...analysis.result.recommendations.entries()].sort(([, a], [, b]) => ["first", "next", "later"].indexOf(a.priority) - ["first", "next", "later"].indexOf(b.priority)).map(([index, item]) =>
           <Card key={index}><CardHeader><Badge variant="outline">{item.priority === "first" ? "Start here" : item.priority === "next" ? "Consider next" : "Explore later"}</Badge>
             <CardTitle>{item.title}</CardTitle><CardDescription>{item.detail}</CardDescription></CardHeader><CardContent>
             <Evidence evidence={analysis.evidence} references={item.references} />
             <Button variant="outline" disabled={busy || data?.stale || planned.includes(index)} onClick={() => void plan(index)}>{planned.includes(index) ? "Added to growth plan" : "Add to growth plan"}<ArrowRight /></Button>
+            <AttachProductImprovement businessId={businessId} productId={product.id} analysisId={analysis.id} index={index}
+              disabled={busy || !!data?.stale} onSessionExpired={onSessionExpired} />
           </CardContent></Card>) : <p>No product-specific AI recommendations saved yet. Analyse this product to identify supported improvements.</p>}
         <a className="text-button" href="#growth">Open Growth intelligence<ArrowRight /></a>
       </div>}
       {area === "performance" && <Card><CardHeader><Badge variant="outline">Not connected</Badge><CardTitle>Measure results, not guesses</CardTitle>
         <CardDescription>No store transactions or product analytics are connected.</CardDescription></CardHeader><CardContent>
         <p>Revenue, units sold, page views, conversion, add-to-cart and returns need authorized commerce or analytics data. Public pages and catalogue completeness cannot establish product performance.</p>
-        <p className="field-note">Shopify, WooCommerce and analytics connections are not available in this version. No product sales metrics are fabricated.</p>
       </CardContent></Card>}
     </BlurFade>
   </section>;

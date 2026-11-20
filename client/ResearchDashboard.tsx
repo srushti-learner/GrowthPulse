@@ -1,4 +1,4 @@
-import { ArrowRight, BookOpen, Lightbulb, Search, Sparkles } from "lucide-react";
+import { ArrowRight, Lightbulb, Search, Sparkles } from "lucide-react";
 import { type ResearchAgent, type ResearchReport } from "../shared/research";
 import type { BriefingPreview } from "../shared/understanding";
 import { SupportingEvidence, type BriefingEvidence } from "./BusinessBriefing";
@@ -35,7 +35,7 @@ function Detail({ title, detail, sources, label = "Read finding", kind }: {
       <SheetHeader><p className="section-eyebrow">{kind}</p><SheetTitle>{title}</SheetTitle>
         <SheetDescription>Based on captured public information. Review the evidence before acting.</SheetDescription></SheetHeader>
       <div className="research-drawer-body">{detail && <p>{detail}</p>}
-        {sources.length ? <SupportingEvidence sources={sources} /> : <p className="field-note">A suggested check, not an established fact or a change already made.</p>}
+        {!!sources.length && <SupportingEvidence sources={sources} />}
       </div>
     </SheetContent>
   </Sheet>;
@@ -68,10 +68,9 @@ export function ResearchOverview(props: Props & { report: ResearchReport; busine
         </CardContent>
       </Card>
       <Card className="dashboard-next-move"><CardHeader><CardDescription><Lightbulb />ONE NEXT MOVE</CardDescription>
-        <CardTitle><span className="dashboard-clamped">{next?.title ?? "Gather evidence before choosing a move."}</span></CardTitle></CardHeader>
+        <CardTitle><span className="dashboard-clamped">{next?.title ?? "Gathering evidence before your next move."}</span></CardTitle></CardHeader>
         <CardContent>{next ? <><p className="dashboard-clamped">{next.detail}</p><Detail title={next.title} detail={next.detail} sources={next.sources} kind="Suggested next move" label="Explore this move" /></>
-          : <p>No accepted recommendation is available yet. Missing evidence is not proof of a business problem.</p>}
-          <p className="field-note">A recommendation, not an action already taken.</p>
+          : <p>Your next recommendation will appear here after the evidence is reviewed.</p>}
         </CardContent>
       </Card>
     </div>
@@ -79,6 +78,5 @@ export function ResearchOverview(props: Props & { report: ResearchReport; busine
       <Button variant="ghost" asChild><a href="#growth"><Lightbulb /><span>Build your growth plan<small>Review recommendations and decide what to do next</small></span><ArrowRight /></a></Button>
       <Button variant="ghost" onClick={() => onNavigate("intelligence")}><Search /><span>Explore market intelligence<small>{brands} verified {brands === 1 ? "brand" : "brands"} in this saved sample</small></span><ArrowRight /></Button>
     </div>
-    <p className="field-note"><BookOpen className="inline size-3.5" /> Public evidence, not business-performance analytics. No new analysis runs when you browse.</p>
   </BlurFade>;
 }

@@ -11,6 +11,9 @@ import { newSession } from "./auth.js";
 import { growthResponseSchema, growthPlanResponseSchema } from "../shared/growth.js";
 import { researchAgents, type ResearchReport, type ResearchStep } from "../shared/research.js";
 import type { ScanResult } from "../shared/website.js";
+import { createGrowthAdvisor, catalogueFingerprint } from "./growth-advisor.js";
+import { emptyProduct } from "../shared/products.js";
+import type { AgentModel } from "./business-agent.js";
 
 const origin = "http://127.0.0.1:5173";
 const timestamp = "2026-11-17T12:00:00.000Z";
@@ -32,9 +35,22 @@ describe("saved growth intelligence", () => {
   let directory: string, path: string, store: Store, app: ReturnType<typeof createApp>;
   const scanner = vi.fn(async () => structuredClone(scan));
   const agent = { configured: true, run: vi.fn(async () => { throw new Error("Growth browsing must not call a model."); }) };
+  const complete = vi.fn<AgentModel>();
   beforeEach(() => {
     directory = mkdtempSync(join(tmpdir(), "gp-growth-")); path = join(directory, "test.sqlite");
-    store = openStore(path); app = createApp({ store, scanner, agent }); scanner.mockClear(); agent.run.mockClear();
+    complete.mockReset();
+    complete.mockImplementation(async (input) => {
+      const data = JSON.parse(String(input.messages[0].content)) as {
+        scope?: string; action: { title: string }; evidence: { id: string }[]; catalogue: { productId: string; evidence: { id: string }[] }[];
+      };
+      return { stop_reason: "tool_use", content: [{ type: "tool_use", id: "fixture", name: "submit_action_guidance", input: data.scope
+        ? { steps: [{ title: `Support ${data.action.title}`, detail: "Review the confirmed group, record a baseline and approve a small test.", references: [data.evidence[0].id] }] }
+        : { scope: data.catalogue.length >= 2 ? "products" : "business", reason: "The saved recommendation supports this owner-reviewed scope.",
+          references: [data.evidence[0].id], candidates: data.catalogue.length >= 2 ? data.catalogue.slice(0, 2).map((product) => ({
+            productId: product.productId, reason: "This catalogue evidence supports including the product.", references: [product.evidence[0].id],
+          })) : [] } }] };
+    });
+    store = openStore(path); app = createApp({ store, scanner, agent, growthAdvisor: createGrowthAdvisor({ complete }) }); scanner.mockClear(); agent.run.mockClear();
   });
   afterEach(async () => { await store.close(); rmSync(directory, { recursive: true, force: true }); });
   async function owner() {
@@ -58,6 +74,137 @@ describe("saved growth intelligence", () => {
   function update(user: Awaited<ReturnType<typeof owner>>, id: string, input: object) {
     return request(app).patch(`${user.endpoint}/${id}/plan`).set("Origin", origin).set("Cookie", user.cookie).send(input);
   }
+  function work(user: Awaited<ReturnType<typeof owner>>, id: string, action?: string, input?: object, method: "post" | "patch" = "post") {
+    const call = action ? request(app)[method](`${user.endpoint}/${id}/work/${action}`).set("Origin", origin).send(input)
+      : request(app).get(`${user.endpoint}/${id}/work`);
+    return call.set("Cookie", user.cookie);
+  }
+  async function plannedAction(user: Awaited<ReturnType<typeof owner>>) {
+    await saveResearch(user);
+    const id = (await get(user)).body.opportunities[0].id as string;
+    await add(user, id).expect(201); return id;
+  }
+
+  it("connects a multi-product action only after consent and target approval, then persists contextual steps without new actions", async () => {
+    const user = await owner(), id = await plannedAction(user);
+    for (const name of ["Cotton tee", "Cotton trousers"]) await store.saveProduct(user.id, user.business.id, { ...emptyProduct, name, description: "Cotton clothing." });
+    const initial = (await work(user, id).expect(200)).body;
+    expect(initial.item.revision).toBe(0); expect(complete).not.toHaveBeenCalled();
+    await work(user, id, "decision", { consent: false, revision: 0 }).expect(400);
+    const matched = (await work(user, id, "decision", { consent: true, revision: 0 }).expect(200)).body;
+    expect(matched.decision.scope).toBe("products"); expect(matched.item.revision).toBe(1);
+    expect(matched.opportunity.work.selection).toBeNull();
+    await work(user, id, "proposals", { consent: true, revision: 1 }).expect(409);
+    expect(complete).toHaveBeenCalledOnce();
+    await work(user, id, "decision", { consent: true, revision: 1 }).expect(200);
+    expect(complete).toHaveBeenCalledOnce();
+    const confirmed = (await work(user, id, "selection", {
+      revision: 1, catalogueFingerprint: matched.catalogueFingerprint, scope: "products",
+      productIds: matched.decision.candidates.map((candidate: { productId: string }) => candidate.productId),
+    }, "patch").expect(200)).body;
+    const proposed = (await work(user, id, "proposals", { consent: true, revision: confirmed.item.revision }).expect(200)).body;
+    expect(proposed.opportunity.work.steps).toHaveLength(1);
+    const modelInput = JSON.parse(String(complete.mock.calls[1][0].messages[0].content));
+    expect(modelInput.action.title).toBe(initial.opportunity.title);
+    expect(modelInput.scope).toBe("products"); expect(modelInput.catalogue).toHaveLength(2);
+    expect((await get(user)).body.plan).toHaveLength(1);
+    const step = proposed.opportunity.work.steps[0];
+    await work(user, id, "steps", { revision: proposed.item.revision, stepId: step.id, status: "measured", outcome: "" }, "patch").expect(400);
+    const measured = (await work(user, id, "steps", {
+      revision: proposed.item.revision, stepId: step.id, status: "measured", outcome: "Observed three sizing enquiries in the recorded test window.",
+    }, "patch").expect(200)).body;
+    expect(measured.opportunity.work.steps[0].status).toBe("measured");
+    await store.close(); store = openStore(path); app = createApp({ store });
+    const reopened = (await work(user, id).expect(200)).body;
+    expect(reopened.opportunity.work).toEqual(measured.opportunity.work);
+    expect(complete).toHaveBeenCalledTimes(2); expect(scanner).not.toHaveBeenCalled(); expect(agent.run).not.toHaveBeenCalled();
+  });
+
+  it("keeps business and new-product work valid with an empty catalogue and no provider, while guarding owner and revision", async () => {
+    const user = await owner(), id = await plannedAction(user), other = await owner();
+    app = createApp({ store });
+    const initial = (await work(user, id).expect(200)).body;
+    await work(other, id).expect(404);
+    await request(app).get(`${user.endpoint}/${id}/work`).expect(401);
+    await request(app).patch(`${user.endpoint}/${id}/work/selection`).set("Cookie", user.cookie).send({}).expect(403);
+    await work(user, id, "selection", { revision: 0, catalogueFingerprint: initial.catalogueFingerprint, scope: "product", productIds: [] }, "patch").expect(400);
+    const selected = (await work(user, id, "selection", {
+      revision: 0, catalogueFingerprint: initial.catalogueFingerprint, scope: "new_product", productIds: [],
+    }, "patch").expect(200)).body;
+    await work(user, id, "steps", { revision: 0, title: "Stale update", detail: "Should not overwrite." }).expect(409);
+    const step = (await work(user, id, "steps", { revision: selected.item.revision, title: "Interview customers", detail: "Validate the new concept before developing it." }).expect(200)).body;
+    expect(step.opportunity.work.selection.scope).toBe("new_product"); expect(step.opportunity.work.steps).toHaveLength(1);
+    expect(step.opportunity.work.steps[0].status).toBe("draft"); expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("rejects foreign targets, changed catalogue confirmations and stale product evidence without starting AI", async () => {
+    const user = await owner(), id = await plannedAction(user), other = await owner();
+    const product = (await store.saveProduct(user.id, user.business.id, { ...emptyProduct, name: "Cotton tee" }))!;
+    const foreign = (await store.saveProduct(other.id, other.business.id, { ...emptyProduct, name: "Foreign tee" }))!;
+    const snapshot = (await work(user, id)).body;
+    await work(user, id, "selection", { revision: 0, catalogueFingerprint: snapshot.catalogueFingerprint, scope: "product", productIds: [foreign.id] }, "patch").expect(404);
+    await work(user, id, "selection", { revision: 0, catalogueFingerprint: "old", scope: "product", productIds: [product.id] }, "patch").expect(409);
+    await work(user, id, "selection", { revision: 0, catalogueFingerprint: snapshot.catalogueFingerprint, scope: "product", productIds: [product.id] }, "patch").expect(200);
+    await store.saveProduct(user.id, user.business.id, { ...emptyProduct, name: "Updated tee", description: "Changed evidence." }, product.id);
+    expect((await work(user, id)).body.stale).toBe(true);
+    await work(user, id, "proposals", { consent: true, revision: 1 }).expect(409);
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("preserves reviewed supporting work and rejects target changes until that work is explicitly returned to draft", async () => {
+    const user = await owner(), id = await plannedAction(user);
+    const fingerprint = catalogueFingerprint([]);
+    await work(user, id, "selection", { revision: 0, catalogueFingerprint: fingerprint, scope: "business", productIds: [] }, "patch").expect(200);
+    const added = (await work(user, id, "steps", { revision: 1, title: "Approve a platform experiment", detail: "Review the baseline and cost." }).expect(200)).body;
+    const stepId = added.opportunity.work.steps[0].id;
+    await work(user, id, "steps", { revision: 2, stepId, status: "approved", outcome: "Budget reviewed." }, "patch").expect(200);
+    await work(user, id, "selection", { revision: 3, catalogueFingerprint: fingerprint, scope: "new_product", productIds: [] }, "patch").expect(409);
+    expect((await work(user, id)).body.opportunity.work.steps[0].status).toBe("approved");
+    await work(user, id, "steps", { revision: 3, stepId, status: "draft", outcome: "" }, "patch").expect(200);
+    const changed = (await work(user, id, "selection", { revision: 4, catalogueFingerprint: fingerprint, scope: "new_product", productIds: [] }, "patch").expect(200)).body;
+    expect(changed.opportunity.work.steps).toMatchObject([{ id: stepId, status: "draft", origin: "owner" }]);
+  });
+  it("does not duplicate paid matching or overwrite a concurrent planning update", async () => {
+    const user = await owner(), id = await plannedAction(user);
+    let start!: () => void, finish!: () => void;
+    const started = new Promise<void>((resolve) => { start = resolve; });
+    const held = new Promise<void>((resolve) => { finish = resolve; });
+    complete.mockImplementation(async (input) => {
+      start(); await held;
+      const data = JSON.parse(String(input.messages[0].content));
+      return { stop_reason: "tool_use", content: [{ type: "tool_use", id: "held", name: "submit_action_guidance", input: {
+        scope: "business", reason: "Review business guidance.", references: [data.evidence[0].id], candidates: [],
+      } }] };
+    });
+    const pending = work(user, id, "decision", { consent: true, revision: 0 }).then((response) => response);
+    await started;
+    try {
+      await work(user, id, "decision", { consent: true, revision: 0 }).expect(409);
+      await update(user, id, { revision: 0, status: "in_progress", impact: "high", effort: "low", timeToValue: "weeks" }).expect(200);
+    } finally { finish(); }
+    expect((await pending).status).toBe(409);
+    expect((await get(user)).body.plan[0]).toMatchObject({ status: "in_progress", revision: 1 });
+    expect((await get(user)).body.plan[0].opportunity.work).toBeUndefined();
+    expect(complete).toHaveBeenCalledOnce();
+  });
+  it("preserves reviewed work when the same product group is confirmed in a different order", async () => {
+    const user = await owner(), id = await plannedAction(user);
+    const first = (await store.saveProduct(user.id, user.business.id, { ...emptyProduct, name: "Recipe mix" }))!;
+    const second = (await store.saveProduct(user.id, user.business.id, { ...emptyProduct, name: "Serving bowl" }))!;
+    const fingerprint = (await work(user, id)).body.catalogueFingerprint;
+    const selected = (await work(user, id, "selection", {
+      revision: 0, catalogueFingerprint: fingerprint, scope: "products", productIds: [first.id, second.id],
+    }, "patch").expect(200)).body;
+    const added = (await work(user, id, "steps", { revision: 1, title: "Review bundle", detail: "Check suitability with customers." }).expect(200)).body;
+    const stepId = added.opportunity.work.steps[0].id;
+    await work(user, id, "steps", { revision: 2, stepId, status: "approved", outcome: "Reviewed by owner." }, "patch").expect(200);
+    const confirmed = (await work(user, id, "selection", {
+      revision: 3, catalogueFingerprint: fingerprint, scope: "products",
+      productIds: selected.opportunity.work.selection.products.map((product: { productId: string }) => product.productId).reverse(),
+    }, "patch").expect(200)).body;
+    expect(confirmed.opportunity.work.steps[0]).toMatchObject({ id: stepId, status: "approved", outcome: "Reviewed by owner." });
+    expect(complete).not.toHaveBeenCalled();
+  });
 
   it("combines all six specialists, deduplicates exact recommendations and never promotes hypotheses or failed drafts", () => {
     const value: ResearchReport = {

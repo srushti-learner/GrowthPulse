@@ -146,30 +146,36 @@ describe("product workspace", () => {
       strategy: { objective: "Clarify sizing", actions: ["Check measurements."], metric: "Enquiries", hypothesis: "Check sizing.", measurement: "Choose a baseline." },
     };
     window.history.replaceState(null, "", `/#products?business=${businessId}&action=${actionId}`);
-    const fetch = fetcher((path) => path.endsWith("/growth") ? json({
+    const item = savedAction ? {
+      opportunity, status: "planned", impact: "unknown", effort: "unknown", timeToValue: "unknown", revision: 0, createdAt: timestamp, updatedAt: timestamp,
+    } : null;
+    const fetch = fetcher((path) => path.endsWith(`/${"b".repeat(64)}/work`) ? json({ error: "This recommendation is no longer available." }, 404)
+      : path.endsWith("/work") ? json({ opportunity, item, configured: false, products: [product], decision: null, stale: false, catalogueFingerprint: "fixture" })
+      : path.endsWith("/growth") ? json({
       opportunities: [opportunity], plan: savedAction ? [{
         opportunity, status: "planned", impact: "unknown", effort: "unknown", timeToValue: "unknown", revision: 0, createdAt: timestamp, updatedAt: timestamp,
       }] : [], researchStatus: "partial", evidenceSavedAt: timestamp,
     }) : path.endsWith("/intelligence") ? json({ configured: true, analysis: null, stale: false, running: false, error: null })
       : json({ products: [product] }));
     await render();
-    expect(container.querySelector(".journey-task h2")?.textContent).toBe(opportunity.title);
-    expect(container.querySelector(".journey-task")?.textContent).toContain("no product has been selected for you");
-    expect(container.querySelector(".journey-task .agent-sources")?.textContent).toContain("Five sizes are available");
+    expect(container.querySelector(".journey-task h3")?.textContent).toBe(opportunity.title);
+    expect(container.querySelector(".journey-task")?.textContent).not.toContain("Independent product review remains separate");
     expect(container.querySelector(".product-intelligence")).toBeNull();
     await click("Open product workspace");
     expect(window.location.hash).toContain(`action=${actionId}`);
     expect(window.location.hash).toContain(`product=${productId}`);
+    expect(container.textContent).not.toContain("Inspecting this record does not confirm it as a target");
+    await click("Review this product independently");
     await click("All products");
     expect(window.location.hash).toBe(`#products?business=${businessId}&action=${actionId}`);
-    expect(container.querySelector(".journey-task .journey-actions a")?.getAttribute("href")).toBe(`#${savedAction ? "actions" : "growth"}?business=${businessId}&action=${actionId}`);
+    expect(container.textContent).not.toContain("Independent review uses only this product");
     expect(fetch.mock.calls.some(([, options]) => options?.method)).toBe(false);
     await act(async () => {
       window.history.replaceState(null, "", `/#products?business=${businessId}&action=${"b".repeat(64)}`);
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     });
-    expect(container.querySelector(".journey-task [role='alert']")?.textContent).toContain("no longer available");
-    expect(container.querySelector(".journey-task h2")).toBeNull();
+    expect(container.querySelector("[role='alert']")?.textContent).toContain("no longer available");
+    expect(container.querySelector(".journey-task h3")).toBeNull();
   });
 
   it("requires a decision for uncertain matches and explicitly skips invalid preview rows", async () => {

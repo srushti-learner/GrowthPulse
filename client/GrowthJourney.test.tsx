@@ -53,6 +53,14 @@ describe("connected growth journey", () => {
     });
     vi.stubGlobal("fetch", fetch); return fetch;
   }
+  it("keeps manual setup visible without a duplicate business selector or website-setup dropdown", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => json({ businesses: [] })));
+    await act(async () => root.render(<GrowthJourney section="overview" view="manual" selectedBusinessId=""
+      onBusinessSelected={selected} onSessionExpired={expired} profile={<p>Visible manual profile form</p>} setup={<p>Website setup</p>} />));
+    expect(container.textContent).toContain("Visible manual profile form");
+    expect(container.textContent).not.toContain("Website setup");
+    expect(container.querySelector('[aria-label="Active business"]')).toBeNull();
+  });
   it("resumes a saved action, distinguishes partial research and never runs scans or AI", async () => {
     const fetch = fetcher(); await render();
     expect(container.querySelector(".journey-next h2")?.textContent).toBe(opportunity.title);

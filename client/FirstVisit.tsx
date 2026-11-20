@@ -3,7 +3,6 @@ import { onboardingClaimResponseSchema, onboardingPreviewResponseSchema, onboard
 import { scanInputSchema, scanLimits } from "../shared/website";
 import { api, ApiFailure, errorMessage } from "./api";
 import { BusinessAgentReview } from "./BusinessAgentReview";
-import { businessAnalysisDisclosure } from "../shared/understanding";
 import { Icon } from "./Icon";
 import type { z } from "zod";
 
@@ -99,16 +98,12 @@ export function FirstVisit({ onSessionExpired }: { onSessionExpired: () => void 
         <legend className="sr-only">Your business website</legend>
         <label>Public website URL<input name="onboardingUrl" type="url" required maxLength={2048} value={url} placeholder="https://your-business.com" onChange={(event) => setUrl(event.target.value)} /></label>
         <button className="primary-link" type="submit">{phase === "reading" ? "Reading your website..." : phase === "saving" ? "Preparing AI analysis..." : "Start AI analysis"}<Icon name="spark" /></button>
-        {!phase && <details className="agent-sources">
-          <summary>Analysis details</summary>
-          <p className="field-note">Starting analysis confirms you own this website or have permission to read its public pages, save the findings and start business and competitor analysis. Your agent reads up to {scanLimits.pages} permitted public pages and saves your business and usable products automatically. No website login or changes.</p>
-          <p className="field-note">{businessAnalysisDisclosure} Profile suggestions remain optional. Nothing is published.</p>
-        </details>}
+        {!phase && <p className="field-note">Starting confirms you own this website or have permission to read its public pages and save your business and usable products. Public website evidence goes to Anthropic; research queries go to Tavily. AI and search charges may apply. No login bypass or website changes; you review suggestions before applying them.</p>}
       </fieldset>
       {loading && <p className="loading-message">Loading website setup...</p>}
       {phase && <p role="status">{phase === "reading" ? `Gathering permitted website evidence. This may take up to ${scanLimits.milliseconds / 1000} seconds. AI analysis follows automatically.` : "Saving your business and products, then opening your AI analysis..."}</p>}
       {error && <p role="alert" className="form-error">{error}</p>}
     </form>
-    <p className="field-note"><a className="text-button" href="#overview?view=business&new=1">I don't have a website. Add my business manually<Icon name="arrow" /></a></p>
+    <p className="field-note"><a className="text-button" href="#overview?view=manual&new=1">I don't have a website. Add my business manually<Icon name="arrow" /></a></p>
   </section>;
 }

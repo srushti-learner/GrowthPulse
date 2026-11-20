@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type Ref } from "react";
 import {
-  marketplaceRelationLabels, marketplaceRelations, type MarketplaceListing, type MarketplaceResponse,
+  marketplaceRelationLabels, marketplaceRelations, matchedMarketplaceListings, type MarketplaceListing, type MarketplaceResponse,
 } from "../shared/marketplace";
 import { errorMessage } from "./api";
 import { SupportingEvidence } from "./BusinessBriefing";
@@ -31,20 +31,21 @@ function FeedbackProgress({ data, customerVoice }: { data: MarketplaceResponse; 
   const saved = data.report;
   const stage = data.progress?.stage;
   const captured = saved?.listings.filter((item) => item.status === "captured") ?? [];
-  const active = stage === "analysing" ? 3 : stage === "collecting" ? 1 : 0;
+  const active = stage === "analysing" ? 3 : stage === "matching" ? 2 : stage === "collecting" ? 1 : 0;
   const message = stage === "collecting" ? `Collecting review evidence: ${data.progress!.completed} of ${data.progress!.total} listings checked.`
-      : stage === "analysing" ? "Analysing confirmed review excerpts."
+      : stage === "matching" ? "Matching captured products and identifying comparable alternatives."
+      : stage === "analysing" ? "Analysing customer feedback and comparable products."
       : stage === "discovering" ? "Finding product listings on Amazon India and Flipkart."
       : `Loading your ${customerVoice ? "customer feedback" : "marketplace"} research progress...`;
   return <WorkflowActivity title={customerVoice ? "Customer feedback research" : "Marketplace research"} message={message}
     startedAt={data.progress?.startedAt} updatedAt={data.progress?.updatedAt}
     counts={stage === "collecting" ? [{ label: "Listings checked", value: `${data.progress!.completed} of ${data.progress!.total}` }]
-      : stage === "analysing" ? [{ label: "Confirmed review excerpts", value: captured.filter((item) =>
+      : stage === "analysing" ? [{ label: "Matched review excerpts", value: captured.filter((item) =>
         !["unconfirmed", "excluded"].includes(item.relation)).reduce((count, item) => count + item.reviews.length, 0) }] : []}
     guidance="Research continues if you leave this page. Your saved sources remain available below.">
-    <div className="feedback-progress"><ol>{["Find listings", "Collect reviews", "Confirm matches", "Analyse feedback"].map((label, index) =>
+    <div className="feedback-progress"><ol>{["Find listings", "Collect reviews", "Match products", "Analyse feedback"].map((label, index) =>
       <li key={label} data-state={index === active ? "current" : index < active ? "done" : "pending"}
-        aria-current={index === active ? "step" : undefined}>{label}{index === active ? " - In progress" : index === 2 && active < 3 ? " - Owner review required" : ""}</li>)}</ol></div>
+        aria-current={index === active ? "step" : undefined}>{label}{index === active ? " - In progress" : ""}</li>)}</ol></div>
   </WorkflowActivity>;
 }
 
@@ -72,8 +73,12 @@ export function MarketplaceProduct({ customerVoice = false, sourceReviewRef }: {
   }
   const saved = data?.report;
   const locked = loading || busy || !!data?.running;
-  const confirmed = saved?.listings.filter((item) => item.status === "captured" && !["unconfirmed", "excluded"].includes(item.relation)) ?? [];
+  const confirmed = matchedMarketplaceListings(saved);
   const reviewCount = confirmed.reduce((sum, item) => sum + item.reviews.length, 0);
+  const availableReviews = saved?.matchingVersion === 1 ? reviewCount
+    : saved?.listings.filter((item) => item.status === "captured" && item.relation !== "excluded"
+      && !(item.relation === "unconfirmed" && item.matching?.method === "owner")).reduce((sum, item) => sum + item.reviews.length, 0) ?? 0;
+  const analysed = !!saved?.analysedAt && saved.analysisVersion === 2;
   function match(item: MarketplaceListing, relation: MarketplaceListing["relation"]) {
     if (saved) void mutate("/match", { reportId: saved.id, listingId: item.id, relation }, "PATCH");
   }
@@ -84,9 +89,8 @@ export function MarketplaceProduct({ customerVoice = false, sourceReviewRef }: {
       })}>{data?.running ? "Researching..." : customerVoice ? saved || data?.error ? "Find fresh customer feedback" : "Find customer feedback" : data?.error ? "Retry marketplace research" : saved ? "Research again" : "Research marketplaces"}</Button>
       {data && (!data.configured || !data.discoveryConfigured) && <p className="field-note">Automatic discovery is not configured on this server. You can still supply listing URLs or import an authorized CSV. AI review analysis requires the server's AI connection.</p>}
       <details className="agent-sources"><summary>Research options and details</summary>
-        <p>Research your own product and comparable Amazon India / Flipkart listings. Confirm matches before analysing customer feedback.</p>
+        <p>Research your product and comparable Amazon India / Flipkart listings. Clear matches are automatic; you can correct a match or review uncertain ones.</p>
         <p className="field-note">Starting research sends product details to Anthropic and Tavily. Provider charges may apply. Nothing will be published.</p>
-        <p className="field-note">Reopening saved results starts no paid research. No catalogue edits, publishing, order estimates or automatic monitoring.</p>
         <h3>Add listing links or import reviews</h3>
         <p>Optional fallbacks when discovery finds the wrong item or a public page cannot be read. Supplying a URL does not bypass marketplace access restrictions.</p>
         <label>Product listing URLs (up to six, one per line)<textarea rows={3} value={urls} maxLength={12_294} disabled={locked} onChange={(event) => { setUrls(event.target.value); requestKey.current = crypto.randomUUID(); }} /></label>
@@ -98,22 +102,20 @@ export function MarketplaceProduct({ customerVoice = false, sourceReviewRef }: {
           void file.text().then((text) => { if (mounted.current && version === fileVersion.current) setCsv(text); })
             .catch((error: unknown) => { if (mounted.current && version === fileVersion.current) setFileError(errorMessage(error)); });
         }} /></label>
-        <p className="field-note">Headers: product_url,title,review. Optional: description,rating,review_date,price,currency,gtin,variants,seller. Dates: YYYY-MM-DD; ratings: 0-5. Repeat consistent listing fields for each review. Exclude customer names and contact details.</p>
+        <p className="field-note">Headers: product_url,title,review. Optional: description,rating,review_date,price,currency,gtin,variants,seller,brand,model. Dates: YYYY-MM-DD; ratings: 0-5. Repeat consistent listing fields for each review. Exclude customer names and contact details.</p>
         <p className="field-note">By choosing Import authorized data, you confirm you have permission to supply and process the uploaded reviews.</p>
         <Button variant="outline" disabled={locked || !csv} onClick={() => void mutate("/import", { consent: true, csv })}>Import authorized data</Button>
-        <p className="field-note">An import replaces this product's marketplace research only. It never changes your catalogue, website or sales actuals.</p>
       </details>
     </div>;
-  const analysisControls = saved && (!customerVoice || reviewCount > 0 && !saved.analysedAt) && <section aria-label="Customer feedback themes">
+  const analysisControls = saved && (!customerVoice || availableReviews > 0 && !analysed) && <section aria-label="Customer feedback themes">
     <h3>Review analysis</h3>
-    <p>Look for recurring feedback in confirmed review excerpts. This does not establish representative market demand.</p>
-    <p className="field-note">Starting review analysis sends selected review excerpts to Anthropic. AI charges may apply. Nothing will be published.</p>
-    <Button variant="outline" disabled={locked || !data?.configured || data.stale || reviewCount < 2 || !!saved.analysedAt}
-      onClick={() => void mutate("/analyse", { reportId: saved.id, consent: true })}>Analyse confirmed reviews</Button>
-    {reviewCount < 2 && <p className="field-note">Confirm relevant listings with at least two distinct review excerpts to analyse recurring feedback. Aggregate ratings alone are not review text.</p>}
+    <p>Find recurring praise, concerns and requests, then compare them with feedback about similar products.</p>
+    <p className="field-note">Starting analysis sends product details for any remaining automatic matching and selected review excerpts to Anthropic. AI charges may apply. Nothing will be published.</p>
+    <Button variant="outline" disabled={locked || !data?.configured || data.stale || availableReviews < 2 || analysed}
+      onClick={() => void mutate("/analyse", { reportId: saved.id, consent: true })}>Analyse customer feedback</Button>
+    {availableReviews < 2 && <p className="field-note">At least two relevant review excerpts are needed. Find more feedback or review uncertain product matches. Aggregate ratings alone are not review text.</p>}
     {saved.analysedAt && !saved.themes.length && <p>No recurring theme was accepted from this sample. No customer gap has been invented.</p>}
     {customerVoice && !data?.configured && <p className="field-note">AI review analysis is not configured on this server. Confirmed excerpts remain available to read.</p>}
-    {!customerVoice && <p className="field-note">Open Customer voice to read confirmed feedback and saved themes for the selected product.</p>}
   </section>;
   return <div className={`marketplace-product${customerVoice ? " marketplace-feedback-tools" : ""}`}>
     {loading && <p role="status">{customerVoice ? "Loading saved customer feedback..." : "Loading saved marketplace research..."}</p>}
@@ -124,18 +126,19 @@ export function MarketplaceProduct({ customerVoice = false, sourceReviewRef }: {
     {!customerVoice && data?.stale && <p className="dashboard-notice">Your catalogue product changed. These are previous marketplace results; research again before confirming matches or analysing reviews.</p>}
     {!customerVoice && researchControls}
     {saved && <div className="marketplace-results">
-      {!customerVoice && <p className="field-note">Saved <time dateTime={saved.createdAt}>{new Date(saved.createdAt).toLocaleString()}</time>. {saved.listings.filter((item) => item.status === "captured").length} captured listings; {reviewCount} distinct review excerpts in confirmed listings. Review counts are not orders.</p>}
+      {!customerVoice && <p className="field-note">Saved <time dateTime={saved.createdAt}>{new Date(saved.createdAt).toLocaleString()}</time>. {saved.listings.filter((item) => item.status === "captured").length} captured listings; {reviewCount} distinct review excerpts in confirmed listings.</p>}
       {!saved.listings.length && <p>No matching marketplace listing was verified. This does not mean your product is absent from Amazon or Flipkart. Add a direct listing link in Research options and details, or import an authorized review export.</p>}
       {customerVoice && analysisControls}
       {customerVoice && saved.listings.some((item) => item.status === "unavailable") && <p className="field-note">Some sources could not be read. See product matches and sources for details.</p>}
       <details className="marketplace-source-review" ref={sourceReviewRef} open={!customerVoice}>
-      <summary>{customerVoice ? "Check product matches and sources" : "Review sources and confirm matches"} ({saved.listings.length})</summary>
-      {customerVoice && <p className="field-note">{saved.listings.filter((item) => item.status === "captured" && !item.reviews.length).length} captured listings without review text; {saved.listings.filter((item) => item.status === "unavailable").length} unavailable sources. Product matches never add missing review text.</p>}
+      <summary>{customerVoice ? "Check product matches and sources" : "Product matches and sources"} ({saved.listings.length})</summary>
       <div className="marketplace-listings">{saved.listings.map((item) => {
         const facts = <>
           {item.status === "captured" && <>
             {item.description && <p className="dashboard-clamped">{customerVoice && <strong>Listing description, not customer feedback: </strong>}{item.description}</p>}
             <dl><div><dt>Recorded offer</dt><dd>{item.price ? `${item.price} ${item.currency}` : "Not captured"}</dd></div>
+              {item.brand && <div><dt>Published brand</dt><dd>{item.brand}</dd></div>}
+              {item.model && <div><dt>Published model</dt><dd>{item.model}</dd></div>}
               <div><dt>Published rating</dt><dd>{item.rating === null ? "Not captured" : `${item.rating} / 5`}</dd></div>
               <div><dt>Published review count</dt><dd>{item.reviewCount ?? "Not captured"}</dd></div>
               <div><dt>Variant / pack</dt><dd>{item.variants || "Confirm on listing"}</dd></div>
@@ -153,12 +156,15 @@ export function MarketplaceProduct({ customerVoice = false, sourceReviewRef }: {
         {customerVoice && <p className="field-note">{item.status === "captured" ? `${item.reviews.length} sampled review excerpts` : "Review text unavailable"}</p>}
         {item.status === "captured" && <>
           {customerVoice && <p className="field-note">{item.variants || "Verify variant on listing"} / {item.seller || "Seller not captured"}</p>}
-          {item.identifierMatch && <p className="field-note">The recorded GTIN matches your catalogue. Confirm the variant, pack size and seller; ownership is not established by this match.</p>}
+          <p><Badge variant="outline">{marketplaceRelationLabels[item.relation]}</Badge>{" "}
+            {item.matching && <Badge variant="outline">{item.matching.method === "owner" ? "Owner selected" : "Automatically checked"}</Badge>}</p>
+          {item.matching && <p>{item.matching.reason}</p>}
+          {item.identifierMatch && <p className="field-note">The recorded GTIN matches your catalogue; seller ownership is unverified.</p>}
           <fieldset disabled={locked || data?.stale}><legend>How does this listing relate to your product?</legend>
             <div className="marketplace-match-actions">{marketplaceRelations.filter((relation) => relation !== "unconfirmed").map((relation) =>
               <Button key={relation} variant={item.relation === relation ? "default" : "outline"} aria-pressed={item.relation === relation}
                 onClick={() => match(item, relation)}>{marketplaceRelationLabels[relation]}</Button>)}</div>
-            <p className="field-note">{marketplaceRelationLabels[item.relation]}. Confirm identity and who sells it—not just a similar name.</p>
+            <p className="field-note">Change only if the match is wrong. “My listing” and “another seller” are owner confirmations, not automatic ownership claims.</p>
           </fieldset>
           {!customerVoice && !!item.reviews.length && <details className="agent-sources"><summary>Captured review excerpts ({item.reviews.length})</summary>
             {item.reviews.map((value) => <blockquote key={value.id}><p>{value.text}</p><p className="field-note">{value.rating === null ? "Rating not supplied" : `${value.rating} / 5`}{value.date ? ` / ${value.date}` : " / Review date unknown"}</p></blockquote>)}
