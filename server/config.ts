@@ -14,7 +14,16 @@ const environmentSchema = z.object({
   ANTHROPIC_API_KEY: z.string().trim().min(1).optional(),
   ANTHROPIC_MODEL: z.string().trim().min(1).default("claude-haiku-4-5"),
   TAVILY_API_KEY: z.string().trim().min(1).optional(),
+  CONTACT_EMAIL_ENABLED: z.enum(["true", "false"]).default("false"),
 });
+
+const smtpSchema = z.object({
+  SMTP_HOST: z.string().trim().min(1).max(253).regex(/^[a-zA-Z0-9.-]+$/),
+  SMTP_PORT: z.coerce.number().pipe(z.union([z.literal(465), z.literal(587)])).default(587),
+  SMTP_USER: z.email().max(254),
+  SMTP_PASSWORD: z.string().min(1),
+});
+export type SmtpSettings = z.infer<typeof smtpSchema>;
 
 const mysqlSchema = z.object({
   DB_HOST: z.string().trim().min(1),
@@ -51,5 +60,9 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
   if (mysql && !mysql.success) {
     throw new Error(`Invalid MySQL configuration: ${mysql.error.issues.map((issue) => issue.path.join(".")).join(", ")}. GoDaddy injects DB_* settings when its hosted database is attached.`);
   }
-  return { ...config, mysql: mysql?.success ? mysql.data : undefined };
+  const smtp = config.CONTACT_EMAIL_ENABLED === "true" ? smtpSchema.safeParse(environment) : undefined;
+  if (smtp && !smtp.success) {
+    throw new Error(`Invalid contact email configuration: ${smtp.error.issues.map((issue) => issue.path.join(".")).join(", ")}. Set server-side SMTP settings; never use VITE_* for credentials.`);
+  }
+  return { ...config, mysql: mysql?.success ? mysql.data : undefined, smtp: smtp?.success ? smtp.data : undefined };
 }

@@ -6,6 +6,7 @@ import { createTavilySearch } from "./tavily-mcp.js";
 import { createAnalysisWorker } from "./analysis-worker.js";
 import { createProductAnalyst } from "./product-intelligence.js";
 import { openMysqlStore } from "./mysql-store.js";
+import { createContactSender } from "./contact.js";
 
 async function main() {
   const config = loadConfig();
@@ -20,6 +21,7 @@ async function main() {
     const app = createApp({
       store, origin: config.APP_ORIGIN, agent, productAnalyst,
       production: config.NODE_ENV === "production", trustProxyHops: config.TRUST_PROXY_HOPS,
+      contactSender: config.smtp ? createContactSender(config.smtp) : undefined,
     });
     const worker = createAnalysisWorker({ store, agent });
     const server = app.listen(config.PORT, () => {

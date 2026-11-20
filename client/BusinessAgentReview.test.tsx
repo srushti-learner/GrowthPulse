@@ -249,7 +249,7 @@ describe("agent-led profile onboarding", () => {
     await act(async () => root.render(<BusinessAgentReview business={business} autoStart={false} mode="research"
       showProgressDetails={false} onSaved={vi.fn()} onRecorded={vi.fn()} onSessionExpired={expired} />));
     expect(container.querySelector(".analysis-activity")).not.toBeNull();
-    expect(container.querySelector(".analysis-background")?.textContent).toContain("leave this page and return");
+    expect(container.querySelector(".analysis-background")?.textContent).toContain("analysis continues if you leave this page");
     expect(container.querySelector(".research-report")).toBeNull();
     expect(container.querySelector(".agent-review")?.getAttribute("aria-busy")).toBe("false");
     const running: NonNullable<AnalysisJob["research"]>["steps"][number] = {
@@ -259,7 +259,7 @@ describe("agent-led profile onboarding", () => {
     await act(async () => stream.enqueue(new TextEncoder().encode(`${JSON.stringify({
       type: "job", job: { ...active, revision: 3, research: { ...research, steps: [running] } },
     })}\n`)));
-    expect(container.querySelector(".agent-progress [role=status]")?.textContent).toBe("Reading a candidate's public website");
+    expect(container.querySelector(".agent-progress [role=status]")?.textContent).toBe("Reviewing potential competitors' websites");
     expect(container.querySelector(".research-report")).toBeNull();
     const accepted = { ...research, steps: [{
       ...running, key: "store", agent: "store" as const, status: "completed" as const, completedAt: business.updatedAt,
@@ -270,7 +270,7 @@ describe("agent-led profile onboarding", () => {
       type: "job", job: { ...active, revision: 4, research: accepted },
     })}\n`)));
     expect(container.querySelector(".research-report")).not.toBeNull();
-    expect([...container.querySelectorAll(".analysis-counts dd")].map((node) => node.textContent)).toEqual(["0", "1", "1"]);
+    expect([...container.querySelectorAll(".analysis-counts dd")].map((node) => node.textContent)).toEqual(["1", "1"]);
     await act(async () => {
       stream.enqueue(new TextEncoder().encode(`${JSON.stringify({ type: "job", job: {
         ...active, status: "completed", revision: 5, understanding: { ...draft, research: { ...accepted, status: "complete" } },
@@ -396,7 +396,7 @@ describe("agent-led profile onboarding", () => {
     expect(container.querySelector(".agent-progress button")?.closest("details")).toBeNull();
     const details = container.querySelector<HTMLDetailsElement>(".agent-progress-details")!;
     expect(details.open).toBe(false);
-    expect(details.textContent).toContain("background work continues");
+    expect(container.querySelector(".analysis-background")?.textContent).toContain("analysis continues if you leave this page");
     expect(details.textContent).toContain("10 minutes");
     await act(async () => details.querySelector("summary")!.click());
     expect(details.open).toBe(true);

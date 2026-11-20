@@ -82,6 +82,6 @@ export function WelcomeExperience({ initialMode, onAuthenticated }: {
         <span>{String(frame + 1).padStart(2, "0")} / 04</span>
       </div>
     </main>
-    <footer className="welcome-footer"><span>A LITTLE CLARITY GOES A LONG WAY.</span><span>No website changes without your approval.</span></footer>
+    <footer className="welcome-footer"><span>A LITTLE CLARITY GOES A LONG WAY.</span><a href="#contact">Contact us</a><span>No website changes without your approval.</span></footer>
   </div>;
 }

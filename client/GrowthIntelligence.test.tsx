@@ -50,6 +50,10 @@ describe("growth decision workspace", () => {
     expect(container.querySelector('.growth-next-move [data-slot="card-description"]')?.textContent).toBe("Suggested experiment");
     expect(container.querySelector(".growth-next-move")!.compareDocumentPosition(container.querySelector(".growth-summary")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(container.querySelector(".growth-map")?.getAttribute("open")).toBeNull();
+    expect([...container.querySelectorAll("h2, h4")].filter((heading) => heading.textContent === opportunity.title)).toHaveLength(1);
+    expect(container.querySelectorAll(".opportunity-card")).toHaveLength(0);
+    expect(container.querySelector("#growth-opportunities-heading")).toBeNull();
+    expect(container.querySelectorAll(".growth-card-actions")).toHaveLength(1);
     expect(container.textContent).toContain("Partial evidence");
     expect(container.textContent).toContain("not assessed");
     expect(container.querySelector(".growth-footer .field-note")).toBeNull();
@@ -58,17 +62,25 @@ describe("growth decision workspace", () => {
     await click("Explore strategy");
     const dialog = document.querySelector('[role="dialog"]')!;
     expect(dialog.textContent).toContain(opportunity.strategy.objective);
-    expect(dialog.textContent).toContain("not an executed change");
-    expect(dialog.textContent).toContain("There is no automatic outcome tracking");
+    expect(dialog.textContent).toContain("Nothing has been launched or changed for you");
+    expect(dialog.textContent).not.toContain("There is no automatic outcome tracking");
+    const toolLinks = dialog.querySelector(".strategy-tool-links")!;
+    expect(Array.from(toolLinks.children, (element) => element.tagName)).toEqual(["A", "A"]);
+    expect(toolLinks.children[0].nextElementSibling).toBe(toolLinks.children[1]);
     expect(dialog.querySelector<HTMLAnchorElement>('a[href^="#simulator"]')?.getAttribute("href"))
       .toBe(`#simulator?business=${business.id}&action=${opportunity.id}`);
     expect(dialog.querySelector<HTMLAnchorElement>('a[href^="#products"]')?.getAttribute("href"))
       .toBe(`#products?business=${business.id}&action=${opportunity.id}`);
-    expect(dialog.querySelector('a[href^="#products"]')?.textContent).toContain("Work on a product with this context");
+    expect(dialog.querySelector('a[href^="#products"]')?.textContent).toContain("Review a product");
     expect(dialog.querySelector('a[href^="#products"]')?.getAttribute("data-slot")).toBe("button");
     const background = dialog.querySelector<HTMLDetailsElement>(".action-background")!;
     expect(background.open).toBe(false);
     await act(async () => background.querySelector("summary")!.click());
+    const researchNotes = background.querySelector<HTMLDetailsElement>(".action-research-notes")!;
+    expect(researchNotes.open).toBe(false);
+    await act(async () => researchNotes.querySelector("summary")!.click());
+    expect(researchNotes.textContent).toContain(opportunity.reviewReason);
+    expect(researchNotes.textContent).toContain("Results are not tracked automatically");
     const evidence = background.querySelector<HTMLDetailsElement>(".agent-sources")!;
     expect(evidence.open).toBe(false);
     await act(async () => evidence.querySelector("summary")!.click());
@@ -83,7 +95,8 @@ describe("growth decision workspace", () => {
     const fetch = vi.fn(async () => json({ ...snapshot, opportunities: [numbered], plan: [{ ...planned, opportunity: numbered }] }));
     vi.stubGlobal("fetch", fetch);
     await render();
-    expect(container.querySelector(".growth-next-move h2")?.textContent).toBe(opportunity.title);
+    expect(container.querySelector(".growth-next-move")).toBeNull();
+    expect(container.querySelector(".growth-plan-item summary")?.textContent).toContain(opportunity.title);
     expect(container.querySelector(".growth-plan-item summary")?.textContent).not.toContain(prefix);
     await click("Explore strategy");
     expect(document.querySelector('[data-slot="sheet-title"]')?.textContent).toBe(opportunity.title);
@@ -110,6 +123,32 @@ describe("growth decision workspace", () => {
     expect(document.activeElement).toBe(details.querySelector("summary"));
     expect(fetch).toHaveBeenCalledOnce();
     expect(details.querySelector<HTMLSelectElement>('select[name="status"]')?.value).toBe("planned");
+    expect(details.querySelector(".growth-plan-overview")?.textContent).toContain(opportunity.detail);
+    const actions = details.querySelector(".growth-plan-actions")!;
+    expect(button("Explore strategy", actions)).toBeDefined();
+    expect(actions.querySelector("a")?.getAttribute("href")).toBe(`#actions?business=${business.id}&action=${opportunity.id}`);
+    expect(details.querySelector<HTMLDetailsElement>(".growth-plan-notes")?.open).toBe(false);
+  });
+
+  it("shows recommendations once and still opens a linked opportunity beyond the initial selection", async () => {
+    const opportunities = Array.from({ length: 6 }, (_, index) => ({
+      ...opportunity, id: String(index + 1).repeat(64), title: `Review option ${index + 1}`,
+    }));
+    const fetch = vi.fn(async () => json({ ...snapshot, opportunities }));
+    vi.stubGlobal("fetch", fetch); await render();
+    expect(container.querySelector(".growth-next-move h2")?.textContent).toBe(opportunities[0].title);
+    expect(container.querySelectorAll(".opportunity-card")).toHaveLength(3);
+    expect(container.querySelectorAll('[id^="growth-opportunity-"]')).toHaveLength(4);
+    await act(async () => {
+      window.history.replaceState(null, "", `/#growth?business=${business.id}&action=${opportunities[5].id}`);
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    expect(container.querySelectorAll(".opportunity-card")).toHaveLength(5);
+    for (const item of opportunities) {
+      expect([...container.querySelectorAll("h2, h4")].filter((heading) => heading.textContent === item.title)).toHaveLength(1);
+    }
+    expect(document.activeElement?.id).toBe(`growth-opportunity-${opportunities[5].id}`);
+    expect(fetch).toHaveBeenCalledOnce();
   });
 
   it("saves a plan, assesses its priority and focuses its action from the map without changing the app route", async () => {
@@ -152,7 +191,7 @@ describe("growth decision workspace", () => {
       options?.method === "PATCH" ? json({ error: "This action changed in another view. Reload before updating it." }, 409)
         : json({ ...empty, plan: [planned] }));
     vi.stubGlobal("fetch", fetch); await render();
-    expect(container.textContent).toContain("Saved plan evidence, separate from the current business-wide research");
+    expect(container.textContent).toContain("This action is from earlier research. Review its sources before starting.");
     expect(container.querySelector(".growth-map")?.textContent).toContain("0 assessed actions");
     const details = container.querySelector<HTMLDetailsElement>(".growth-plan-item")!;
     await act(async () => { details.open = true; details.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
@@ -175,7 +214,8 @@ describe("growth decision workspace", () => {
   it("distinguishes a completed plan from having no evidence", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => json({ ...snapshot, plan: [{ ...planned, status: "completed" }] })));
     await render();
-    expect(container.querySelector(".growth-next-move h2")?.textContent).toBe("No pending growth actions.");
+    expect(container.querySelector(".growth-next-move")).toBeNull();
+    expect(container.textContent).toContain("No pending growth actions.");
     expect(container.textContent).not.toContain("No accepted growth suggestions are available");
     expect(container.querySelector(".growth-summary")?.textContent).toContain("1/1");
   });
@@ -191,7 +231,7 @@ describe("growth decision workspace", () => {
     const action = container.querySelector<HTMLDetailsElement>(".growth-plan-item")!;
     expect(action.open).toBe(true);
     expect(action.querySelector("ol")?.textContent).toContain(opportunity.strategy.actions[0]);
-    expect(action.textContent).toContain("not work the agent has performed");
+    expect(action.textContent).toContain("Suggested steps, not completed work");
     const tools = Array.from(action.querySelectorAll("details")).find((item) => item.querySelector("summary")?.textContent === "Optional tools for this action")!;
     expect(tools.open).toBe(false);
     expect(tools.querySelector("a")?.getAttribute("href")).toBe(`#products?business=${business.id}&action=${opportunity.id}`);
@@ -230,6 +270,7 @@ describe("growth decision workspace", () => {
     const legacy = {
       ...opportunity, strategy: {
         ...opportunity.strategy, objective: opportunity.title,
+        hypothesis: `Test whether this recommendation improves the chosen metric: ${opportunity.title}`,
         actions: ["Confirm the issue with shoppers.", opportunity.detail, "Prepare a small approved test.",
           "  CONFIRM the issue with shoppers!  ", "Measure against a baseline."],
       },
@@ -242,6 +283,7 @@ describe("growth decision workspace", () => {
     expect(action.textContent?.split(opportunity.title)).toHaveLength(2);
     expect(action.textContent?.split(opportunity.detail)).toHaveLength(2);
     expect(action.querySelector(".action-plan")?.textContent).not.toContain("The goal");
+    expect(action.querySelector(".action-background")?.textContent).not.toContain("Assumption to test");
     expect(Array.from(action.querySelectorAll(".action-next-steps li"), (item) => item.textContent))
       .toEqual(["Confirm the issue with shoppers.", "Prepare a small approved test.", "Measure against a baseline."]);
     expect(action.querySelector(".action-measurement")?.textContent).toContain(opportunity.strategy.metric);

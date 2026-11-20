@@ -14,4 +14,10 @@ export type SalesMapping = z.infer<typeof salesMappingSchema>;
 export const salesHeadersResponseSchema = z.object({
   headers: z.array(z.string().max(4000)).min(1).max(40),
   suggestions: salesMappingSchema,
+  issues: z.array(z.object({
+    column: z.number().int().min(0).max(39),
+    field: z.enum(salesFields),
+    reason: z.enum(["duplicate", "unit_price", "discount_amount"]),
+  })).max(40),
 });
+export type SalesHeaderInspection = z.infer<typeof salesHeadersResponseSchema>;

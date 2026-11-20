@@ -91,6 +91,29 @@ describe("research-first market intelligence", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("removes technical pricing paragraphs from saved market and specialist views without changing evidence", async () => {
+    const technicalNotes = [
+      "Pricing coverage is unavailable: captured structured products include 5 merchant and 0 verified-competitor record(s).",
+      "Cross-store SKUs and similar names do not establish an exact match; only matching valid GTINs are identified here.",
+      "GTINs and offer values must appear in retained product quotes. Fields outside those excerpts are not presented as cited pricing evidence.",
+      "No price delta or unit-price advantage is calculated: market, quantities, tax, shipping and promotion conditions have not all been established.",
+      "At most 5 structured products per scanned site are sampled. No match in this sample does not mean there is no competing product.",
+    ];
+    const value: Report = { ...report, steps: report.steps.map((step) => step.agent === "pricing"
+      ? { ...step, status: "limited", limitations: technicalNotes } : step) };
+    await render(value); await click("Pricing");
+    expect(panel().querySelector(".agent-sources > ul")?.textContent).toBe("We couldn't find enough matching product prices to compare.");
+    for (const text of technicalNotes) expect(container.textContent).not.toContain(text);
+    await act(async () => container.querySelector<HTMLButtonElement>('.research-agent-nav button:nth-child(4)')!.click());
+    expect(container.querySelector(".research-limitations ul")?.textContent).toBe("We couldn't find enough matching product prices to compare.");
+    const finding = { ...observation, title: "Matching published offers", detail: "The captured offers share a product identifier." };
+    await render({ ...value, steps: value.steps.map((step) => step.agent === "pricing" ? { ...step, findings: [finding] } : step) });
+    expect(panel().querySelector(".agent-sources > ul")?.textContent).toBe("Published prices are available, but we can't yet make a like-for-like comparison.");
+    expect(panel().textContent).toContain(finding.detail);
+    expect(value.steps.find((step) => step.agent === "pricing")?.limitations).toEqual(technicalNotes);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("states missing marketplace context and trend capabilities without inventing sentiment or Radar alerts", async () => {
     await render(); await click("Customer voice");
     expect(panel().textContent).toContain("No marketplace sample loaded.");

@@ -168,7 +168,7 @@ export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView
         {researchView === "intelligence" && <MarketplaceCustomerVoice />}
       </section>}
       </MarketplaceResearchProvider>
-      {researchOnly && !growthOnly && researchView === "intelligence" && selectedBusiness && <section className="journey-task">
+      {researchOnly && !growthOnly && researchView === "intelligence" && selectedBusiness && !selectedBusiness.website && <section className="journey-task">
         <p className="section-eyebrow">FROM DISCOVERY TO A DECISION</p><h2>What is worth acting on?</h2>
         <p>Your growth plan brings together supported suggestions from saved research. Review the evidence and its gaps before choosing an action. Opening your plan does not run another analysis.</p>
         <a className="primary-link" href={`#growth?business=${selectedBusiness.id}`}>Next: choose my growth move<Icon name="arrow" /></a>
@@ -223,7 +223,7 @@ export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView
         </div></details>
       )}
       {activityOnly && !selectedId && <div className="profile-card"><h2>Select a saved business to see its history.</h2><a href="#overview?view=setup&new=1" className="text-button">Create a business profile <Icon name="arrow" /></a></div>}
-      {activityOnly && selectedId && <section className="activity-card" aria-labelledby="history-heading"><div className="card-heading"><p className="section-eyebrow">A RECORD, NOT A GUESS.</p><h2 id="history-heading">Activity history</h2><p>Latest 100 recorded profile changes and scans for this business. No fabricated results.</p></div>
+      {activityOnly && selectedId && <section className="activity-card" aria-labelledby="history-heading"><div className="card-heading"><p className="section-eyebrow">YOUR BUSINESS UPDATES</p><h2 id="history-heading">Activity history</h2><p>Your latest saved profile, product and website updates.</p></div>
         {detailsLoading ? <p className="loading-message">Loading history...</p> : detailsError ? <p role="alert" className="form-error">{detailsError} <button className="text-button" onClick={() => setRevision((value) => value + 1)}>Retry history</button></p> : activities.length === 0 ? <p>No activity recorded yet.</p> : <ol className="activity-list">{activities.map((activity) => {
           const source = evidence.find((item) => item.id === activity.evidenceId);
           const label: Record<Activity["action"], string> = { "business.created": "Business profile created", "business.updated": "Business profile updated", "website.scanned": "Website scan recorded", "product.saved": "Product saved", "products.imported": "Product import recorded" };

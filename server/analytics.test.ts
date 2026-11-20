@@ -8,6 +8,7 @@ import { readSalesFile, salesFileHash } from "./sales-imports.js";
 import { forecastSales, nextDate, percentageChange, salesMetrics, scenarioDays } from "../shared/analytics-math.js";
 import { moneyScale as M, type DailySales } from "../shared/analytics.js";
 import { newSession } from "./auth.js";
+import type { GrowthOpportunity } from "../shared/growth.js";
 
 const day = (date: string, gross = 100 * M): DailySales => ({
   date, gross, discounts: 10 * M, reversals: 5 * M, orders: 2, units: 3,
@@ -107,6 +108,28 @@ describe("owner-scoped analytics persistence", () => {
     await request(app).get(`/api/businesses/${business.id}/analytics`).expect(401);
     await request(app).post(`/api/businesses/${business.id}/sales-imports?currency=GBP&filename=test.csv`).set("Origin", "http://127.0.0.1:5173").set("Content-Type", "text/csv").send(csv.toString()).expect(401);
     await request(app).post(`/api/businesses/${business.id}/analytics/manual`).send({}).expect(403);
+  });
+  it("persists action links with scenarios and rejects links to another business's plan", async () => {
+    const { store, user, business, snapshot } = await setup();
+    const baseline = await store.salesData(user.id, business.id);
+    const draft = await store.previewSales(user.id, business.id, "fixture.csv", salesFileHash(csv), snapshot);
+    const actual = await store.commitSales(user.id, business.id, draft.id, baseline.version, true);
+    const otherBusiness = (await store.saveBusiness(user.id, { name: "Other business", category: "", description: "", website: "" }))!;
+    const opportunity: GrowthOpportunity = {
+      id: "a".repeat(64), title: "Test clearer sizing", detail: "Review size guidance.", agents: ["growth"], reviewReason: "Planning context only.",
+      sources: [{ id: "e_1111111111111111", url: "https://shop.example.test/", quote: "Five sizes.", capturedAt: "2025-01-01T00:00:00.000Z" }],
+      strategy: { objective: "Clear sizing", actions: ["Review sizes."], metric: "Sales", hypothesis: "Review sizing.", measurement: "Choose a control." },
+    };
+    await store.addGrowthPlan(user.id, otherBusiness.id, opportunity);
+    const input = { name: "Linked scenario", start: "2025-01-01", end: "2025-01-02", ordersPct: 10, aovPct: 0, costPct: 0, opportunityId: opportunity.id };
+    await expect(store.saveSalesScenario(user.id, business.id, input, actual.version)).rejects.toThrow("not in this business's saved plan");
+    expect((await store.salesData(user.id, business.id)).scenarios).toEqual([]);
+    await store.addGrowthPlan(user.id, business.id, opportunity);
+    await store.saveSalesScenario(user.id, business.id, input, actual.version);
+    const restored = await store.salesData(user.id, business.id);
+    expect(restored.scenarios[0].input.opportunityId).toBe(opportunity.id);
+    expect(restored.days).toEqual(actual.days);
+    expect((await store.listGrowthPlan(user.id, business.id))[0].status).toBe("planned");
   });
   it.each(["", "https://shop.example.test/"])("imports sales and saves isolated scenarios over HTTP with website %j without scanning or paid analysis", async (website) => {
     const { store, user, business: initialBusiness } = await setup();

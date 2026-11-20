@@ -103,6 +103,9 @@ export function analyticsStore(database: SqlDatabase) {
         const current = await data(ownerId, businessId);
         if (current.version !== expectedVersion) throw new SalesError(409, "History changed. Reload before saving this scenario.");
         if (!current.days.some((day) => day.date >= parsed.start && day.date <= parsed.end)) throw new SalesError(400, "Choose a scenario range containing recorded dates.");
+        if (parsed.opportunityId && !await database.prepare("SELECT opportunity_id FROM growth_plan WHERE business_id=? AND opportunity_id=?").get(businessId, parsed.opportunityId)) {
+          throw new SalesError(404, "The linked action is not in this business's saved plan. Reload the action before saving a linked scenario.");
+        }
         await database.prepare("INSERT INTO sales_scenarios (id,business_id,created_at,baseline_version,input_json,days_json) VALUES (?,?,?,?,?,?)").run(randomUUID(), businessId, new Date().toISOString(), current.version, JSON.stringify(parsed), JSON.stringify(scenarioDays(current.days, parsed)));
         return data(ownerId, businessId);
       })();

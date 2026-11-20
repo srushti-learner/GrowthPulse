@@ -9,6 +9,7 @@ import { WebsiteWorkspace } from "./WebsiteWorkspace";
 import { ProductsWorkspace } from "./ProductsWorkspace";
 import { FirstVisit } from "./FirstVisit";
 import { GrowthJourney } from "./GrowthJourney";
+import { ContactPage } from "./ContactPage";
 const AnalyticsWorkspace = lazy(() => import("./AnalyticsWorkspace").then((module) => ({ default: module.AnalyticsWorkspace })));
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarInset,
@@ -17,7 +18,7 @@ import {
 
 const sections = [
   { id: "overview", label: "My growth journey", icon: "overview", description: "Your business, your progress, and one useful next step." },
-  { id: "website", label: "Website", icon: "globe", description: "Understand your website's customer experience.", checkpoint: 4 },
+  { id: "website", label: "Website evidence", icon: "globe", description: "Review saved website scans or capture fresh public-page evidence. Use your business agent for guided analysis.", checkpoint: 4 },
   { id: "products", label: "Products", icon: "box", description: "Your working catalogue. Review a product, improve its details, and keep the evidence in view.", checkpoint: 5 },
   { id: "whatsapp", label: "WhatsApp Insights", icon: "chat", description: "Discover what your customers are asking.", checkpoint: 7 },
   { id: "growth", label: "My growth plan", icon: "spark", description: "Turn saved evidence into a decision. Choose your next move, then work on your plan." },
@@ -60,6 +61,7 @@ function sectionFromHash() {
 
 export function App() {
   const [activeSection, setActiveSection] = useState(sectionFromHash);
+  const [contactPage, setContactPage] = useState(() => window.location.hash.split("?")[0] === "#contact");
   const [connection, setConnection] = useState<Connection>({ state: "checking" });
   const [attempt, setAttempt] = useState(0);
   const [session, setSession] = useState<Session>({ state: "loading" });
@@ -79,6 +81,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (contactPage) return;
     const controller = new AbortController();
     setSession({ state: "loading" });
     void api("/api/auth/me", sessionSchema, { signal: controller.signal }).then(({ user }) => {
@@ -88,7 +91,7 @@ export function App() {
       setSession(error instanceof ApiFailure && error.status === 401 ? { state: "anonymous" } : { state: "error", message: errorMessage(error) });
     });
     return () => controller.abort();
-  }, [sessionAttempt]);
+  }, [sessionAttempt, contactPage]);
 
   async function logout() {
     setLogoutPending(true);
@@ -104,6 +107,7 @@ export function App() {
 
   useEffect(() => {
     const onHashChange = () => {
+      setContactPage(window.location.hash.split("?")[0] === "#contact");
       if (/^#opportunities(?:\?|$)/.test(window.location.hash)) {
         window.history.replaceState(null, "", window.location.hash.replace("#opportunities", "#growth"));
       }
@@ -131,6 +135,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (contactPage) return;
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 8000);
     let active = true;
@@ -162,15 +167,17 @@ export function App() {
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [attempt]);
+  }, [attempt, contactPage]);
 
   const connectionError = connection.state === "error" && <section className="status-card" aria-labelledby="status-heading" role="alert">
     <div className="status-copy"><span className="status-dot error" aria-hidden="true" />
       <div><h2 id="status-heading">Connection unavailable.</h2><p>{connection.message}</p></div></div>
     <button type="button" onClick={() => setAttempt((value) => value + 1)}>Check again <Icon name="arrow" /></button>
   </section>;
+  if (contactPage) return <ContactPage />;
   if (session.state === "loading" || session.state === "error") return <main className="entry-status">
     <a className="brand" href="#overview"><span className="brand-mark"><Icon name="pulse" /></span>GrowthPulse</a>
+    <a href="#contact">Contact us</a>
     {session.state === "loading" ? <p role="status">Opening your journey...</p>
       : <p role="alert" className="form-error">{session.message} <button type="button" className="text-button" onClick={() => setSessionAttempt((value) => value + 1)}>Retry session</button></p>}
     {connectionError}
@@ -200,6 +207,7 @@ export function App() {
         </SidebarHeader>
         <SidebarContent><WorkspaceNavigation active={activeSection.id} businessId={selectedBusinessId} /></SidebarContent>
         <SidebarFooter>
+        <a className="text-button" href="#contact">Contact us <Icon name="chat" /></a>
         <div className="session-actions"><button className="secondary-button" type="button" disabled={logoutPending} onClick={() => void logout()}>{logoutPending ? "Logging out..." : "Log out"}</button></div>
         <div className="sidebar-note">
           <Icon name="shield" />
@@ -217,9 +225,8 @@ export function App() {
           {logoutError && <p className="form-error" role="alert">{logoutError}</p>}
           <div className="page-heading">
             <div>
-              <p className="section-eyebrow">LESS NOISE. MORE DIRECTION.</p>
-              <h1>{activeSection.id === "overview" ? "Your business. Your next chapter." : activeSection.label}</h1>
-              <p className="page-description">{activeSection.id === "overview" ? "One place to understand your business. And what to do next." : activeSection.description}</p>
+              <h1>{activeSection.id === "overview" && journeyView === "business" ? "Your business" : activeSection.label}</h1>
+              <p className="page-description">{activeSection.id === "overview" && journeyView === "business" ? "Review and update your saved business details." : activeSection.description}</p>
             </div>
           </div>
           <GrowthJourney section={activeSection.id} selectedBusinessId={selectedBusinessId} view={journeyView}
@@ -253,13 +260,13 @@ export function App() {
               <span className="empty-symbol"><Icon name={activeSection.icon} /></span>
               <p className="section-eyebrow">COMING SOON</p>
               <h2 id="upcoming-heading">The next piece of the picture.</h2>
-              <p>This module is not implemented yet. Agent-led business onboarding, website evidence, and the product catalogue are available. Later analysis modules remain planned.</p>
-              <a href="#website" className="text-button">Open website scanner <Icon name="arrow" /></a><br />
+              <p>This feature is coming soon. You can keep working on your business, products and growth plan.</p>
+              <a href="#website" className="text-button">Open website evidence <Icon name="arrow" /></a><br />
               <a href="#overview" className="primary-link">Back to overview <Icon name="arrow" /></a>
             </section>
           )}
           {connectionError}
-          <footer><span>GROWTHPULSE <span className="footer-divider">/</span> BUILT ON EVIDENCE.</span><span>A little clarity goes a long way.</span></footer>
+          <footer><span>GROWTHPULSE <span className="footer-divider">/</span> BUILT ON EVIDENCE.</span><a href="#contact">Contact us</a></footer>
         </main>
       </SidebarInset>
     </SidebarProvider>

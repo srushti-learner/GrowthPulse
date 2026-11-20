@@ -5,7 +5,7 @@ import { BusinessBriefing, SupportingEvidence, type BriefingEvidence } from "./B
 import { Icon } from "./Icon";
 import { ResearchOverview, type ResearchView } from "./ResearchDashboard";
 import { MarketIntelligence } from "./MarketIntelligence";
-import { describeLimitation } from "./research-messages";
+import { describeLimitation, describeStepLimitations } from "./research-messages";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { EvidenceExcerpt } from "./SourceDetails";
 
@@ -185,7 +185,7 @@ export function ResearchReport({ report, businessName, briefing, evidence, brief
   }
   const steps = report.steps.filter((step) => step.agent === selected);
   const findings = steps.flatMap((step) => step.findings);
-  const limitations = [...new Set(steps.flatMap((step) => step.limitations).map(describeLimitation))];
+  const limitations = [...new Set(steps.flatMap(describeStepLimitations))];
   const storeFindings = report.steps.filter((step) => step.agent === "store").flatMap((step) => step.findings);
   const summary = storeFindings.find((finding) => finding.title === "Your public storefront");
   const insights = storeFindings.filter((finding) => finding !== summary);
