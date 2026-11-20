@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AnalyticsWorkspace } from "./AnalyticsWorkspace";
 import type { AnalyticsData, SalesImport } from "../shared/analytics";
+import { nextDate } from "../shared/analytics-math";
 
 vi.mock("./AnalyticsCharts", () => ({
   SalesChart: () => <div data-testid="sales-chart">Sales chart</div>,
@@ -19,7 +20,7 @@ const record = { date: "2025-01-01", gross: 1_000_000, discounts: 100_000, rever
 const empty: AnalyticsData = { currency: null, version, days: [], products: [], sources: [], imports: [], scenarios: [], warnings: [], traffic: null };
 const loaded: AnalyticsData = { ...empty, version: "abcdef1234567890abcdef12", currency: "GBP", days: [record], sources: [{ name: "fixture.csv", kind: "import", createdAt: timestamp }] };
 const draft: SalesImport = { id: importId, filename: "fixture.csv", createdAt: timestamp, committed: false, snapshot: { currency: "GBP", days: [record], accepted: 2, rejected: 1, excluded: 0, products: [], errors: ["Row 4: invalid price."], warnings: [] } };
-const headers = { headers: ["order_id", "date", "quantity", "unit_price"], suggestions: ["order", "date", "quantity", "price"] };
+const headers = { headers: ["order_id", "date", "quantity", "unit_price"], suggestions: ["order", "date", "quantity", "price"], issues: [] };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 describe("analytics owner workflows", () => {
   let container: HTMLDivElement, root: Root;
@@ -80,23 +81,33 @@ describe("analytics owner workflows", () => {
     expect(container.querySelector('select[aria-label="Analytics business"]')).toBeNull();
     expect(fetch.mock.calls.some(([, options]) => options?.method)).toBe(false);
   });
-  it("previews raw CSV, requires rejected-row acknowledgement and confirms before replacing history", async () => {
-    const fetch = fetcher(empty, (path) => path.includes("/commit") ? json({ analytics: loaded }) : path.includes("mode=headers") ? json(headers) : json({ draft }, 201));
+  it("automatically previews recognised CSV without importing, requires rejected-row acknowledgement and confirms replacement", async () => {
+    const note = "Missing dates are unknown, not zero sales.";
+    const reviewedDraft = { ...draft, snapshot: { ...draft.snapshot, warnings: [note] } };
+    const fetch = fetcher(empty, (path) => path.includes("/commit") ? json({ analytics: loaded }) : path.includes("mode=headers") ? json(headers) : json({ draft: reviewedDraft }, 201));
     await render(); await click("Import sales");
     await chooseCurrency();
     await chooseFile();
     expect(container.querySelector('[aria-label="Sales column mapping"]')).not.toBeNull();
-    expect(container.querySelector('[aria-label="Review sales import"]')).toBeNull();
-    expect(container.textContent).toContain("fixed rules, not AI");
-    await click("Approve mappings and preview");
+    expect(container.querySelector('[aria-label="Review sales import"]')).not.toBeNull();
+    expect(container.querySelectorAll('[aria-label^="Map column"]')).toHaveLength(0);
+    expect(fetch.mock.calls.some(([path]) => path.includes("/commit"))).toBe(false);
     const preview = fetch.mock.calls.find(([path]) => path.includes("mode=preview"))!;
     expect(JSON.parse(new URL(preview[0], window.location.origin).searchParams.get("mapping")!)).toEqual(headers.suggestions);
-    const confirm = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("Confirm baseline"))!;
+    const confirm = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("Confirm sales import"))!;
     expect(confirm.disabled).toBe(true);
     expect(container.textContent).toContain("Row 4: invalid price.");
+    expect(container.textContent).toContain("replaces your imported sales history; it does not add");
+    const notes = container.querySelector<HTMLDetailsElement>(".a-import-notes")!;
+    expect(notes.open).toBe(false);
+    expect(notes.querySelector("li")?.textContent).toBe(note);
+    expect(container.querySelector(".a-row-errors")?.closest("details")).toBeNull();
+    expect(confirm.closest("details")).toBeNull();
+    await act(async () => notes.querySelector("summary")!.click());
+    expect(notes.open).toBe(true);
     expect(fetch.mock.calls.some(([, options]) => options?.headers && new Headers(options.headers).get("Content-Type") === "text/csv")).toBe(true);
     await act(async () => container.querySelector<HTMLInputElement>('.a-review input[type="checkbox"]')!.click());
-    await click("Confirm baseline import");
+    await click("Confirm sales import");
     const commit = fetch.mock.calls.find(([path]) => path.includes("/commit"))!;
     expect(JSON.parse(String(commit[1]?.body))).toEqual({ expectedVersion: version, confirmRejected: true });
     expect(container.textContent).toContain("Sales baseline saved");
@@ -104,12 +115,12 @@ describe("analytics owner workflows", () => {
     expect(container.textContent).toContain("£45.00");
   });
   it("lets owners correct suggestions, blocks missing/duplicate fields, and invalidates previews on edits", async () => {
-    const customHeaders = { headers: ["Ticket", "When", "Count", "Each", "Email"], suggestions: [null, null, null, null, null] };
+    const customHeaders = { headers: ["Ticket", "When", "Count", "Each", "Email"], suggestions: [null, null, null, null, null], issues: [] };
     const fetch = fetcher(empty, (path) => path.includes("mode=headers") ? json(customHeaders) : json({ draft }, 201));
     await render(); await click("Import sales"); await chooseCurrency(); await chooseFile();
-    const approve = () => [...container.querySelectorAll("button")].find((item) => item.textContent === "Approve mappings and preview")!;
+    const approve = () => [...container.querySelectorAll("button")].find((item) => item.textContent === "Preview sales")!;
     expect(approve().disabled).toBe(true);
-    expect(container.textContent).toContain("Map required fields");
+    expect(container.textContent).toContain("Match required fields");
     expect(container.textContent).toContain("YYYY-MM-DD");
     expect(container.textContent).toContain("daily totals");
     for (const [index, field] of ["order", "date", "quantity", "price"].entries()) await select(`[aria-label^="Map column ${index + 1}:"]`, field);
@@ -118,10 +129,11 @@ describe("analytics owner workflows", () => {
     expect(approve().disabled).toBe(true);
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("only once");
     await select('[aria-label^="Map column 5:"]', "");
-    await click("Approve mappings and preview");
+    await click("Preview sales");
     const preview = fetch.mock.calls.find(([path]) => path.includes("mode=preview"))!;
     expect(JSON.parse(new URL(preview[0], window.location.origin).searchParams.get("mapping")!)).toEqual(["order", "date", "quantity", "price", null]);
     expect(container.querySelector('[aria-label="Review sales import"]')).not.toBeNull();
+    await click("Edit column matching");
     await select('[aria-label^="Map column 4:"]', "");
     expect(container.querySelector('[aria-label="Review sales import"]')).toBeNull();
     expect(approve().disabled).toBe(true);
@@ -135,9 +147,28 @@ describe("analytics owner workflows", () => {
     await render(); await click("Import sales"); await chooseCurrency(); await chooseFile();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("CSV syntax error");
     expect(container.querySelector('[aria-label="Sales column mapping"]')).toBeNull();
-    inspectError = false; await chooseFile(); await click("Approve mappings and preview");
+    inspectError = false; await chooseFile();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("Column mapping");
     expect(container.querySelector('[aria-label="Review sales import"]')).toBeNull();
+  });
+  it("only asks about an unclear price while retaining other matches and skipped private columns", async () => {
+    const fetch = fetcher(empty, (path) => path.includes("mode=headers") ? json({
+      headers: ["order_id", "date", "quantity", "Price", "Email"],
+      suggestions: ["order", "date", "quantity", null, null],
+      issues: [{ column: 3, field: "price", reason: "unit_price" }],
+    }) : json({ draft }, 201));
+    await render(); await click("Import sales"); await chooseCurrency(); await chooseFile();
+    expect(fetch.mock.calls.some(([path]) => path.includes("mode=preview"))).toBe(false);
+    const questions = container.querySelector('[aria-label="Sales column mapping"] > fieldset')!;
+    expect(questions.querySelectorAll("select")).toHaveLength(1);
+    expect(questions.textContent).toContain("price of one unit");
+    const other = container.querySelector<HTMLDetailsElement>('[aria-label="Sales column mapping"] details')!;
+    expect(other.open).toBe(false);
+    await select('[aria-label^="Map column 4:"]', "price");
+    await click("Preview sales");
+    const preview = fetch.mock.calls.find(([path]) => path.includes("mode=preview"))!;
+    expect(JSON.parse(new URL(preview[0], window.location.origin).searchParams.get("mapping")!)).toEqual(["order", "date", "quantity", "price", null]);
+    expect(fetch.mock.calls.some(([path]) => path.includes("/commit"))).toBe(false);
   });
   it("clears file/mapping/draft on currency changes and ignores aborted header responses", async () => {
     let finish!: (response: Response) => void;
@@ -159,13 +190,15 @@ describe("analytics owner workflows", () => {
     fetcher(empty, (path) => path.includes("mode=headers")
       ? hold ? new Promise<Response>((resolve) => { finish = resolve; }) : json(headers)
       : json({ draft }, 201));
-    await render(); await click("Import sales"); await chooseCurrency(); await chooseFile(); await click("Approve mappings and preview");
+    await render(); await click("Import sales"); await chooseCurrency(); await chooseFile();
     hold = true; await chooseFile("old.csv");
     expect(container.querySelector('[aria-label="Review sales import"]')).toBeNull();
     expect(container.querySelector('[aria-label="Sales column mapping"]')).toBeNull();
     hold = false; await chooseFile("replacement.csv");
-    await act(async () => finish(json({ headers: ["Stale"], suggestions: [null] })));
+    await act(async () => finish(json({ headers: ["Stale"], suggestions: [null], issues: [] })));
     expect(container.textContent).not.toContain("Stale");
+    expect(container.querySelector('[aria-label="Review sales import"]')).not.toBeNull();
+    await click("Edit column matching");
     expect(container.querySelectorAll('[aria-label^="Map column"]')).toHaveLength(4);
   });
   it("ignores an in-flight mapped preview when the selected business changes", async () => {
@@ -180,7 +213,6 @@ describe("analytics owner workflows", () => {
     vi.stubGlobal("fetch", fetch);
     await act(async () => root.render(<AnalyticsWorkspace selectedBusinessId={id} onSessionExpired={expired} />));
     await click("Import sales"); await chooseCurrency(); await chooseFile();
-    await click("Approve mappings and preview");
     const preview = fetch.mock.calls.find(([path]) => path.includes("mode=preview"))!;
     await act(async () => root.render(<AnalyticsWorkspace selectedBusinessId={secondId} onSessionExpired={expired} />));
     expect(preview[1]?.signal?.aborted).toBe(true);
@@ -209,6 +241,112 @@ describe("analytics owner workflows", () => {
     const call = fetch.mock.calls.find(([path]) => path.endsWith("/scenarios"))!;
     expect(JSON.parse(String(call[1]?.body)).scenario.ordersPct).toBe(100);
     expect(JSON.parse(String(call[1]?.body)).scenario.start).toBe("2025-01-01");
+  });
+  it("separates historical sales from dated forecasts and keeps traffic optional", async () => {
+    fetcher({ ...loaded, days: Array.from({ length: 28 }, (_, index) => ({ ...record, date: nextDate(record.date, index * 2) })) });
+    await render();
+    expect(container.querySelector(".a-forecast-card")).toBeNull();
+    expect(container.querySelector<HTMLDetailsElement>(".a-optional-traffic")?.open).toBe(false);
+    await click("Forecast");
+    expect(container.querySelectorAll(".a-kpi")).toHaveLength(0);
+    expect(container.querySelector(".a-optional-traffic")).toBeNull();
+    expect(container.querySelector('[aria-label="Forecast period"]')?.textContent).toContain("25 Feb 2025 – 26 Mar 2025");
+    expect(container.textContent).toContain("not a forecast starting today");
+    expect(container.textContent).toContain("27 calendar days in this range have no sales record");
+  });
+  it("distinguishes existing same-name saves and restores their own assumptions and save date", async () => {
+    const input = { name: "My growth scenario", start: record.date, end: record.date, ordersPct: 10, aovPct: 0, costPct: 0 };
+    const secondId = "63243bee-1f3a-40db-a516-93b04d40f798";
+    const fetch = fetcher({ ...loaded, scenarios: [
+      { id: importId, createdAt: timestamp, baselineVersion: loaded.version, days: loaded.days, input },
+      { id: secondId, createdAt: timestamp, baselineVersion: version, days: loaded.days, input: { ...input, ordersPct: 0, aovPct: 5 } },
+      { id: "63243bee-1f3a-40db-a516-93b04d40f799", createdAt: timestamp, baselineVersion: loaded.version, days: loaded.days, input },
+    ] });
+    await render(); await click("What if?");
+    const options = [...container.querySelectorAll(".a-scenario-controls select option")].map((item) => item.textContent);
+    expect(options).toEqual(["Unsaved scenario", "#3 My growth scenario · Orders +10%", "#2 My growth scenario · Spend/order +5% · older baseline", "#1 My growth scenario · Orders +10%"]);
+    await select(".a-scenario-controls select", secondId);
+    expect(container.querySelector<HTMLInputElement>('[aria-label="Average order value change (%)"]')?.value).toBe("5");
+    expect(container.textContent).toContain("Saved 16 Nov 2026");
+    expect(container.textContent).toContain("belongs to an older baseline");
+    await select(".a-scenario-controls select", importId);
+    expect(container.querySelector<HTMLInputElement>('[aria-label="Order volume change (%)"]')?.value).toBe("10");
+    expect(fetch.mock.calls.some(([, options]) => options?.method)).toBe(false);
+  });
+  it("prevents repeated saves and re-enables saving only for a different scenario", async () => {
+    const input = { name: "My growth scenario", start: record.date, end: record.date, ordersPct: 10, aovPct: 0, costPct: 0 };
+    const fetch = fetcher(loaded, (_path, options) => json({ analytics: { ...loaded, scenarios: [{
+      id: importId, createdAt: timestamp, baselineVersion: loaded.version, days: loaded.days,
+      input: JSON.parse(String(options?.body)).scenario,
+    }] } }, 201));
+    await render(); await click("What if?");
+    await set('[aria-label="Order volume change (%)"]', String(input.ordersPct));
+    await click("Save separate scenario");
+    const saveButton = () => [...container.querySelectorAll("button")].find((item) => item.textContent === "Save separate scenario")!;
+    expect(saveButton().disabled).toBe(true);
+    expect(container.textContent).toContain("These settings are already saved");
+    await click("Save separate scenario");
+    expect(fetch.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(1);
+    await set('[aria-label="Order volume change (%)"]', "20");
+    expect(saveButton().disabled).toBe(false);
+    await set('[aria-label="Order volume change (%)"]', "10");
+    expect(saveButton().disabled).toBe(true);
+    await set('.a-scenario-controls input[maxlength="80"]', "  My growth scenario  ");
+    expect(saveButton().disabled).toBe(true);
+    await set('.a-scenario-controls input[maxlength="80"]', "A different scenario");
+    expect(saveButton().disabled).toBe(false);
+  });
+  it("allows saving the same settings on a new baseline without overwriting the old snapshot", async () => {
+    fetcher({ ...loaded, scenarios: [{
+      id: importId, createdAt: timestamp, baselineVersion: version, days: loaded.days,
+      input: { name: "My growth scenario", start: record.date, end: record.date, ordersPct: 0, aovPct: 0, costPct: 0 },
+    }] });
+    await render(); await click("What if?");
+    expect([...container.querySelectorAll("button")].find((item) => item.textContent === "Save separate scenario")?.disabled).toBe(false);
+    expect(container.textContent).not.toContain("These settings are already saved");
+  });
+  it("guides the chosen assumption without inventing uplift, supports exact inputs and suppresses invalid comparisons", async () => {
+    const fetch = fetcher(loaded); await render(); await click("What if?");
+    await click("Higher spending per order");
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Average order value change (%)");
+    expect(container.querySelector<HTMLInputElement>('[aria-label="Average order value change (%)"]')?.value).toBe("0");
+    await set('[aria-label="Average order value change (%)"]', "20");
+    expect(container.querySelector('[aria-label="Net sales comparison"]')?.textContent).toContain("What-if net sales£102.00Difference in net sales+£17.00");
+    expect(container.textContent).toContain("does not predict the future effect");
+    await click("Changed product costs");
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Unit cost of goods change (%)");
+    expect(container.textContent).toContain("Unknown costs stay unknown");
+    await set('[aria-label="Average order value change (%)"]', "300");
+    expect(container.querySelector<HTMLInputElement>('[aria-label="Average order value"]')?.value).toBe("300");
+    await set('[aria-label="Average order value change (%)"]', "");
+    expect(container.querySelector('[aria-label="Net sales comparison"]')).toBeNull();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("-100% and 300%");
+    expect([...container.querySelectorAll("button")].find((item) => item.textContent?.includes("Save separate scenario"))?.disabled).toBe(true);
+    expect(fetch.mock.calls.every(([, options]) => !options?.method)).toBe(true);
+  });
+  it("compares only the historical period being changed and rejects periods with no observations", async () => {
+    fetcher({ ...loaded, days: [record, { ...record, date: "2025-01-02" }] });
+    await render(); await click("What if?");
+    await set('.a-two-fields label:last-child input', "2025-01-01");
+    await set('[aria-label="Average order value change (%)"]', "100");
+    expect(container.querySelector('[aria-label="Net sales comparison"]')?.textContent).toContain("Original net sales£85.00What-if net sales£170.00Difference in net sales+£85.00");
+    await set('.a-two-fields label:last-child input', "2025-02-02");
+    await set('.a-two-fields label:first-child input', "2025-02-01");
+    expect(container.querySelector('[aria-label="Net sales comparison"]')).toBeNull();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("containing recorded sales");
+    expect([...container.querySelectorAll("button")].find((item) => item.textContent?.includes("Save separate scenario"))?.disabled).toBe(true);
+  });
+  it("restores the growth-action link from a saved scenario without requiring the original deep link", async () => {
+    const opportunityId = "b".repeat(64);
+    fetcher({ ...loaded, scenarios: [{
+      id: importId, createdAt: timestamp, baselineVersion: loaded.version, days: loaded.days,
+      input: { name: "Saved action scenario", start: record.date, end: record.date, ordersPct: 0, aovPct: 0, costPct: 0, opportunityId },
+    }] });
+    await render(); await click("What if?");
+    await select(".a-scenario-controls select", importId);
+    expect(container.querySelector('a.a-linked-action')?.getAttribute("href")).toBe(`#actions?business=${id}&action=${opportunityId}`);
+    await set('[aria-label="Order volume change (%)"]', "15");
+    expect(container.querySelector('a.a-linked-action')?.getAttribute("href")).toContain(opportunityId);
   });
   it("keeps the main view simple while retaining optional details and data requirements", async () => {
     fetcher(loaded); await render();
@@ -297,7 +435,8 @@ describe("analytics owner workflows", () => {
     expect(fetch.mock.calls.every(([, options]) => !options?.method)).toBe(true);
     await click("Save separate scenario");
     const saved = fetch.mock.calls.find(([path]) => path.endsWith("/scenarios"))!;
-    expect(JSON.parse(String(saved[1]?.body)).scenario).toMatchObject({ name: opportunity.title, ordersPct: 0, aovPct: 0, costPct: 0 });
+    expect(JSON.parse(String(saved[1]?.body)).scenario).toMatchObject({ name: opportunity.title, opportunityId: opportunity.id, ordersPct: 0, aovPct: 0, costPct: 0 });
+    expect(container.querySelector('a.a-linked-action')?.getAttribute("href")).toBe(`#actions?business=${id}&action=${opportunity.id}`);
     expect(container.textContent).toContain("Original sales records are unchanged");
   });
 });

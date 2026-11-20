@@ -7,7 +7,7 @@
 .analysis-activity .agent-progress button { flex-shrink: 0; min-height: 44px; }
 .analysis-activity .analysis-activity-note { margin: 10px 0 20px; color: #c8c3d0; font-size: 13px; line-height: 1.8; }
 .analysis-activity .analysis-quiet { padding: 12px 14px; border-left: 2px solid #e6b48b; color: #ecd2bc; font-size: 13px; line-height: 1.8; }
-.analysis-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 20px 0; padding-block: 16px; border-block: 1px solid #494154; }
+.analysis-counts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 20px 0; padding-block: 16px; border-block: 1px solid #494154; }
 .analysis-counts > div { display: flex; flex-direction: column-reverse; gap: 5px; }
 .analysis-counts dt { font-size: 12px; color: #c8c3d0; }
 .analysis-counts dd { margin: 0; font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -20,7 +20,7 @@
 .analysis-stages strong { display: block; font-size: 12px; font-weight: 550; line-height: 1.6; }
 .analysis-stages li > div > span { display: block; color: #bdb8c9; font-size: 11px; line-height: 1.8; }
 .analysis-stages [data-status="limited"] > div > span, .analysis-stages [data-status="failed"] > div > span { color: #ecd2bc; }
-.analysis-recent h3 { margin: 0 0 12px; font-size: 14px; font-weight: 550; }
+.analysis-activity .analysis-check-failure { color: #ecd2bc; font-size: 13px; line-height: 1.8; }
 .analysis-recent ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; }
 .analysis-recent li { border-left: 2px solid #494154; padding-left: 14px; }
 .analysis-recent li[data-status="running"] { border-color: #c9b8ff; }

@@ -16,9 +16,25 @@ describe("owner-approved sales column mapping", () => {
     expect(result).toEqual({
       headers: ["Order number", "Order date", "Qty", "Unit selling price", "Line total", "Net sales", "Customer ID", "constructor"],
       suggestions: ["order", "date", "quantity", "price", null, null, null, null],
+      issues: [],
     });
     expect(JSON.stringify(result)).not.toContain("PRIVATE");
     expect((await readSalesHeaders(Buffer.from("order_id,date,quantity,price,unit_price\nA,2025-01-01,1,10,20"), "csv")).suggestions).toEqual(["order", "date", "quantity", null, null]);
+  });
+  it("flags generic prices, discount semantics and duplicates without exposing row examples", async () => {
+    const result = await readSalesHeaders(Buffer.from("order_id,date,quantity,Price,Discount,Email\nA,2025-01-01,2,10,5,PRIVATE"), "csv");
+    expect(result.suggestions).toEqual(["order", "date", "quantity", null, null, null]);
+    expect(result.issues).toEqual([
+      { column: 3, field: "price", reason: "unit_price" },
+      { column: 4, field: "discount", reason: "discount_amount" },
+    ]);
+    expect(JSON.stringify(result)).not.toContain("PRIVATE");
+    const duplicate = await readSalesHeaders(Buffer.from("order_id,InvoiceNo,date,quantity,unit_price\nA,A,2025-01-01,2,10"), "csv");
+    expect(duplicate.issues).toEqual([
+      { column: 0, field: "order", reason: "duplicate" },
+      { column: 1, field: "order", reason: "duplicate" },
+    ]);
+    expect((await readSalesHeaders(Buffer.from("order_id,date,quantity,unit_price,line_discount_amount\nA,2025-01-01,2,10,1"), "csv")).issues).toEqual([]);
   });
   it("applies positional mapping and skips private columns without altering order/reversal arithmetic", async () => {
     const snapshot = await readSalesFile(custom, "csv", "GBP", mapping);
@@ -102,7 +118,7 @@ describe("sales mapping upload API", () => {
   it("returns only headers, persists no inspection draft, and never reuses a differently mapped draft", async () => {
     const { store, user, business, upload } = await setup();
     const headers = await upload({ mode: "headers" }).expect(200);
-    expect(Object.keys(headers.body).sort()).toEqual(["headers", "suggestions"]);
+    expect(Object.keys(headers.body).sort()).toEqual(["headers", "issues", "suggestions"]);
     expect(JSON.stringify(headers.body)).not.toContain("private@example.test");
     expect((await store.salesData(user.id, business.id)).imports).toEqual([]);
     const first = await upload({ mapping: JSON.stringify(mapping) }).expect(201);

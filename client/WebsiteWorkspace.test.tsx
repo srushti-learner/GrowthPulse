@@ -97,6 +97,13 @@ describe("website workspace", () => {
     await submit();
     expect(container.querySelector("#scan-result-heading")?.textContent).toBe("Partial scan");
     expect(container.textContent).toContain("Blocked by robots.txt");
+    const issues = container.querySelector<HTMLDetailsElement>(".scan-page-issues")!;
+    expect(issues.open).toBe(false);
+    expect(issues.textContent).toContain("Blocked by robots.txt");
+    expect(issues.parentElement?.querySelector("h3")?.textContent).toBe("1 page could not be read");
+    expect(issues.parentElement?.querySelector("h3")?.closest("details")).toBeNull();
+    await act(async () => issues.querySelector("summary")!.click());
+    expect(issues.open).toBe(true);
     await submit();
     expect(container.querySelector("#scan-result-heading")?.textContent).toBe("Scan failed");
     expect(container.querySelector(".scan-result [role=alert]")?.textContent).toContain("0 HTML pages captured");
@@ -122,6 +129,14 @@ describe("website workspace", () => {
     await act(async () => wire.enqueue(encoder.encode(frame.slice(25))));
     expect([...container.querySelectorAll(".analysis-counts dd")].map((node) => node.textContent)).toEqual(["1", "2", "1"]);
     expect(container.querySelector(".workflow-activity")?.textContent).toContain("robots.txt does not allow");
+    const details = container.querySelector<HTMLDetailsElement>(".scan-progress-details")!;
+    expect(details.open).toBe(false);
+    expect(details.textContent).toContain(progress.url);
+    expect(details.textContent).toContain(progress.lastFailure);
+    expect(container.querySelector(".workflow-activity")?.textContent).not.toContain("request-scoped");
+    expect(container.querySelector(".workflow-activity")?.textContent).not.toContain("first recorded update");
+    await act(async () => details.querySelector("summary")!.click());
+    expect(details.open).toBe(true);
     expect(container.querySelector("#scan-result-heading")).toBeNull();
     await act(async () => {
       wire.enqueue(encoder.encode(JSON.stringify({ type: "complete", scan: preview }) + "\n"));
@@ -210,7 +225,7 @@ describe("website workspace", () => {
     vi.stubGlobal("fetch", fetch);
     await render(true);
     expect(container.querySelector(".scan-catalogue")?.textContent).toContain("2 products added, 1 listings refreshed");
-    expect(container.querySelector(".scan-catalogue")?.textContent).toContain("No import confirmation needed");
+    expect(container.querySelector(".scan-catalogue")?.textContent).not.toContain("No import confirmation needed");
     expect(container.querySelector(".scan-catalogue")?.textContent).toContain("Uncertain catalogue match.");
     expect(container.querySelector<HTMLAnchorElement>(".scan-catalogue a")?.getAttribute("href")).toBe(`#products?business=${businessId}`);
     expect(fetch.mock.calls.every(([, options]) => !options?.method)).toBe(true);

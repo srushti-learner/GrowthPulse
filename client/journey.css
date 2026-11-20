@@ -1,7 +1,6 @@
 .growth-journey { margin-bottom: 30px; min-width: 0; }
 .journey-toolbar, .journey-business, .journey-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.journey-toolbar { justify-content: space-between; margin-bottom: 18px; }
-.journey-caption { color: var(--muted-foreground); font-size: 13px; margin: 6px 0 0; }
+.journey-toolbar { justify-content: flex-end; margin-bottom: 18px; }
 .journey-business label { display: grid; gap: 5px; font-size: 11px; color: var(--muted-foreground); }
 .journey-business select { width: 220px; max-width: 100%; background: var(--card); color: var(--foreground); border: 1px solid var(--border); border-radius: 8px; padding: 9px 30px 9px 12px; font: inherit; }
 .journey-business > button { align-self: flex-end; }
@@ -22,12 +21,8 @@
 .journey-summary [data-slot="card-content"] { display: grid; gap: 8px; }
 .journey-summary strong { font-size: 28px; font-weight: 500; }
 .journey-summary span { color: var(--muted-foreground); font-size: 12px; }
-.journey-chapters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 26px; }
-.journey-chapters > a { display: block; padding: 23px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
-.journey-chapters > a:hover { border-color: var(--primary); }
-.journey-chapters h3 { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 17px; margin: 13px 0 10px; }
-.journey-chapters svg, .journey-action-list a svg { width: 16px; height: 16px; flex-shrink: 0; }
-.journey-chapters p, .journey-review > p, .journey-results p, .journey-task p { color: var(--muted-foreground); font-size: 13px; line-height: 1.8; }
+.journey-action-list a svg { width: 16px; height: 16px; flex-shrink: 0; }
+.journey-review > p, .journey-results p, .journey-task p { color: var(--muted-foreground); font-size: 13px; line-height: 1.8; }
 .journey-review h2 { font-size: 24px; margin-bottom: 8px; }
 .journey-review > p { margin-bottom: 24px; }
 .journey-action-list { list-style: none; padding: 0; margin: 20px 0; }
@@ -54,7 +49,33 @@
 .action-next-steps, .growth-strategy .action-next-steps { display: grid; gap: 10px; list-style: decimal; padding-left: 32px; margin: 0; }
 .action-next-steps li, .growth-strategy .action-next-steps li { padding: 12px; margin: 0; line-height: 1.8; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
 .action-next-steps li::marker { color: var(--primary); font-weight: 600; }
-.action-background > p { margin-block: 12px; }
+.growth-plan-item, .growth-plan-item .agent-sources, .growth-strategy .agent-sources { color: var(--foreground); }
+.growth-plan-item > summary { color: var(--foreground); font-weight: 550; overflow-wrap: anywhere; }
+.growth-plan-item > .growth-plan-body { display: grid; gap: 20px; margin-top: 18px; padding-top: 20px; border-top: 1px solid var(--border); min-width: 0; }
+.growth-plan-body .action-plan { margin-top: 0; }
+.growth-plan-overview { display: grid; gap: 8px; max-width: 72ch; }
+.growth-plan-actions [data-slot="button"][data-variant="default"] { color: var(--primary-foreground); }
+.growth-plan-overview h4, .action-evidence-content h4 { margin: 0; font-size: 13px; font-weight: 550; }
+.growth-plan-overview p, .growth-plan-notes p, .action-tools > p { line-height: 1.8; overflow-wrap: anywhere; }
+.growth-plan-notes p { margin-top: 10px; max-width: 72ch; font-size: 13px; color: var(--muted-foreground); }
+.growth-plan-body .growth-assessment, .growth-plan-body .growth-action-status { margin-top: 0; padding-top: 20px; border-top: 1px solid var(--border); }
+.growth-plan-body .growth-assessment fieldset { margin-top: 0; }
+.growth-plan-body > .field-note { margin: 0; }
+.action-evidence-content { display: grid; gap: 18px; padding-top: 18px; }
+.action-evidence-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 0; }
+.action-evidence-summary dt { margin-bottom: 6px; font-size: 12px; color: var(--muted-foreground); }
+.action-evidence-summary dd { margin: 0; font-size: 13px; line-height: 1.7; }
+.action-evidence-content > section { display: grid; gap: 8px; }
+.action-research-notes { font-size: 13px; }
+.action-research-notes > p { margin-top: 12px; }
+.action-tools > .journey-actions { margin-top: 12px; }
+.growth-strategy .strategy-work-link { margin-top: 24px; }
+.strategy-tools { display: grid; gap: 12px; margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--border); }
+.growth-strategy .strategy-tools h3 { margin: 0; }
+.strategy-tools > p { font-size: 13px; color: var(--muted-foreground); }
+.strategy-tool-links { display: grid; gap: 12px; }
+.strategy-tool-links [data-slot="button"] { justify-content: space-between; text-align: left; }
+.research-drawer-body .action-evidence-content > .agent-sources { margin-top: 0; }
 .growth-action-status { margin-top: 20px; }
 .growth-action-status fieldset { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
 .growth-action-status legend { margin-bottom: 10px; font-size: 14px; }
@@ -63,7 +84,6 @@
 @media (max-width: 1100px) {
   .journey-stages a { gap: 7px; padding-inline: 8px; }
   .journey-stages small { font-size: 9px; }
-  .journey-chapters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 700px) {
   .journey-toolbar, .journey-business { align-items: stretch; width: 100%; }
@@ -78,6 +98,8 @@
   .journey-summary { gap: 8px; }
   .journey-summary [data-slot="card-content"] { padding-inline: 12px; }
   .journey-summary span { font-size: 10px; line-height: 1.6; }
-  .journey-chapters { grid-template-columns: 1fr; }
   .journey-actions > a { white-space: normal; height: auto; min-height: 36px; }
+  .growth-plan-actions { align-items: stretch; }
+  .growth-plan-actions > [data-slot="button"] { flex: 1 1 100%; }
+  .action-evidence-summary { grid-template-columns: minmax(0, 1fr); }
 }

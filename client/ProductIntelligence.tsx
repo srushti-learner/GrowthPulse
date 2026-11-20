@@ -17,12 +17,12 @@ import { WorkflowActivity } from "./WorkflowActivity";
 
 const productStages = [
   { key: "preparing", label: "Prepare evidence" }, { key: "analysing", label: "Analyse and draft" },
-  { key: "validating", label: "Check structure and citations" }, { key: "saving", label: "Save analysis" },
+  { key: "validating", label: "Check findings" }, { key: "saving", label: "Save analysis" },
 ] as const;
 const productMessages = {
   preparing: "Preparing this product's saved catalogue excerpts.",
-  analysing: "Analysing saved evidence and drafting recommendations in one AI request.",
-  validating: "Checking response structure, evidence IDs and assessment limits.",
+  analysing: "Reviewing your product and drafting recommendations.",
+  validating: "Checking the findings against your product information.",
   saving: "Saving the accepted analysis for you to review.",
 };
 
@@ -171,15 +171,15 @@ export function ProductIntelligence({ businessId, product, products, thumbnail, 
     {data?.stale && <p className="field-note product-stale">Product evidence has changed. This is an older analysis; review a fresh analysis before applying its drafts or planning its suggestions.</p>}
     {(startingAnalysis || data?.running) && <WorkflowActivity title="Product analysis"
       message={data?.progress ? productMessages[data.progress.stage] : startingAnalysis
-        ? "Requesting product analysis. Waiting for the server to confirm saved progress."
-        : "Product analysis is running. Reconnecting to its saved progress."}
+        ? "Starting your product analysis..."
+        : "Loading your analysis progress..."}
       startedAt={data?.progress?.startedAt} updatedAt={data?.progress?.updatedAt}
       stages={productStages.map((stage, index) => {
         const current = productStages.findIndex((item) => item.key === data?.progress?.stage);
         return { label: stage.label, state: index < current ? "completed" : index === current ? "running" : "pending" };
       })}
       counts={data?.progress?.evidenceCount != null ? [{ label: "Saved evidence excerpts", value: data.progress.evidenceCount }] : []}
-      guidance="Once the server accepts the request, you can leave this workspace and reopen its saved status. Reopening does not start another AI call. Explore the information checklist or other product tabs while it works." />}
+      guidance={data?.running ? "Your analysis continues if you leave this page." : "Keep this page open while your analysis starts."} />}
     {!data?.running && (area !== "performance" && (!analysis || data?.stale)) && <Card className="product-analysis-callout"><CardHeader>
       <CardTitle><Sparkles />Understand what to improve</CardTitle><CardDescription>A product-specific diagnosis, factual listing draft and prioritized recommendations from saved catalogue evidence. No new website scan.</CardDescription>
     </CardHeader><CardContent>

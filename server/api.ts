@@ -28,12 +28,14 @@ import { trafficSourceSchema } from "../shared/traffic.js";
 import { readTrafficFile } from "./traffic-imports.js";
 import { marketplaceAnalyseInput, marketplaceImportInput, marketplaceLimits, marketplaceMatchInput, marketplaceResearchInput, type MarketplaceProgress, type MarketplaceReport } from "../shared/marketplace.js";
 import { importMarketplaceCsv, marketplaceUrl } from "./marketplace-research.js";
+import { contactInputSchema, contactMailbox } from "../shared/contact.js";
+import type { ContactSender } from "./contact.js";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 
-export function createApi(store: Store, origin: string, production: boolean, scan: WebsiteScanner = createWebsiteScanner(), agent: BusinessAgent = createBusinessAgent(), productAnalyst: ProductAnalyst = createProductAnalyst()) {
+export function createApi(store: Store, origin: string, production: boolean, scan: WebsiteScanner = createWebsiteScanner(), agent: BusinessAgent = createBusinessAgent(), productAnalyst: ProductAnalyst = createProductAnalyst(), contactSender?: ContactSender) {
   const api = Router();
   const cookie = { httpOnly: true, secure: production, sameSite: "lax", path: "/" } as const;
   const previewCookie = "gp_preview";
@@ -46,6 +48,10 @@ export function createApi(store: Store, origin: string, production: boolean, sca
   const anonymousScanLimit = rateLimit({
     windowMs: 10 * 60 * 1000, limit: 3, standardHeaders: "draft-8", legacyHeaders: false,
     message: { error: "Public scan limit reached. Sign in for your own scan allowance, or wait for the cooldown." },
+  });
+  const contactLimit = rateLimit({
+    windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: "draft-8", legacyHeaders: false,
+    message: { error: "Too many contact messages. Please try again in 15 minutes." },
   });
   function accountLimit(label: string) {
     return rateLimit({
@@ -76,6 +82,23 @@ export function createApi(store: Store, origin: string, production: boolean, sca
       throw new ApiError(403, "This request must come from the configured application origin.");
     }
     next();
+  });
+  let activeContactMessages = 0;
+  api.post("/contact", contactLimit, async (request, response) => {
+    if (!request.is("application/json")) throw new ApiError(415, "Send the contact form as JSON.");
+    const input = contactInputSchema.parse(request.body);
+    if (!contactSender) throw new ApiError(503, `The contact form is temporarily unavailable. Please email ${contactMailbox} directly.`);
+    if (activeContactMessages >= 3) throw new ApiError(429, "The contact form is busy. Please try again shortly.");
+    activeContactMessages++;
+    try {
+      await contactSender(input);
+    } catch (error) {
+      console.error("Contact email failed:", error instanceof Error ? error.name : "unknown");
+      throw new ApiError(502, `We couldn't confirm your message was sent. Please email ${contactMailbox} directly.`);
+    } finally {
+      activeContactMessages--;
+    }
+    response.json({ status: "accepted" });
   });
   async function userFor(request: Request) {
     const tokenHash = requestTokenHash(request);

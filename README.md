@@ -27,10 +27,14 @@ one need the compiler prerequisites reported by its installer.
 
 ## Dashboard experience
 
+The browser favicon uses the purple GrowthPulse pulse mark in `public/favicon.svg`,
+linked from `index.html` and included in production builds.
+
 Returning owners open **My growth journey**: a saved-data dashboard with their
 active business, catalogue and plan counts, and a contextual next step. A
-persistent five-stage navigator connects **Understand → Discover → Decide →
-Act → Review** without restricting direct access to any workspace. Its labels
+five-stage navigator on this overview connects **Understand → Discover → Decide →
+Act → Review** without repeating it on every workspace or adding a second set of
+chapter cards. The next step appears before this navigation. Its labels
 describe saved records, partial research and owner-reported work, not a growth
 score or an assertion that the entire journey is complete.
 
@@ -42,6 +46,13 @@ An empty signed-in account starts with website setup; a website-less business ca
 add its details and products manually. Business details are nested inside
 **My growth journey**, not a separate sidebar tab. Legacy `#business` links still
 open that nested view. **Add business** starts the same guided setup.
+Other pages keep only the shared business selector above their own content;
+they do not fetch catalogue/plan snapshots just to repeat journey status.
+**Website evidence** is the optional saved-scan history and manual rescan tool,
+not another guided analysis step. It exposes captured public pages and scanner
+results; the business agent remains the guided starting point.
+The full weekly sales and outcome review lives in **My progress**, not on both
+the overview and progress page.
 
 Before authentication, four manually advanced animated frames introduce the
 business, connected evidence, and a chosen next action, then show account creation.
@@ -58,6 +69,10 @@ Action details separate **What to try**, distinct next steps and **How to measur
 it**. Repeated titles and recommendation paragraphs are not shown again as goals
 or tasks, including in older saved plans. Evidence and planning caveats remain in
 a closed disclosure; this presentation does not rewrite saved plans or run AI.
+Saved action cards group their strategy/work links and planning priorities.
+Evidence separates source coverage, specific assumptions and expandable research
+notes; generic title-only hypotheses are omitted. Optional product/simulator
+buttons sit together without explanatory text between them.
 Products is a separate tool, not the Act destination. Catalogue and simulator
 links are optional within each action; they never infer a product match or
 perform the work. Completion is owner-reported, not measured uplift.
@@ -107,8 +122,11 @@ remain separate.
 Competitor, Customer, Pricing, Product Opportunities and Growth Strategy findings.
 It brings together accepted, cited suggestions, a first recommendation to review,
 on-demand strategy/evidence drawers and a persistent business-specific action plan.
-The first suggestion uses a compact **Suggested experiment** card, not a
-predicted-impact hero. Numbered Experiment/Research prefixes are omitted from
+The first unsaved suggestion uses a compact **Suggested experiment** card with
+its strategy and explicit add-to-plan action. It is not repeated in the
+remaining opportunity cards; saved actions appear only in the plan rather than
+being promoted again as the same recommendation. This is not a predicted-impact
+hero. Numbered Experiment/Research prefixes are omitted from
 displayed recommendation titles; saved recommendations and evidence are unchanged.
 The initial review order favors saved Growth Strategy synthesis, then supporting
 specialists and distinct captured pages; it is not a predicted-impact score.
@@ -146,6 +164,14 @@ read the provider disclosure and select **Find customer feedback**. Collection,
 listing confirmation, authorized imports and **Analyse confirmed reviews** are
 available here; there is no separate "above" workflow to locate. For a profile
 without a website, the same feedback workflow is shown directly in Market intelligence.
+The page leads with confirmed customer takeaways and visible review quotes, with
+own-product and comparable-product feedback kept separate. If no review text was
+captured, it shows a clear empty state rather than treating listing descriptions,
+star ratings or published review counts as feedback. Excerpts awaiting product
+confirmation stay out of insights; **Review product matches** opens the initially
+collapsed source checks. Listing facts and capture failures remain available on
+demand below the feedback. Finding fresh feedback, importing reviews and running
+analysis still require explicit actions.
 The existing Market Intelligence agent exposes a bounded LangGraph marketplace
 workflow using the existing server-only Anthropic/Tavily configuration; no extra AI
 provider or autonomous agent fleet is introduced.
@@ -227,12 +253,18 @@ A business profile and sales records are required; a website and AI key are not.
 The single workspace contains **My sales**, **Forecast** and **What if?**, retaining
 the business selected elsewhere in the dashboard.
 
-- Import CSV/XLSX sales, review/correct the suggested column mapping, approve it,
-  review accepted/rejected rows, then explicitly confirm.
+- Import CSV/XLSX sales: familiar, unambiguous columns are matched and validated
+  automatically, leading straight to one sales-summary review. Only missing,
+  duplicated or semantically unclear fields need a column-matching step.
+  Generic `price` and `discount` headings require review rather than assuming
+  per-unit prices or per-line discount amounts. Every match remains editable;
+  editing invalidates the previous preview. Inspection returns headings and
+  matching issues, never private row examples. Review accepted/rejected rows,
+  warnings, net sales, dates and currency, then explicitly confirm.
   Confirmation **replaces the imported baseline**, not appends to it. Previous
   imports remain saved; owner-entered dates cannot be overwritten by an import.
   The template uses `order_id,date,quantity,unit_price`, with optional
-  `sku,product,discount,currency,status`. These exact headings are not required:
+  `sku,product,line_discount_amount,currency,status`. These exact headings are not required:
   deterministic suggestions recognize common names, and owners can map each
   required field explicitly. Download the template in Import sales. Rows must
   represent order lines, with stable order IDs, historical ISO dates, quantities
@@ -245,19 +277,35 @@ the business selected elsewhere in the dashboard.
 - Forecasting requires at least **28 observed dates**. Three statistical methods
   are checked against later historical observations; a 30-calendar-day forecast
   starts after the latest selected record, not necessarily today. Missing dates
-  stay unknown, not zero. Its illustrative uncertainty band is not calibrated.
+  stay unknown, not zero. The Forecast view shows exact forecast dates,
+  incomplete-calendar coverage and a warning when selected history is over
+  30 days old. My sales contains historical performance, not forecast cards.
+  The illustrative uncertainty band is not calibrated.
 - What-if controls change a **copy of historical records**, never actuals.
+  Guided choices focus the relevant percentage input without choosing an uplift;
+  sliders and precise numeric inputs can combine changes. Original, hypothetical
+  and difference in net sales describe only the selected historical period.
   Order volume, average order value and unit-cost percentages are owner
   assumptions, initially zero, not AI-predicted or proven causal effects.
   Saved scenarios retain their baseline snapshots. Older scenarios are not
-  compared against changed actuals.
+  compared against changed actuals. The saved-scenario selector distinguishes
+  same-name saves with numbered labels and assumption summaries; selecting one
+  shows its save date. Saving is disabled when the loaded scenarios already
+  contain the same name, dates, assumptions and linked action on the current
+  baseline. Existing saved records are preserved.
 - **Explore strategy → Explore in Growth Simulator** carries the business and
   saved Growth Intelligence recommendation into the simulator as planning context.
   The recommendation names the new scenario but does not choose uplift values,
-  launch an experiment or change a website.
+  launch an experiment or change a website. Scenarios linked to saved-plan actions
+  retain the action ID and return link when reopened. The server verifies that
+  the action belongs to this business's saved plan; unsaved recommendations
+  remain context only until added to the plan. Existing unlinked scenarios
+  remain readable. Scenario saves never update action progress or measurements.
 - Optional website-traffic CSVs stay separate from sales and require confirmation
   that they describe the same business/channel. Conversion uses purchasing
-  sessions, not order counts. Social-only sellers do not need traffic data.
+  sessions, not order counts. This tool is under the optional Website visits &
+  conversion section in My sales, not the Forecast view. Social-only sellers
+  do not need traffic data.
 
 Uploads have a separate allowance of 12 per account per 10 minutes, shared across
 that account's businesses and sales/traffic upload tools. Saved reads, local
@@ -419,8 +467,9 @@ review decisions remain visible; validation failures and connection errors stay
 explicit. **Connection status** is collapsed when healthy and opens on a connection
 error, with a retry control. The sign-in screen retains the local-development and
 test-password warning. Running analyses show **Live agent activity**: recorded
-specialist statuses, recent steps, actual search queries and candidate captures,
-accepted-finding/source counts, and explicit evidence gaps or failures. Active
+specialist statuses, accepted-finding/source counts, and a visible notice when
+checks fail. Raw search queries, candidate captures and technical evidence gaps
+appear only inside collapsed **Technical details**, with each step listed once. Active
 research steps take precedence over a Store specialist's phase message, so market
 research is not mislabeled as final saving. Empty report placeholders wait until
 a draft or accepted findings arrive. Elapsed time is not an ETA or a fabricated
@@ -429,6 +478,14 @@ Cancellation and the ability to leave and return stay visible. Additional scope
 and runtime information expands under **Analysis details**. This view consumes
 existing job events, exposes no private model reasoning, and starts no extra AI
 or search calls. Decorative animation respects reduced-motion preferences.
+
+Progress copy describes the work in business language, without response IDs,
+worker terminology or repeated billing/implementation explanations. Search-use
+counts and per-page scanner messages expand on demand. Failed-page summaries,
+partial research, cancellation and actionable errors remain visible. Sales import
+notes are collapsed, but rejected rows, their acknowledgement and the replacement
+warning remain beside the explicit import confirmation. Activity History retains
+the owner's saved business updates; it is not removed as if it were a debug log.
 
 The same truthful activity treatment covers **Product analysis** (including its
 listing drafts), **Customer voice**, **Marketplace insights**, and the standalone
@@ -779,6 +836,9 @@ same-job cache hits are marked reused without clearing their saved artifacts.
 Pricing remains limited even for matching GTINs: published offers do not establish
 equivalent pack sizes, taxes, shipping or markets. Its coverage explanation
 distinguishes missing product inputs, no supported exact match and matched pairs.
+Saved results and live activity summarise these technical pricing notes in one
+plain-language message. Original coverage details remain in saved research for
+agent grounding; accepted findings, citations and failure messages are unchanged.
 
 Competitor scans run in parallel only when the
 shared two-operation scan budget has room; otherwise they run sequentially.
@@ -1322,6 +1382,52 @@ automatic synchronisation, stock monitoring, or retention/deletion UI yet.
   or production abuse-prevention service is implemented. Use test data locally;
   production hardening and private-data retention/deletion policies remain required.
 
+## Contact us
+
+The public `/#contact` page is separate from account creation and business
+analysis. Visitors select an enquiry type and enter their name, email, optional
+company and message. No sign-in, website scan or AI call is involved.
+The welcome page and workspace link to it.
+
+`POST /api/contact` validates the submission and emails plain text only to
+`hello@growthpulse.live`. The visitor is the Reply-To address, not the sender or
+recipient; enquiry categories become fixed subject labels. Messages are not
+stored in the application database. The domain mailbox still retains the email,
+so mailbox access and retention must be managed separately. There is no
+automatic acknowledgement email, newsletter enrolment or lead-enrichment workflow.
+
+Email is **disabled by default**. Configure the following privately in the
+server/hosting environment, never in frontend code, GitHub or a chat:
+
+```dotenv
+CONTACT_EMAIL_ENABLED=true
+SMTP_HOST=smtp.titan.email
+SMTP_PORT=587
+SMTP_USER=hello@growthpulse.live
+SMTP_PASSWORD=<enter privately>
+```
+
+Use the SMTP host confirmed by your mailbox provider. Port 587 requires STARTTLS;
+465 uses implicit TLS. Certificate validation stays enabled. Keep `APP_ORIGIN`
+equal to the exact public origin (`https://growthpulse.live` when deployed there).
+Missing SMTP settings while enabled stop startup with field names only.
+Disabled email returns a truthful 503 and a direct-email alternative.
+
+Submissions require the configured Origin, pass a honeypot and strict bounded
+validation, and are limited to five attempts per IP per 15 minutes plus three
+concurrent sends per application instance. These in-process limits reset on
+restart and are not a distributed abuse-prevention service. Keep proxy trust
+disabled until the hosting proxy topology is verified. Server failures retain
+the browser draft; there are no automatic retries. Network interruption can leave
+delivery uncertain, so check before submitting again.
+
+The confirmation means **SMTP accepted the message**, not that inbox delivery was
+verified. After an explicitly authorized deployment and private SMTP setup,
+manually send a non-sensitive contact-form message and confirm it appears in the
+domain mailbox (including checking spam). Confirm Reply-To points to the visitor.
+Also verify a direct inbound email to the mailbox for the hackathon criterion.
+Local mocked tests do not satisfy either live receipt check.
+
 ## Environment
 
 | Variable | Default | Meaning |
@@ -1338,6 +1444,9 @@ automatic synchronisation, stock monitoring, or retention/deletion UI yet.
 | `TRUST_PROXY_HOPS` | `0` | Integer 0-5; set only after verifying the hosting proxy topology |
 | `ANTHROPIC_API_KEY` | unset | Optional server-only Anthropic key; required for live business-agent reviews |
 | `ANTHROPIC_MODEL` | `claude-haiku-4-5` | Tool-capable Claude model available to your Anthropic account |
+| `CONTACT_EMAIL_ENABLED` | `false` | Explicit `true` enables the public contact SMTP sender |
+| `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD` | unset | Provider host, full domain mailbox username and server-only password; required when contact email is enabled |
+| `SMTP_PORT` | `587` | `587` requires STARTTLS; `465` uses implicit verified TLS |
 
 Use the same hostname in the browser and `APP_ORIGIN`; `localhost` and
 `127.0.0.1` are different origins. Invalid configuration stops startup.
@@ -1348,6 +1457,7 @@ Real `.env` files are ignored. Never place secrets in `VITE_*` variables.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/health` | Query the configured database and report its engine/health; no AI claim |
+| POST | `/api/contact` | Public same-origin enquiry email; `{ category, name, email, company?, message, website? }`, with empty honeypot `website` |
 | POST | `/api/auth/register` | Create a local account and session |
 | POST | `/api/auth/login` | Verify credentials and issue a new session |
 | GET | `/api/auth/me` | Retrieve the current user, or 401 |

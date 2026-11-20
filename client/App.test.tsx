@@ -35,6 +35,36 @@ describe("workspace foundation", () => {
 
   const health = { status: "ok", service: "growthpulse-api", database: { engine: "sqlite", status: "ok" } };
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+  it("opens contact directly without loading authentication or business data, and returns to normal entry", async () => {
+    window.history.replaceState(null, "", "/#contact");
+    const fetch = publicFetch();
+    vi.stubGlobal("fetch", fetch);
+    await renderApp();
+    expect(container.querySelector("h1")?.textContent).toBe("Let's talk.");
+    expect(fetch).not.toHaveBeenCalled();
+    await act(async () => {
+      window.history.replaceState(null, "", "/#overview");
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    expect(container.querySelector(".welcome-shell")).not.toBeNull();
+    expect(fetch.mock.calls.map(([path]) => path)).toContain("/api/auth/me");
+    expect(fetch.mock.calls.map(([path]) => path)).toContain("/api/health");
+    expect(container.querySelector('a[href="#contact"]')).not.toBeNull();
+  });
+  it("allows contact navigation even when the account service is unavailable", async () => {
+    const fetch = vi.fn(async () => json({ error: "Service unavailable" }, 503));
+    vi.stubGlobal("fetch", fetch);
+    await renderApp();
+    expect(container.querySelector(".entry-status")).not.toBeNull();
+    expect(container.querySelector('a[href="#contact"]')).not.toBeNull();
+    const count = fetch.mock.calls.length;
+    await act(async () => {
+      window.history.replaceState(null, "", "/#contact");
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    expect(container.querySelector("h1")?.textContent).toBe("Let's talk.");
+    expect(fetch).toHaveBeenCalledTimes(count);
+  });
   it("shows meaningful activity history without database references or raw scan summaries", async () => {
     const business = {
       id: "02a221ee-41f1-46c9-bc96-12401d8dcf73", name: "Fixture shop", website: "", category: "", description: "",
@@ -177,10 +207,10 @@ describe("workspace foundation", () => {
       throw new Error(`Unexpected request: ${path}`);
     }));
     await renderApp();
-    expect(container.querySelector(".journey-stages")?.textContent).toContain("Ready to review");
+    expect(container.querySelector(".journey-stages")).toBeNull();
     await act(async () => [...container.querySelectorAll("button")].find((item) => item.textContent === "Add to my growth plan")!.click());
-    expect(container.querySelector(".journey-stages")?.textContent).toContain("Plan saved");
-    const actLink = container.querySelectorAll<HTMLAnchorElement>(".journey-stages a")[3];
+    expect(container.querySelector(".growth-plan-item")?.textContent).toContain(opportunity.title);
+    const actLink = container.querySelector<HTMLAnchorElement>('nav[aria-label="Main navigation"] a[href^="#actions"]')!;
     expect(actLink.getAttribute("href")).toBe(`#actions?business=${business.id}`);
     await act(async () => {
       window.history.replaceState(null, "", actLink.getAttribute("href")!);
@@ -190,14 +220,18 @@ describe("workspace foundation", () => {
     expect(container.querySelector(".action-workspace ol")?.textContent).toContain("Check measurements.");
     expect(container.querySelector(".products-workspace")).toBeNull();
     expect(container.querySelector('nav[aria-label="Main navigation"] a[href^="#products"]')?.textContent).toBe("Products");
-    expect(container.querySelector('.journey-stages a[aria-current="step"]')?.getAttribute("href")).toBe(`#actions?business=${business.id}`);
+    expect(container.querySelector('nav[aria-label="Main navigation"] a[aria-current="page"]')?.getAttribute("href")).toBe(`#actions?business=${business.id}`);
     const details = container.querySelector<HTMLDetailsElement>(".growth-plan-item")!;
     await act(async () => {
       details.open = true; details.querySelector<HTMLSelectElement>('select[name="status"]')!.value = "completed";
       details.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });
-    expect(container.querySelector(".journey-stages")?.textContent).toContain("Owner updates available");
     expect(container.querySelector(".action-workspace")?.textContent).toContain("No open actions");
+    await act(async () => {
+      window.history.replaceState(null, "", `/#overview?business=${business.id}`);
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    expect(container.querySelector(".journey-stages")?.textContent).toContain("Owner updates available");
   });
 
   it("preserves the old Opportunities route as an alias for My growth plan", async () => {
@@ -251,7 +285,8 @@ describe("workspace foundation", () => {
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     });
     expect(container.querySelector("h1")?.textContent).toBe("WhatsApp Insights");
-    expect(container.textContent).toContain("This module is not implemented yet");
+    expect(container.textContent).toContain("This feature is coming soon");
+    expect(container.textContent).not.toContain("Later analysis modules remain planned");
     expect(container.querySelector('[aria-current="page"]')?.textContent).toContain("WhatsApp Insights");
     await act(async () => {
       window.history.replaceState(null, "", "/#main-content");

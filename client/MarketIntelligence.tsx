@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowRight, BookOpen, Globe2, MessageSquare, Package, Search
 import type { competitorDimensions, ResearchFinding, ResearchReport } from "../shared/research";
 import { MarketplaceCustomerVoice, useCustomerVoiceSummary } from "./MarketplaceCustomerVoice";
 import { SupportingEvidence } from "./BusinessBriefing";
-import { describeLimitation } from "./research-messages";
+import { describeStepLimitations } from "./research-messages";
 import { Badge } from "./components/ui/badge";
 import { BlurFade } from "./components/ui/blur-fade";
 import { Button } from "./components/ui/button";
@@ -74,7 +74,7 @@ export function MarketIntelligence({ report, businessName, renderComparison }: {
   const findings = area === "pricing" ? findingsFor(["pricing"]) : area === "gaps" ? gaps : [];
   const limitations = [...new Set(accepted.steps.filter((step) =>
     area === "pricing" ? step.agent === "pricing" : area === "gaps" ? step.agent === "opportunity" : false)
-    .flatMap((step) => step.limitations).map(describeLimitation))];
+    .flatMap(describeStepLimitations))];
   return <section className="market-intelligence" aria-label={`Market intelligence for ${businessName}`}>
     <div className="dashboard-intro"><div>
       {area !== "overview" && <Button variant="ghost" onClick={() => navigate("overview")}><ArrowLeft />Market overview</Button>}

@@ -17,6 +17,7 @@ const names: Record<string, SalesField> = {
   invoicedate: "date", orderdate: "date", saledate: "date", date: "date", stockcode: "sku", sku: "sku",
   description: "name", product: "name", productname: "name", quantity: "quantity", qty: "quantity",
   unitprice: "price", unitsellingprice: "price", price: "price", discount: "discount",
+  linediscountamount: "discount",
   currency: "currency", status: "status",
 };
 function mappedHeader(header: string): SalesField | null {
@@ -26,6 +27,22 @@ function mappedHeader(header: string): SalesField | null {
 function suggestMapping(headers: string[]): SalesMapping {
   const suggested = headers.map(mappedHeader);
   return suggested.map((field) => field && suggested.filter((candidate) => candidate === field).length === 1 ? field : null);
+}
+function inspectMapping(headers: string[]) {
+  const suggestions = suggestMapping(headers);
+  const issues: { column: number; field: SalesField; reason: "duplicate" | "unit_price" | "discount_amount" }[] = [];
+  headers.forEach((header, column) => {
+    const field = mappedHeader(header);
+    if (field && suggestions[column] === null) issues.push({ column, field, reason: "duplicate" });
+    else if (headerKey(header) === "price") {
+      suggestions[column] = null;
+      issues.push({ column, field: "price", reason: "unit_price" });
+    } else if (headerKey(header) === "discount") {
+      suggestions[column] = null;
+      issues.push({ column, field: "discount", reason: "discount_amount" });
+    }
+  });
+  return { suggestions, issues };
 }
 function approvedMapping(headers: string[], mapping?: SalesMapping): SalesMapping {
   const columns = mapping === undefined ? headers.map(mappedHeader) : salesMappingSchema.parse(mapping);
@@ -127,7 +144,7 @@ export async function readSalesHeaders(buffer: Buffer, format: "csv" | "xlsx") {
   // Validate the entire upload, but never return data rows or store the raw file.
   for await (const { values } of salesRows(buffer, format)) headers ??= values;
   if (!headers) throw new SalesError(400, "The file must contain column headings.");
-  return { headers, suggestions: suggestMapping(headers) };
+  return { headers, ...inspectMapping(headers) };
 }
 export async function readSalesFile(buffer: Buffer, format: "csv" | "xlsx", currency: string, mapping?: SalesMapping): Promise<SalesSnapshot> {
   analyticsCurrency.parse(currency);

@@ -60,7 +60,9 @@ describe("connected growth journey", () => {
     expect(container.querySelector(".journey-stages")?.textContent).toContain("Partial research saved");
     expect(container.querySelector(".journey-stages a:nth-child(2) svg")).toBeNull();
     expect(container.querySelector(".journey-summary")?.textContent).toContain("1Open plan actions");
-    expect(container.querySelector(".journey-chapters")?.textContent).toContain("Your action workspace");
+    expect(container.querySelector(".journey-chapters")).toBeNull();
+    expect(container.querySelector('[aria-label="Weekly Growth Review"]')).toBeNull();
+    expect(container.querySelector(".journey-next")!.compareDocumentPosition(container.querySelector(".journey-stages")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(container.querySelectorAll(".journey-stages a")[3].getAttribute("href")).toBe(`#actions?business=${business.id}`);
     expect(container.querySelector(".journey-stages a[href^='#products']")).toBeNull();
     expect(fetch.mock.calls.every(([, options]) => !options?.method)).toBe(true);
@@ -118,7 +120,7 @@ describe("connected growth journey", () => {
     expect(container.querySelector("input")).toBe(input);
     expect(container.querySelector(".journey-next")).toBeNull();
     expect(container.querySelector(".journey-chapters")).toBeNull();
-    expect(container.querySelector(".journey-stages a")?.getAttribute("href")).toBe(`#overview?view=business&business=${business.id}`);
+    expect(container.querySelector(".journey-stages")).toBeNull();
   });
   it("clears task-specific parameters when switching business, including the new-profile route", async () => {
     fetcher(); await render("products");
@@ -133,7 +135,17 @@ describe("connected growth journey", () => {
     expect(container.querySelector(".journey-action-list a")?.getAttribute("href")).toBe(`#actions?business=${business.id}&action=${opportunity.id}`);
     expect(container.querySelector(".journey-review")?.textContent).toContain("not measured business growth");
     expect(container.querySelector(".journey-results")?.textContent).toContain("what-if projections are not actual results");
-    expect(container.querySelector('.journey-stages a[aria-current="step"]')?.getAttribute("href")).toBe(`#progress?business=${business.id}`);
+    expect(container.querySelector(".journey-stages")).toBeNull();
+    expect(container.querySelectorAll('[aria-label="Weekly Growth Review"]')).toHaveLength(1);
+  });
+  it.each(["website", "products", "intelligence", "growth", "actions", "simulator", "activity"])("keeps %s focused without repeating the overview or fetching unrelated snapshots", async (section) => {
+    const fetch = fetcher(); await render(section);
+    expect(container.querySelectorAll('[aria-label="Active business"]')).toHaveLength(1);
+    expect(container.querySelector(".journey-stages")).toBeNull();
+    expect(container.querySelector(".journey-next")).toBeNull();
+    expect(container.querySelector(".journey-summary")).toBeNull();
+    expect(container.querySelector('[aria-label="Weekly Growth Review"]')).toBeNull();
+    expect(fetch.mock.calls.map(([path]) => path)).toEqual(["/api/businesses"]);
   });
   it("does not turn read failures into an empty plan, retries, and handles expired sessions", async () => {
     let failed = true, unauthorized = false;

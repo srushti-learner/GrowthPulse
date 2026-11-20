@@ -10,11 +10,11 @@ import { WeeklyGrowthReview } from "./WeeklyGrowthReview";
 import "./journey.css";
 
 const stages = [
-  { section: "business", label: "Your business", verb: "Understand", detail: "Review your profile and what you sell." },
-  { section: "intelligence", label: "Your market", verb: "Discover", detail: "Explore competitors and customer evidence." },
-  { section: "growth", label: "Your next move", verb: "Decide", detail: "Choose an opportunity and save your plan." },
-  { section: "actions", label: "Your action workspace", verb: "Act", detail: "Follow your chosen actions, review next steps, and record your work." },
-  { section: "progress", label: "Your progress", verb: "Review", detail: "Review your work, then choose the next move." },
+  { section: "business", verb: "Understand" },
+  { section: "intelligence", verb: "Discover" },
+  { section: "growth", verb: "Decide" },
+  { section: "actions", verb: "Act" },
+  { section: "progress", verb: "Review" },
 ] as const;
 
 export function journeyLink(section: string, businessId: string, actionId?: string) {
@@ -44,6 +44,7 @@ export function GrowthJourney({ section, selectedBusinessId, onBusinessSelected,
   const showProfile = home && view === "business";
   const showSetup = home && !showProfile && (view === "setup" || !businesses.length) && !!setup;
   const dashboard = home && !showProfile && !showSetup;
+  const needsSnapshot = dashboard || progress;
 
   function report(error: unknown, update: (message: string) => void) {
     if (error instanceof ApiFailure && error.status === 401) onSessionExpired();
@@ -66,7 +67,7 @@ export function GrowthJourney({ section, selectedBusinessId, onBusinessSelected,
   useEffect(() => {
     const controller = new AbortController();
     setSnapshot(null); setError("");
-    if (!business) { setReading(false); return; }
+    if (!business || !needsSnapshot) { setReading(false); return; }
     setReading(true);
     void Promise.all([
       api(`/api/businesses/${business.id}/products`, productsResponseSchema, { signal: controller.signal }),
@@ -76,7 +77,7 @@ export function GrowthJourney({ section, selectedBusinessId, onBusinessSelected,
     }).catch((error: unknown) => { if (!controller.signal.aborted) report(error, setError); })
       .finally(() => { if (!controller.signal.aborted) setReading(false); });
     return () => controller.abort();
-  }, [business?.id, section, reload, revision, onSessionExpired]);
+  }, [business?.id, section, needsSnapshot, reload, revision, onSessionExpired]);
 
   const saved = snapshot?.businessId === business?.id ? snapshot : null;
   const growth = saved?.growth;
@@ -104,8 +105,6 @@ export function GrowthJourney({ section, selectedBusinessId, onBusinessSelected,
 
   return <section className="growth-journey" aria-label="Your growth journey">
     <div className="journey-toolbar">
-      <div><p className="section-eyebrow">ONE BUSINESS. ONE CONNECTED JOURNEY.</p>
-        <p className="journey-caption">{home ? "Pick up where you left off." : "Your context travels with you."}</p></div>
       <div className="journey-business">
         <label>Active business<select aria-label="Active business" value={business?.id ?? ""} disabled={loading} onChange={(event) => {
           setLoadError(""); onBusinessSelected(event.target.value);
@@ -121,22 +120,12 @@ export function GrowthJourney({ section, selectedBusinessId, onBusinessSelected,
       </div>
     </div>
     {loadError && <p role="alert" className="form-error">{loadError} <button type="button" className="text-button" onClick={() => setReload((value) => value + 1)}>Reload journey</button></p>}
-    <nav className="journey-stages" aria-label="Growth journey stages">
-      {stages.map((stage, index) => <a key={stage.section}
-        href={business ? journeyLink(stage.section, business.id) : stage.section === "business" ? "#overview?view=setup&new=1" : `#${stage.section}`}
-        aria-current={section === stage.section || stage.section === "business" && (section === "website" || showProfile || showSetup) ? "step" : undefined}>
-        <span className="journey-stage-number">{recorded[index] ? <CheckCircle2 aria-label="Saved record available" /> : String(index + 1).padStart(2, "0")}</span>
-        <span><strong>{stage.verb}</strong><small>{loading || reading ? "Loading saved progress..." : statuses[index]}</small></span>
-      </a>)}
-    </nav>
     {error && <p role="alert" className="form-error">Your saved journey could not be loaded: {error} <button type="button" className="text-button" onClick={() => setReload((value) => value + 1)}>Retry saved progress</button></p>}
     {showProfile && !loadError && profile}
     {(home || progress) && loading && <p role="status">Loading your saved journey...</p>}
     {(home || progress) && !loading && !loadError && <>
       {reading && <p role="status">Reading saved catalogue and plan...</p>}
       {showSetup && !loadError && setup}
-      {(dashboard || progress) && business && saved && !error && <WeeklyGrowthReview key={business.id}
-        businessId={business.id} plan={saved.growth.plan} expanded={progress} onSessionExpired={onSessionExpired} />}
       {dashboard && nextMove && !error && <Card className="journey-next">
         <CardHeader><CardDescription><Compass /> YOUR NEXT STEP{business ? ` / ${business.name}` : ""}</CardDescription>
           <CardTitle><h2>{nextMove.title}</h2></CardTitle></CardHeader>
@@ -148,9 +137,14 @@ export function GrowthJourney({ section, selectedBusinessId, onBusinessSelected,
         <Card><CardContent><strong>{pending.length}</strong><span>Open plan actions</span></CardContent></Card>
         <Card><CardContent><strong>{completed.length}</strong><span>Owner-marked complete</span></CardContent></Card>
       </div>}
-      {dashboard && business && <div className="journey-chapters">{stages.map((stage, index) => <a key={stage.section} href={journeyLink(stage.section, business.id)}>
-        <span className="section-eyebrow">CHAPTER {index + 1}</span><h3>{stage.label}<ArrowRight /></h3><p>{stage.detail}</p>
-      </a>)}</div>}
+      {dashboard && business && <nav className="journey-stages" aria-label="Growth journey stages">
+        {stages.map((stage, index) => <a key={stage.section} href={journeyLink(stage.section, business.id)}>
+          <span className="journey-stage-number">{recorded[index] ? <CheckCircle2 aria-label="Saved record available" /> : String(index + 1).padStart(2, "0")}</span>
+          <span><strong>{stage.verb}</strong><small>{loading || reading ? "Loading saved progress..." : statuses[index]}</small></span>
+        </a>)}
+      </nav>}
+      {progress && business && saved && !error && <WeeklyGrowthReview key={business.id}
+        businessId={business.id} plan={saved.growth.plan} expanded onSessionExpired={onSessionExpired} />}
       {progress && business && saved && <section className="journey-review" aria-labelledby="journey-review-heading">
         <h2 id="journey-review-heading">Your work so far.</h2>
         <p>These are your saved planning updates, not measured business growth. Marking an action complete does not verify its outcome.</p>

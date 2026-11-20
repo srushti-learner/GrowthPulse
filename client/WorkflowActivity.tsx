@@ -20,11 +20,11 @@ export function WorkflowActivity({ title, message, startedAt, updatedAt, guidanc
     <div className="analysis-activity-heading">
       <span className="analysis-beacon" aria-hidden="true"><Activity /></span>
       <div><p className="section-eyebrow">{title}</p>
-        {elapsed !== null && <span className="analysis-elapsed">{Math.floor(elapsed / 60)}m {elapsed % 60}s elapsed - Not an estimate</span>}
+        {elapsed !== null && <span className="analysis-elapsed">{Math.floor(elapsed / 60)}m {elapsed % 60}s elapsed</span>}
       </div>
     </div>
     <div className="agent-progress"><p role="status">{message}</p></div>
-    {quiet && <p className="analysis-quiet">No new recorded update for a while. The current step may still be working; this is not a completion estimate. Check saved status if the connection fails.</p>}
+    {quiet && <p className="analysis-quiet">No recent update. The current step may still be running.</p>}
     {!!counts.length && <dl className="analysis-counts" aria-live="polite" aria-atomic="true">{counts.map((count) =>
       <div key={count.label}><dt>{count.label}</dt><dd>{count.value}</dd></div>)}</dl>}
     {!!stages.length && <ol className="analysis-stages">{stages.map((stage) =>

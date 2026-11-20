@@ -21,7 +21,28 @@
 .marketplace-customer-voice label { display: grid; gap: .5rem; }
 .marketplace-customer-voice select { width: 100%; min-width: 0; }
 .marketplace-customer-voice blockquote { margin: 1rem 0; padding-left: 1rem; border-left: 2px solid var(--border); }
-.marketplace-customer-voice .marketplace-listing { margin: 1rem 0; }
+.marketplace-customer-voice .marketplace-listing { margin: 0; }
+.marketplace-customer-voice h4 { margin: 0 0 .5rem; font-size: 1.1rem; line-height: 1.4; font-weight: 500; }
+.marketplace-customer-voice h5 { margin: 1rem 0 .5rem; font-size: 1rem; line-height: 1.5; font-weight: 500; }
+.marketplace-customer-voice .feedback-intro h4 { font-size: 1.3rem; }
+.feedback-intro p, .feedback-sample p { margin: 0; }
+.feedback-empty, .feedback-takeaway { padding: 1.25rem; border: 1px solid var(--border); border-radius: .75rem; background: var(--card); }
+.feedback-empty p { max-width: 75ch; }
+.feedback-empty > :last-child, .feedback-takeaway > :last-child { margin-bottom: 0; }
+.feedback-takeaway { margin: 1rem 0; }
+.feedback-takeaway h5 { margin-top: 0; }
+.marketplace-customer-voice .feedback-quote { padding: .25rem 0 .25rem 1rem; border-left-color: var(--primary); }
+.feedback-quote > p:first-child { margin: 0 0 .5rem; }
+.feedback-quote > .field-note { margin: .25rem 0; }
+.feedback-quote > a { display: block; font-size: .85rem; line-height: 1.5; }
+.feedback-quote-source { margin-top: .5rem; font-size: .8rem; }
+.feedback-quote-source summary, .feedback-listing-details summary, .marketplace-source-review > summary { cursor: pointer; }
+.marketplace-feedback-tools { padding-top: 1.25rem; border-top: 1px solid var(--border); }
+.marketplace-feedback-tools .marketplace-results, .marketplace-feedback-tools .marketplace-research-controls { margin-top: 0; }
+.marketplace-feedback-tools .marketplace-source-review > summary { font-weight: 500; }
+.marketplace-feedback-tools .marketplace-listings { margin-top: 1rem; }
+.marketplace-feedback-tools .marketplace-listing h3 { font-size: 1rem; line-height: 1.5; letter-spacing: normal; }
+.feedback-listing-details { margin-top: .75rem; font-size: .85rem; }
 .feedback-progress { padding: 1rem; border: 1px solid var(--border); border-radius: 1rem; }
 .feedback-progress ol { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: .75rem; list-style: none; padding: 0; margin: 0 0 1rem; }
 .feedback-progress li { padding-top: .5rem; border-top: 3px solid var(--border); font-size: .85rem; }

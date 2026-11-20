@@ -8,10 +8,10 @@ import { WorkflowActivity } from "./WorkflowActivity";
 
 const statusLabels = { complete: "Scan complete", partial: "Partial scan", failed: "Scan failed" } as const;
 const scanMessages = {
-  robots: "Checking the publisher's robots rules before reading allowed pages.",
-  discovering: "Discovering public pages through the website's sitemaps.",
-  reading: "Reading permitted public HTML and extracting website evidence.",
-  saving: "Saving the captured evidence and checking website product records.",
+  robots: "Checking which public pages can be read.",
+  discovering: "Finding your website's public pages.",
+  reading: "Reading your business and product information.",
+  saving: "Saving your website findings and products.",
 };
 export function WebsiteWorkspace({ authenticated, onSessionExpired, selectedBusinessId, onBusinessSelected, businessManaged = false }: {
   authenticated: boolean; onSessionExpired: () => void; selectedBusinessId?: string;
@@ -148,13 +148,15 @@ export function WebsiteWorkspace({ authenticated, onSessionExpired, selectedBusi
           <button type="submit" className="primary-link">{busy ? "Scanning public pages..." : result ? "Rescan website" : "Scan website"}<Icon name="arrow" /></button>
         </fieldset>
         {busy && <WorkflowActivity title="Website scan"
-          message={progress ? scanMessages[progress.stage] : "Requesting the public scan. Waiting for the first recorded update."}
+          message={progress ? scanMessages[progress.stage] : "Starting your website scan..."}
           startedAt={progress?.startedAt} updatedAt={progress?.updatedAt}
           counts={progress ? [{ label: "Pages captured", value: progress.pages }, { label: "Product records found", value: progress.products },
             { label: "Pages unavailable", value: progress.failures }] : []}
-          guidance={`Keep this page open: this scan is request-scoped, not a background AI job. Reading is limited to ${scanLimits.milliseconds / 1000} seconds; saving may take longer. You can review the safety details alongside while it works.`}>
-          {progress && <p className="field-note">Current source: {progress.url}</p>}
-          {progress?.lastFailure && <p className="field-note">Latest page limitation: {progress.lastFailure}</p>}
+          guidance="Keep this page open until your scan finishes.">
+          {progress && <details className="agent-sources scan-progress-details"><summary>Scan details</summary>
+            <p className="field-note">Current source: {progress.url}</p>
+            {progress.lastFailure && <p className="field-note">Latest page limitation: {progress.lastFailure}</p>}
+          </details>}
           <button type="button" className="text-button" onClick={() => {
             running.current?.abort(); setBusy(false); setProgress(null);
             setError("Scan cancelled. Check saved scans before retrying in case saving had already completed.");
@@ -162,7 +164,7 @@ export function WebsiteWorkspace({ authenticated, onSessionExpired, selectedBusi
         </WorkflowActivity>}
         {error && <p role="alert" className="form-error">{error}</p>}
       </form>
-      <aside className="ownership-card"><Icon name="shield" /><h2>Your agent's evidence tool.</h2><p>Review saved website findings without AI interpretation. Prefer a guided review? Your business agent can use this same safe scanner for you.</p><hr /><p>Robots restrictions, private networks, and unsafe redirects are blocked. No login, JavaScript execution, website changes, or background monitoring. A blocked page stays unknown, not invented.</p><p><a href="#overview?view=business" className="text-button">{authenticated ? "Open your business agent" : "Create a profile to meet your business agent"} <Icon name="arrow" /></a></p></aside>
+      <aside className="ownership-card"><Icon name="shield" /><h2>Your agent's evidence tool.</h2><p>Review saved website findings without AI interpretation. Prefer a guided review? Your business agent can use this same safe scanner for you.</p><hr /><p>Only permitted public pages are read. Nothing on your website is changed.</p><details className="agent-sources"><summary>What the scanner can read</summary><p>Robots restrictions, private networks, and unsafe redirects are blocked. No login, JavaScript execution, website changes, or background monitoring. A blocked page stays unknown, not invented.</p></details><p><a href="#overview?view=business" className="text-button">{authenticated ? "Open your business agent" : "Create a profile to meet your business agent"} <Icon name="arrow" /></a></p></aside>
     </div>
     {businessId && <section className="profile-card scan-history" aria-labelledby="scan-history-heading">
       <div className="card-heading"><h2 id="scan-history-heading">Saved scans</h2><p>Latest 20 runs for this business. Previous evidence is preserved; rescans do not rewrite it.</p></div>
@@ -179,7 +181,7 @@ export function WebsiteWorkspace({ authenticated, onSessionExpired, selectedBusi
       <p className="scan-meta" role={result.status === "failed" ? "alert" : "status"}>{result.pages.length} HTML pages captured. {"id" in result ? "Saved locally to this business." : "Preview only, not saved."}</p>
       <p className="scan-meta">{result.requestedUrl}<br /><time dateTime={result.completedAt}>{new Date(result.completedAt).toLocaleString()}</time></p>
       {result.catalogue && <div className="scan-catalogue">
-        <p role="status">{result.catalogue.created} products added, {result.catalogue.updated} listings refreshed, {result.catalogue.unchanged} unchanged, {result.catalogue.skipped} source records needing attention. No import confirmation needed.</p>
+        <p role="status">{result.catalogue.created} products added, {result.catalogue.updated} listings refreshed, {result.catalogue.unchanged} unchanged, {result.catalogue.skipped} source records needing attention.</p>
         {"businessId" in result && <a className="primary-link" href={`#products?business=${result.businessId}`}>Open your products<Icon name="arrow" /></a>}
         {!!result.catalogue.issues.length && <details className="agent-sources"><summary>Product records needing attention ({result.catalogue.skipped})</summary>
           <ul>{result.catalogue.issues.map((issue, index) => <li key={index}><strong>{issue.name}</strong> · {issue.reference}<br />{issue.message}</li>)}</ul>
@@ -187,7 +189,7 @@ export function WebsiteWorkspace({ authenticated, onSessionExpired, selectedBusi
         </details>}
       </div>}
       {"businessId" in result && !result.catalogue && <p className="field-note">No products were added automatically by this run. If no supported product data was captured, add missing products manually in <a href={`#products?business=${result.businessId}`}>Products</a>.</p>}
-      {result.failures.length > 0 && <div className="form-error"><h3>Pages we could not read</h3><ul>{result.failures.map((failure) => <li key={failure.url}><strong>{failure.url}</strong><br />{failure.message}</li>)}</ul></div>}
+      {result.failures.length > 0 && <div className="form-error"><h3>{result.failures.length} {result.failures.length === 1 ? "page could" : "pages could"} not be read</h3><p>Some website information may be missing.</p><details className="agent-sources scan-page-issues"><summary>View page issues</summary><ul>{result.failures.map((failure) => <li key={failure.url}><strong>{failure.url}</strong><br />{failure.message}</li>)}</ul></details></div>}
       {!!result.notes.length && <details className="agent-sources scan-details"><summary>Scan details</summary><ul className="scan-notes">{result.notes.map((note) => <li key={note}>{note}</li>)}</ul></details>}
       <div className="scan-pages">{result.pages.map((page) => <article key={page.url} className="scan-page">
         <div className="card-heading"><h3>{page.title || "No HTML title provided"}</h3><a href={page.url} target="_blank" rel="noopener noreferrer">{page.url}</a><p>Captured <time dateTime={page.capturedAt}>{new Date(page.capturedAt).toLocaleString()}</time></p></div>

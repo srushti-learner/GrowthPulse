@@ -1,0 +1,56 @@
+.contact-page { min-height: 100svh; display: flex; flex-direction: column; background: radial-gradient(ellipse at 20% 35%, #30233e55, transparent 50%), #111016; color: #f0edf8; }
+.contact-header { width: min(1180px, 100%); margin: 0 auto; padding: 28px 40px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.contact-header .brand { padding: 0; font-size: 21px; }
+.contact-header .brand-mark { background: #b6a0ee; color: #20172d; }
+.contact-back { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; font-size: 13px; color: #c9c1d7; }
+.contact-back svg { width: 16px; height: 16px; }
+.contact-layout { width: min(1180px, 100%); margin: 30px auto auto; padding: 20px 40px 60px; display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 64px; align-items: start; }
+.contact-intro { padding-top: 24px; min-width: 0; }
+.contact-eyebrow { display: flex; align-items: center; gap: 10px; color: #c3b0fb; font-size: 11px; letter-spacing: 2px; }
+.contact-eyebrow svg { width: 18px; height: 18px; }
+.contact-intro h1 { font-size: clamp(42px, 5vw, 64px); font-weight: 500; line-height: 1.1; letter-spacing: -2px; margin: 24px 0; }
+.contact-intro > p:not(.contact-eyebrow) { font-size: 15px; color: #bbb3c9; line-height: 1.8; }
+.contact-email { display: flex; gap: 16px; align-items: center; margin: 36px 0; }
+.contact-email > span { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; background: #2a2238; color: #c3b0fb; border-radius: 12px; }
+.contact-email svg { width: 21px; height: 21px; }
+.contact-email h2 { margin: 0 0 6px; font-size: 14px; font-weight: 500; }
+.contact-email a { color: #d1befb; font-size: 15px; overflow-wrap: anywhere; }
+.contact-card { min-width: 0; background: #1b1823; border: 1px solid #3b3248; border-radius: 20px; padding: 30px; box-shadow: 0 18px 50px #08050d33; }
+.contact-card fieldset { padding: 0; margin: 0; min-width: 0; border: 0; }
+.contact-card legend { color: #f0edf8; font-size: 16px; font-weight: 550; margin-bottom: 10px; }
+.contact-categories > p { font-size: 12px; color: #bbb3c9; margin: 0 0 18px; }
+.contact-categories > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 28px; }
+.contact-category { display: flex; gap: 9px; align-items: flex-start; border: 1px solid #504459; border-radius: 10px; padding: 13px 11px; cursor: pointer; transition: background-color .15s, border-color .15s; }
+.contact-category:hover { background: #2a2235; }
+.contact-category.selected { background: #302441; border-color: #bba0ef; }
+.contact-category input { width: 16px; height: 16px; accent-color: #c3b0fb; flex-shrink: 0; margin-top: 2px; }
+.contact-category > span { display: grid; gap: 5px; min-width: 0; }
+.contact-category strong { font-size: 12px; font-weight: 550; line-height: 1.5; }
+.contact-category small { font-size: 11px; color: #c2b8d0; line-height: 1.5; }
+.contact-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 14px; }
+.contact-field { display: flex; flex-direction: column; align-items: stretch; gap: 8px; font-size: 13px; color: #eee7f6; min-width: 0; }
+.contact-field > label { display: block; font: inherit; }
+.contact-full-field { grid-column: 1 / -1; }
+.contact-fields label > span:not(.contact-field-error) { color: #bbb3c9; font-size: 11px; }
+.contact-fields input, .contact-fields textarea { width: 100%; min-width: 0; border: 1px solid #61516c; border-radius: 8px; padding: 12px; min-height: 44px; background: #14111b; color: #f0edf8; font: inherit; }
+.contact-fields textarea { resize: vertical; line-height: 1.6; }
+.contact-fields small { font-size: 11px; color: #bbb3c9; line-height: 1.6; }
+.contact-fields [aria-invalid="true"] { border-color: #f6a2ad; }
+.contact-field-error, .contact-error { color: #ffc0c8; font-size: 12px; line-height: 1.6; }
+.contact-error { background: #3c202b; border: 1px solid #885363; border-radius: 8px; padding: 12px; margin-top: 20px; }
+.contact-honeypot { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.contact-submit { display: inline-flex; align-items: center; justify-content: center; gap: 20px; width: 100%; min-height: 48px; padding: 12px 20px; border: 1px solid #d5c6f4; border-radius: 9px; background: #c6b5ed; color: #21172e; font: inherit; font-size: 14px; font-weight: 600; margin-top: 24px; cursor: pointer; }
+.contact-submit:hover:not(:disabled) { background: #dfd1fd; }
+.contact-submit svg { width: 18px; height: 18px; }
+.contact-submit:disabled { opacity: .65; cursor: wait; }
+.contact-privacy { margin: 14px 0 0; font-size: 11px; line-height: 1.7; color: #bbb3c9; }
+.contact-page input:focus-visible, .contact-page textarea:focus-visible, .contact-page button:focus-visible, .contact-page a:focus-visible { outline: 2px solid #c3b0fb; outline-offset: 4px; }
+.contact-success { padding: 24px 0; }
+.contact-success-icon { width: 52px; height: 52px; display: grid; place-items: center; border-radius: 50%; background: #24372f; color: #abe5c5; margin-bottom: 24px; }
+.contact-success h2 { font-size: 28px; font-weight: 500; line-height: 1.3; }
+.contact-success p { margin-top: 18px; color: #bbb3c9; font-size: 14px; line-height: 1.8; }
+.contact-success > a { width: 100%; margin-top: 16px; }
+.contact-footer { width: min(1180px, 100%); margin: 0 auto; max-width: none; padding: 20px 40px; border: 0; font-size: 10px; letter-spacing: .5px; color: #bbb3c9; }
+@media (max-width: 900px) { .contact-layout { gap: 30px; grid-template-columns: minmax(0, .7fr) minmax(0, 1.3fr); } .contact-card { padding: 24px; } }
+@media (max-width: 700px) { .contact-header { padding: 20px; flex-wrap: wrap; } .contact-layout { grid-template-columns: 1fr; gap: 24px; margin-top: 0; padding: 0 20px 32px; } .contact-intro { padding-top: 12px; } .contact-intro h1 { margin: 16px 0; } .contact-email { margin: 24px 0 16px; } .contact-card { padding: 22px 18px; } .contact-fields { grid-template-columns: 1fr; } .contact-footer { padding: 20px; } }
+@media (prefers-reduced-motion: reduce) { .contact-category { transition: none; } }

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { trafficImportSchema } from "./traffic.js";
+import { growthOpportunityId } from "./growth.js";
 
 // Monetary amounts use integer ten-thousandths of the selected currency.
 export const moneyScale = 10_000;
@@ -41,6 +42,7 @@ export const scenarioInputSchema = z.object({
   ordersPct: z.number().min(-100).max(300),
   aovPct: z.number().min(-100).max(300),
   costPct: z.number().min(-100).max(300),
+  opportunityId: growthOpportunityId.optional(),
 }).strict().refine((value) => value.start <= value.end, "The end date must follow the start date.");
 export type ScenarioInput = z.infer<typeof scenarioInputSchema>;
 export const savedScenarioSchema = z.object({
