@@ -307,7 +307,9 @@ describe("workspace foundation", () => {
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     });
     expect(container.querySelector("h1")?.textContent).toBe("WhatsApp Insights");
-    expect(container.textContent).toContain("This feature is coming soon");
+    expect(container.textContent).toContain("The WhatsApp Business connector is planned, not connected");
+    expect(container.textContent).toContain("No messages or private chats are being read");
+    expect(container.querySelector('a[href="#simulator"]')).not.toBeNull();
     expect(container.textContent).not.toContain("Later analysis modules remain planned");
     expect(container.querySelector('[aria-current="page"]')?.textContent).toContain("WhatsApp Insights");
     await act(async () => {

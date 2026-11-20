@@ -232,8 +232,8 @@ export function GrowthIntelligence({ business, onSessionExpired, onPlanSaved, ac
             : `${value === "completed" ? "Marked complete" : "Dismissed"} (${data.plan.filter((item) => item.status === value).length})`}</Button>)}
       </div>
       {!visible.length && <Card><CardContent><h3>{!data.plan.length ? "No chosen actions yet." : workView === "active" ? "No open actions." : `No ${workView} actions.`}</h3>
-        <p>{!data.plan.length ? "Choose an opportunity in Decide and add it to your plan. Your product catalogue stays separate."
-          : "Use the filters to review your saved work, or return to Decide to choose another action."}</p>
+        <p>{!data.plan.length ? "Choose an opportunity in My growth plan and add it to your plan. Your product catalogue stays separate."
+          : "Use the filters to review your saved work, or return to My growth plan to choose another action."}</p>
         <Button asChild variant="outline"><a href={journeyLink("growth", business.id)}>Review opportunities<ArrowRight /></a></Button></CardContent></Card>}
       {visible.map((item, index) => <details className="agent-sources growth-plan-item" open={index === 0} key={item.opportunity.id} id={`growth-action-${item.opportunity.id}`}
         onToggle={(event) => { if (event.currentTarget.open) setExpandedActionId(item.opportunity.id); }}>

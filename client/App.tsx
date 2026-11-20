@@ -263,8 +263,12 @@ export function App() {
             <section className="empty-state" aria-labelledby="upcoming-heading">
               <span className="empty-symbol"><Icon name={activeSection.icon} /></span>
               <p className="section-eyebrow">COMING SOON</p>
-              <h2 id="upcoming-heading">The next piece of the picture.</h2>
-              <p>This feature is coming soon. You can keep working on your business, products and growth plan.</p>
+              <h2 id="upcoming-heading">{activeSection.id === "whatsapp" ? "Customer conversations, with permission." : "Review improvements before publishing."}</h2>
+              <p>{activeSection.id === "whatsapp"
+                ? "The WhatsApp Business connector is planned, not connected. No messages or private chats are being read. Today, add products manually and use authorized sales or review exports in the existing workspaces."
+                : "Automatic website improvements are planned, not running. Today, review product drafts, approve local catalogue changes, and work through saved actions. Live website edits remain yours to publish."}</p>
+              <a href={activeSection.id === "whatsapp" ? "#simulator" : "#actions"} className="primary-link">
+                {activeSection.id === "whatsapp" ? "Review recorded sales" : "Open my saved actions"} <Icon name="arrow" /></a><br />
               <a href="#future" className="text-button">Explore future features <Icon name="arrow" /></a><br />
               <a href="#overview" className="primary-link">Back to overview <Icon name="arrow" /></a>
             </section>

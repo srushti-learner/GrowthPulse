@@ -214,7 +214,7 @@ export function BusinessAgentReview({ business, autoStart, scanId, scanCapturedA
       <summary className={forMarketComparison ? "primary-link" : undefined}>{forMarketComparison ? <>Build visual comparison<Icon name="arrow" /></>
         : resumable ? "Reconnect to background analysis" : draft ? "Run a new analysis (optional)" : "Start business analysis"}</summary>
       <div className="agent-controls">
-        {!resumable && <><p className="field-note">Starting analysis confirms you own this website or have permission to scan it. Public website evidence goes to Anthropic and research queries go to Tavily. AI and search charges may apply. Nothing is published.</p>
+        {!resumable && <><p className="field-note">Starting analysis confirms you own this website or have permission to scan it. Public website evidence goes to Anthropic and research queries go to Tavily. Store briefing generation includes evidence review and may use one bounded correction and verification. Every call counts toward the research budget. AI and search charges may apply. Nothing is published.</p>
           <details className="agent-sources"><summary>Analysis scope and providers</summary><p>{businessAnalysisDisclosure}</p></details></>}
         <button className="primary-link" type="button" disabled={!resumable && coolingDown} onClick={() => {
           const active = new AbortController(); controller.current?.abort(); controller.current = active;
@@ -247,7 +247,15 @@ export function BusinessAgentReview({ business, autoStart, scanId, scanCapturedA
     {error && <p className="form-error" role="alert">{error}</p>}
     {coolingDown && <p className="field-note" role="status">No new analysis started. Retry available in {Math.ceil((retryAt - now) / 1000)} seconds. Saved findings remain available.</p>}
     {saveError && <p className="form-error" role="alert">{saveError}</p>}
-    {researchOnly && !live && draft && (partial || !!draft.validationIssues?.length) && <p className="field-note" role="status">This saved analysis has limited evidence. Some pages or proposed findings could not be verified.</p>}
+    {!live && draft?.evidenceCoverage && <p className="field-note" role="status">
+      {draft.evidenceCoverage.pagesProvided} pages reviewed; {draft.evidenceCoverage.productRecordsProvided} structured product records provided.
+      {draft.catalogue && <> {draft.catalogue.created} catalogue entries added; {draft.catalogue.updated} listings refreshed.</>}
+    </p>}
+    {researchOnly && !live && draft && (partial || !!draft.validationIssues?.length) && <details className="agent-sources">
+      <summary>Captured scope and review limits</summary><p>This is a saved website sample, not full-site or market coverage. Unavailable pages remain unknown.</p>
+      {!!draft.validationIssues?.length && <p>{partialBriefingNotice}</p>}
+      {draft.evidenceCoverage?.limitations.map((limitation) => <p key={limitation}>{limitation}</p>)}
+    </details>}
     {live && !job?.research && retainedResearch && <p className="field-note">Previously saved findings remain below while the new attempt starts.</p>}
     {displayedResearch && !managementOnly && (!live || !!researchBriefing || displayedResearch.steps.some((step) => step.findings.length || step.profile)) && <ResearchReport report={displayedResearch} businessName={business.name} briefing={researchBriefing}
       initialView={initialView}
@@ -274,7 +282,7 @@ export function BusinessAgentReview({ business, autoStart, scanId, scanCapturedA
       {!!draft.validationIssues?.length && <p className="field-note" role="status">{partialBriefingNotice}</p>}
       {!draft.briefing && !draft.research && !failed && hasFindings && <p className="agent-legacy-note" role="status">This saved result does not include a business briefing. Run a new analysis to generate one; your profile will not be overwritten and no paid request starts automatically.</p>}
       <p className="field-note">{error ? "Previous saved analysis" : completed || draft.briefing ? "Saved analysis" : hasFindings ? "Draft" : "Analysis attempt"} from {new Date(draft.createdAt).toLocaleString()}.</p>
-      {!!draft.suggestions.length && !completed && !failed && <details className="agent-profile-editor"><summary>Review optional profile changes</summary><p className="field-note">These fields are separate from the briefing. Edit them if needed, then save once. Your website and product catalogue will not change.</p><form className="agent-profile-form" onSubmit={(event) => void save(event)}>
+      {!!draft.suggestions.length && !completed && !failed && <details className="agent-profile-editor" open={managementOnly}><summary>Review optional profile changes</summary><p className="field-note">These fields are separate from the briefing. Edit them if needed, then save once. Your website and product catalogue will not change.</p><form className="agent-profile-form" onSubmit={(event) => void save(event)}>
         <fieldset disabled={busy}>
           <legend className="sr-only">Review your business details</legend>
           {draft.suggestions.map((suggestion) => <article className="agent-suggestion" key={suggestion.field}>

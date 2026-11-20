@@ -9,6 +9,7 @@ import { partialBriefingNotice, understandingSchema } from "../shared/understand
 import { modelInputSchema } from "./model-schema.js";
 import { scanResultSchema, type ScanResult } from "../shared/website.js";
 import { AgentError, createAgentModel, createBusinessAgent, providerFailure, type AgentModel, type BusinessAgent } from "./business-agent.js";
+import { contentPolicyVersion } from "./content-quality.js";
 import { ResearchLimit, ResearchStopped, type ResearchJournal } from "./research-store.js";
 import { createTavilySearch, ResearchToolError, type ResearchSearch } from "./tavily-mcp.js";
 import { createWebsiteScanner, type WebsiteScanner } from "./website-scanner.js";
@@ -90,6 +91,7 @@ Keep same-product and alternative-product reviews separate. Preserve owner_expor
 Review-based conclusions must be hypotheses or suggestions, never verified observations, current sentiment or representative customer opinion.
 Every observation detail must be an exact fragment of a cited quote, not an uncited paraphrase. An ID match alone does not establish semantic support.
 Label proposed explanations as hypotheses and actions as suggestions, never verified outcomes. Attribute publisher claims.
+Preserve nutrition and shipping qualifiers exactly: no refined sugar is not sugar-free; dispatch time is not delivery time. A sold-out label does not establish demand volatility, and a discount does not establish margin pressure. Uncaptured reviews are not absent reviews.
 Do not invent customer reviews, audience demographics, sales, demand, stock, margins or performance.
 No relative-price claims, percentages or currency conversions: offer tax, shipping, market, quantities and promotion context are not established.
 Similar names or SKUs do not establish equivalent products. Sampling gaps are not proof of missing products or market opportunities.
@@ -98,7 +100,7 @@ Accepted findings are prior interpretations, not independent evidence. Store Int
 When Store Intelligence is unavailable or failed, state that gap and use only captured evidence; never invent its conclusions.
 Do not include numeric prices, discount percentages, relative-price claims, margin, retention, customer migration, market-share or bestseller claims in findings.
 Published prices and pack descriptions belong in the extractive brand profiles, not inferred cross-product comparisons.
-Keep each detail under 350 characters and each limitation under 250 characters. Do not output private reasoning.
+Keep each detail under 350 characters and each limitation under 250 characters. For suggestions, name the product or business target, one concrete proposed change and the next check needed. Do not repeat an equivalent accepted suggestion under a new title; add a genuinely distinct experiment or return fewer findings. Do not output private reasoning.
 ${correction ? "Correct the rejected findings using the supplied captured evidence and validation paths. Copy an exact supported quote for observations; use hypotheses for interpretations and suggestions for proposed actions. Omit claims that cannot be supported. This is the only correction attempt." : ""}`,
     messages: [{ role: "user", content: JSON.stringify({ ...context, ...(correction ? { correction } : {}) }) }],
     tools: [{
@@ -336,7 +338,7 @@ export function createResearchAgent(options: {
             return { artifact, findings, status: findings.length && !omitted ? "completed" : "limited",
               limitations: [...(omitted ? [partialBriefingNotice] : []), ...own.coverage.limitations].slice(0, 8),
               diagnostic: omitted ? { code: "finding_validation", paths: omitted.map((issue) => issue.path).slice(0, 10) } : null };
-          }, { modelPolicy, merchant });
+          }, { modelPolicy, contentPolicyVersion, merchant });
           return { done: ["store"] };
         })
         .addNode("discovery", async () => {

@@ -30,6 +30,10 @@ export const workStepSchema = z.object({
   sources: z.array(researchSourceSchema).min(1).max(6),
   status: z.enum(workStepStatuses), outcome: z.string().max(1000),
   productId: z.uuid().optional(),
+  targetProducts: z.array(z.object({
+    productId: z.uuid(), name: z.string().min(1).max(300), fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict()).min(1).max(8).refine((targets) => new Set(targets.map((target) => target.productId)).size === targets.length,
+    "Confirmed targets must be distinct.").optional(),
   origin: z.enum(["action", "product", "owner"]).optional(),
 });
 export const growthWorkSchema = z.object({
@@ -38,7 +42,7 @@ export const growthWorkSchema = z.object({
 });
 export const emptyGrowthWork = () => ({ decision: null, selection: null, steps: [] } satisfies GrowthWork);
 export const workProposalOutputSchema = z.object({
-  steps: z.array(z.object({ title: z.string().trim().min(1).max(150), detail: z.string().trim().min(1).max(600), references }).strict()).min(1).max(6),
+  steps: z.array(z.object({ title: z.string().trim().min(1).max(150), detail: z.string().trim().min(1).max(600), references   }).strict()).min(1).max(4),
 }).strict();
 export const workConsentSchema = z.object({ consent: z.literal(true), revision: z.number().int().nonnegative() }).strict();
 export const workSelectionInputSchema = z.object({

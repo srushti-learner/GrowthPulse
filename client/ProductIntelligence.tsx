@@ -186,7 +186,7 @@ export function ProductIntelligence({ businessId, product, products, thumbnail, 
     </CardHeader><CardContent>
       {loading ? <p role="status">Loading saved product intelligence...</p>
         : data && !data.configured ? <p>Product AI analysis is not configured on this server. Catalogue checks and existing saved results remain available.</p>
-        : data && <><p className="field-note">Starting analysis sends this product&apos;s saved catalogue excerpts to Anthropic. AI charges may apply. Nothing will be published.</p>
+        : data && <><p className="field-note">Starting analysis sends this product&apos;s saved catalogue excerpts and any exactly matched page text from the latest saved scan to Anthropic. Up to three AI calls cover generation, evidence review and verification of one bounded text correction. No fresh scan is run. AI charges may apply. Nothing will be published.</p>
           <Button disabled={busy} onClick={() => void analyse()}><Sparkles />{busy ? "Analysing product..." : data.error ? "Retry product analysis" : "Analyse this product"}</Button></>}
     </CardContent></Card>}
     <BlurFade key={area} duration={0.2}>
@@ -212,6 +212,7 @@ export function ProductIntelligence({ businessId, product, products, thumbnail, 
           <section><p className="section-eyebrow">AI DRAFT / EDIT BEFORE SAVING</p>
             {analysis ? <><label>Suggested product title<input maxLength={300} value={rewrite.title} disabled={busy || data?.stale} onChange={(event) => { setRewrite((value) => ({ ...value, title: event.target.value })); setApproved(false); }} /></label>
               <label>Suggested description<textarea rows={8} maxLength={2000} value={rewrite.description} disabled={busy || data?.stale} onChange={(event) => { setRewrite((value) => ({ ...value, description: event.target.value })); setApproved(false); }} /></label>
+              {!rewrite.description.trim() && <p className="field-note">No supported description was drafted. Review the saved sources, then add the exact product type, pack size and intended use. Include ingredients, allergens or benefits only after confirming them; blank is safer than an invented claim.</p>}
               <Evidence evidence={analysis.evidence} references={analysis.result.rewrite.references} /></>
               : <p>Run a product analysis above to create a grounded draft. No claims or product details will be invented to fill gaps.</p>}
           </section></div>
@@ -224,6 +225,7 @@ export function ProductIntelligence({ businessId, product, products, thumbnail, 
             <li>{product.description.trim() ? <Check /> : <CircleHelp />}<span>{product.description.trim() ? "Description recorded" : "Description not recorded in the reviewed catalogue"}</span></li>
             <li>{duplicates.length || !normalizedDescription ? <CircleHelp /> : <Check />}<span>{duplicates.length ? `Same catalogue description also used by: ${duplicates.map((item) => item.name).join(", ")}` : normalizedDescription ? "No exact duplicate description among saved catalogue products" : "Description duplication cannot be checked without a description"}</span></li></ul>
           {analysis && <div className="product-seo-drafts"><h4>Suggested search snippet</h4>
+            <p>Lead with the product type and confirmed distinguishing detail. Keep changing prices, stock and delivery promises out of evergreen search copy.</p>
             <label>SEO title draft<textarea rows={2} maxLength={70} value={rewrite.seoTitle} onChange={(event) => setRewrite((value) => ({ ...value, seoTitle: event.target.value }))} /></label>
             <label>Meta description draft<textarea rows={3} maxLength={170} value={rewrite.metaDescription} onChange={(event) => setRewrite((value) => ({ ...value, metaDescription: event.target.value }))} /></label>
             <Evidence evidence={analysis.evidence} references={analysis.result.rewrite.references} /></div>}
@@ -238,11 +240,13 @@ export function ProductIntelligence({ businessId, product, products, thumbnail, 
             <AttachProductImprovement businessId={businessId} productId={product.id} analysisId={analysis.id} index={index}
               disabled={busy || !!data?.stale} onSessionExpired={onSessionExpired} />
           </CardContent></Card>) : <p>No product-specific AI recommendations saved yet. Analyse this product to identify supported improvements.</p>}
-        <a className="text-button" href="#growth">Open Growth intelligence<ArrowRight /></a>
+        <a className="text-button" href="#growth">Open My growth plan<ArrowRight /></a>
       </div>}
       {area === "performance" && <Card><CardHeader><Badge variant="outline">Not connected</Badge><CardTitle>Measure results, not guesses</CardTitle>
         <CardDescription>No store transactions or product analytics are connected.</CardDescription></CardHeader><CardContent>
         <p>Revenue, units sold, page views, conversion, add-to-cart and returns need authorized commerce or analytics data. Public pages and catalogue completeness cannot establish product performance.</p>
+        <p>Import dated order lines with a consistent SKU in Growth Simulator to review recorded product sales. Page views, add-to-cart and conversion require separate analytics; order totals alone cannot establish them.</p>
+        <Button asChild variant="outline"><a href="#simulator">Bring recorded sales<ArrowRight /></a></Button>
       </CardContent></Card>}
     </BlurFade>
   </section>;

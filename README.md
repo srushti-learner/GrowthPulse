@@ -27,6 +27,11 @@ one need the compiler prerequisites reported by its installer.
 
 ## Dashboard experience
 
+The regional-language preview has been withdrawn; the application uses its
+original English interface and analysis flow. Its additive database migrations
+remain compatible with already-upgraded databases and do not enable language
+selection or rewrite saved reports.
+
 The browser favicon uses the purple GrowthPulse pulse mark in `public/favicon.svg`,
 linked from `index.html` and included in production builds.
 
@@ -88,10 +93,16 @@ buttons sit together without explanatory text between them.
 Products is a separate tool, not the Act destination. Catalogue and simulator
 links are optional within each action; they never infer a product match or
 perform the work. Completion is owner-reported, not measured uplift.
-**Market intelligence** answers what is happening outside the business, not what
-action to take. Its overview shows one accepted external observation and compact
-routes to Competitors, Customer voice, Market trends, Pricing, Product landscape
-and Market gaps. Verified brand profiles, one-topic comparisons, dated published
+**Market intelligence** presents saved external research. Its overview leads with
+an accepted observation when available and also shows the AI's saved suggestions
+and hypotheses with explicit labels and original supporting evidence. If only
+brand profiles are available, it shows their names and relevance instead of a
+negative market-conclusion placeholder. Research failures remain in specialist
+statuses and supporting details, without a repeated generic live-progress warning.
+Browsing these findings does not rerun AI or change saved reports; actions still
+belong in My growth plan. Compact routes lead to Competitors, Customer voice,
+Market trends, Pricing, Product landscape and Market gaps.
+Verified brand profiles, one-topic comparisons, dated published
 price claims and accepted gap hypotheses reuse saved research. Hypotheses are not
 established demand; claims are not market share, sales or relative-price scores.
 The website report does not collect customer reviews. Product-specific
@@ -156,17 +167,77 @@ website/channel work, or a new-product concept. Known product origin is preserve
 as a starting target, not proof that scope is single-product. An explicit AI request
 can classify other recommendations, rank evidence-backed catalogue candidates,
 explain their fit, or report uncertainty without forcing a match. Owners confirm
-or override scope and targets. Changed/deleted product evidence requires review
+or override scope and targets. Each AI candidate selects one issued catalogue
+evidence ID; the server resolves its owning product directly, rather than trusting
+a separately generated product-ID/citation pair. Unissued references, action-only
+references and repeated products are rejected. Changed/deleted product evidence requires review
 and renewed confirmation. Browsing never starts matching or scans.
+Each catalogue product has one canonical matching reference, preventing different
+excerpts from being mistaken for different products. Candidate explanations are
+reviewed against their chosen excerpt; name-only matches are tentative and current
+availability needs owner verification. Scope/count inconsistencies and duplicate
+products have separate, content-free diagnostics and never become saved selections.
+Briefing capture counts come from the application, not generated estimates.
+Product rewrites must not treat truncated excerpts as incomplete live listings,
+guess ambiguous ingredients, or drop the basis of published nutrition values;
+short SEO drafts have deterministic price, numeric-nutrition and volatile-fulfilment
+checks. Excerpts carry field/truncation metadata.
+Consumer drafts also block the unresolved food-label term "Black Resin" when it is
+present in captured ingredients; they do not guess a substitute. Recommendations
+citing sampled excerpts cannot turn truncation into a claim that the live ingredient
+list needs completing, and stock assertions require capture attribution.
+A compact provider protocol is validated locally for exact, unique text paths and
+per-field lengths, avoiding a full-briefing strict-schema grammar-size failure.
+A deterministic fact sheet prepares bounded captured field values before prose
+generation, retaining issued references, capture dates and publisher/owner attribution.
+Cut-off structured fields and ingredient statements are not promoted into complete
+facts. Preparation adds no paid extraction call and does not independently verify
+claims or imply full-site coverage.
+Narrow dietary safeguards prevent `guilt-free` from supporting `gluten-free`,
+and `no refined sugar` from supporting `sugar-free`; factual nutrition-marketing
+phrases such as `nutrient-rich` require attribution rather than implied verification.
+A separate evidence auditor reviews
+every accepted briefing, product draft and action-guidance text field, distinguishing
+sourced facts from interpretations and proposals. It can correct only issued text
+paths, never citations, product identity, scope or status. Corrections receive one
+verification pass covering only changed fields. Each review field gets a fact sheet
+from its selected citations, without the wider evidence pool; correction inputs
+explicitly identify unsupported dietary claims to omit. Edits are committed only after
+verification. Failed optional business sections are withheld as whole sections,
+with recorded validation issues and an omission notice, provided a supported summary
+or insight survives. Provider/protocol failures and a briefing without supported
+findings still fail explicitly. Product analyses and action proposals require all
+their mandatory fields to pass. This model-based support review is not independent
+fact verification and cannot guarantee elimination of hallucinations.
 
 **Generate action-specific steps** sends the actual saved recommendation and confirmed
-target excerpts to Anthropic; it does not reuse a generic product analysis. AI
-charges may apply. Draft supporting steps stay under the original action, with
+target excerpts to Anthropic; it does not reuse a generic product analysis. Scope
+guidance and step generation each allow up to four AI calls: one initial response
+and, only for overlong strings with valid provenance, one bounded shortening
+correction, an evidence review and, only when quality text was corrected, a verification
+pass. The corrections cannot change scope, IDs, citations or other fields.
+Provider failures and provenance errors are not retried. The UI discloses possible
+additional charges before each request. Supporting steps carry server-controlled
+`targetProducts` snapshots (owned IDs, exact names and fingerprints), displayed as
+confirmed action targets separately from generated prose. Shortening and evidence
+corrections cannot edit those identities; older saved steps remain compatible.
+Steps cannot include numeric currency or percentage estimates; owners supply
+current prices, costs and success thresholds instead. Draft supporting steps stay under the original action, with
 owner-recorded draft/approved/implemented/result states. Recording a result requires
 notes; it is not verified uplift or automatic attribution. Manual supporting steps
 remain available without AI. Target changes reset unapproved action-generated
 drafts; reviewed steps must be returned to draft first. Plan revisions guard
 concurrent updates, and existing saved plans do not need reanalysis.
+
+Reviewer comparisons are opt-in and never change the paid default:
+`npm run benchmark:agents -- --input /local/cases.json --output /local/new-report.json --models claude-haiku-4-5,claude-sonnet-4-6 --max-calls 16`.
+Inputs must follow `benchmarkCasesSchema` in `server/agent-benchmark.ts` and use
+bounded public or authorized local evidence. The report separates useful accepted
+fields, partial results, safe rejections and failures, and includes source excerpts
+for manual audit. Literal regression checks are not proof of factual correctness.
+Latency and measured tokens are reported; tokens are a cost proxy, not a billing
+total. Output is created exclusively with owner-only permissions; keep reports
+outside the repository. Existing reports are never overwritten.
 
 Products separates **Work on this growth action** from **Review products independently**.
 Independent product recommendations remain product-only. Owners may add one as
@@ -628,6 +699,16 @@ full requested allowance when usage is unavailable). It uses the same deadline
 and counts toward the existing durable model-call cap; it cannot bypass an
 exhausted budget. A failed repair omits the still-invalid sections, records that
 omission and preserves independent valid findings; it never accepts an incomplete rewrite.
+Accepted text then receives a mandatory evidence review, with at most one text-only
+quality correction and one verification call (2,400 output tokens per review call).
+The Store specialist therefore uses at most five model calls: scanner request,
+briefing, optional shortening, quality audit and optional verification. The original
+4,400-token generation/shortening ceiling remains separate from the at-most-4,800-token
+review allowance. All calls use the same cancellation signal and durable model-call
+cap. A quality or review-protocol failure fails the Store output explicitly;
+independent specialist findings and saved scan/catalogue evidence remain available.
+Store-analysis cache keys include the quality-policy version. Other specialist
+research is not covered by this new per-field reviewer and may remain limited.
 Competitor search planning similarly permits one metered correction when proposed
 category or market wording is not an exact phrase in its cited, supplied merchant
 evidence. Unsupported geography must become `null`, not a guessed location.
@@ -1178,14 +1259,22 @@ analysis matches the current product and its source listings.
 Choose **Open product workspace**, then one focused area:
 
 - **Product analysis:** an explicit approval sends selected-product catalogue
-  excerpts to Anthropic for one paid analysis, using the existing server-only
+  excerpts and eligible saved product-page text to Anthropic for generation and
+  mandatory evidence review (at most three model calls), using the existing server-only
   key/model and a bounded LangGraph node. No scanner, Tavily search or full
   business analysis runs. Up to seven recent source listings and 64 bounded
-  field excerpts inform six cited dimensions. Recorded-field checks are
-  deterministic, not invented AI health scores. The browser waits up to 60
-  seconds for the server's 45-second analysis window. If that browser wait
-  expires, reload saved status before starting another analysis; reloading
-  does not start paid work.
+  excerpts inform six cited dimensions. Page text is reused only from the latest
+  nonfailed owned scan and only when a website listing's exact URL and capture date
+  match. At most two pages, twelve 480-character excerpts each, fit within the same
+  64-excerpt total. Older, unmatched, CSV and manual sources do not gain page claims.
+  Page excerpts may include other products; the advisor must scope every fact to
+  the selected product, not transfer related-product claims. This is not a fresh
+  scan or technical SEO audit. Recorded-field checks are
+  deterministic, not invented AI health scores. The server analysis window is
+  90 seconds; admission returns immediately and the browser polls saved progress.
+  Analysis continues when you leave the page. Reopening saved status does not
+  start paid work. Analysis cache keys include the content-policy version, without
+  changing product identity, confirmed selections or marketplace/cache fingerprints.
 - **Listing optimizer:** compare current title/description with an editable AI
   draft. Owner fact-checking and approval are required before saving. Only the
   local canonical title/description and owner listing change; imported snapshots,

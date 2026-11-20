@@ -82,7 +82,7 @@ describe("truthful live analysis activity", () => {
     expect(container.textContent).not.toContain(failed.limitations[0]);
     expect(container.textContent).not.toContain("0 public pages captured");
     expect(container.textContent).not.toContain("No pages captured yet");
-    expect(container.querySelector(".analysis-check-failure")?.textContent).toBe("Some information couldn't be checked. Please review the available findings before deciding.");
+    expect(container.textContent).not.toContain("Some information couldn't be checked.");
     expect([...container.querySelectorAll(".analysis-counts dd")].map((node) => node.textContent)).toEqual(["1", "1"]);
     expect(container.querySelector(".analysis-stages li:nth-child(2)")?.textContent).toContain("More checks pending");
     expect(container.querySelector(".analysis-stages li:last-child")?.textContent).toContain("Not started");
@@ -96,8 +96,7 @@ describe("truthful live analysis activity", () => {
     await render(value);
     expect(container.querySelector(".analysis-recent")).toBeNull();
     expect(container.querySelector('.analysis-stages li[data-status=failed]')?.textContent).toContain("Store intelligenceCould not finish");
-    expect(container.querySelector(".analysis-check-failure")?.textContent).toBe("Some information couldn't be checked. Please review the available findings before deciding.");
-    expect(container.querySelector(".analysis-check-failure")?.closest("details")).toBeNull();
+    expect(container.textContent).not.toContain("Some information couldn't be checked.");
     expect(container.querySelectorAll(".analysis-stages li")).toHaveLength(2);
     await render(null);
     expect(container.querySelector(".analysis-background")).toBeNull();
@@ -141,6 +140,6 @@ describe("truthful live analysis activity", () => {
     await render(withSteps({ ...pricing, status: "failed", limitations: [failure] }));
     expect(container.textContent).not.toContain(failure);
     expect(container.querySelector('.analysis-stages li[data-status=failed]')?.textContent).toContain("Pricing intelligenceCould not finish");
-    expect(container.querySelector(".analysis-check-failure")?.textContent).toBe("Some information couldn't be checked. Please review the available findings before deciding.");
+    expect(container.textContent).not.toContain("Some information couldn't be checked.");
   });
 });

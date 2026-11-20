@@ -214,6 +214,7 @@ export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusi
   const actionId = context.get("business") === businessId ? context.get("action") : null;
   const actionReview = !!actionId && reviewMode === "action";
   const needsAttention = (product: Product) => productReadiness(product).some((check) => !check.present);
+  const nextReview = products.find(needsAttention);
   const visibleProducts = products.filter((product) => (filter === "all" || filter === "attention" && needsAttention(product)
     || filter === "analysed" && analyses.some((item) => item.productId === product.id))
     && [product.name, product.sku, product.gtin, product.description].some((value) => value.toLowerCase().includes(search.trim().toLowerCase())));
@@ -255,6 +256,10 @@ export function ProductsWorkspace({ onSessionExpired, selectedBusinessId, onBusi
           <div><dt>Current analyses</dt><dd>{reading ? "..." : new Set(analyses.map((item) => item.productId)).size}</dd></div>
           <div><dt>Information to review</dt><dd>{reading ? "..." : products.filter(needsAttention).length}</dd></div>
         </dl>
+        {!!products.length && <p className="field-note">These are saved catalogue entries, which may include pack sizes or variants—not necessarily distinct product families. Keep each SKU and source listing separate until you confirm their relationship.</p>}
+        {nextReview && <Button variant="outline" onClick={() => openProduct(nextReview.id)}>
+          Review {nextReview.name}&apos;s recorded information<Icon name="arrow" />
+        </Button>}
       </BlurFade>}
       {!selectedProduct && <Button variant="outline" disabled={disabled} onClick={() => {
         setEditingId(""); setForm(emptyProduct); setDraft(null);

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+vi.mock("./content-quality.js", async (original) => ({ ...await original<typeof import("./content-quality.js")>(), reviewContent: vi.fn(async () => ({ rejected: [] })) }));
 import { randomUUID } from "node:crypto";
 import { createPool, type Pool, type PoolConnection, type RowDataPacket } from "mysql2/promise";
 import request from "supertest";
@@ -58,6 +59,7 @@ describe("additive MySQL migration sequencing without a database connection", ()
         "ALTER TABLE marketplace_research ADD COLUMN progress_json LONGTEXT CHECK(progress_json IS NULL OR JSON_VALID(progress_json))",
         "ALTER TABLE product_analyses ADD COLUMN progress_json LONGTEXT CHECK(progress_json IS NULL OR JSON_VALID(progress_json))",
         "ALTER TABLE analysis_jobs ADD COLUMN reuse_customer_evidence INTEGER NOT NULL DEFAULT 0 CHECK(reuse_customer_evidence IN (0,1))",
+        "ALTER TABLE analysis_jobs ADD COLUMN language VARCHAR(2) NOT NULL DEFAULT 'en' CHECK(language IN ('en','hi','mr'))",
       ]);
       expect(query.mock.calls.some(([sql]) => sql.startsWith("CREATE TABLE businesses"))).toBe(false);
       expect(rows.find((row) => row.version === 2)?.completed).toBe(1);
@@ -91,6 +93,7 @@ describe("additive MySQL migration sequencing without a database connection", ()
         .toEqual([
           "ALTER TABLE product_analyses ADD COLUMN progress_json LONGTEXT CHECK(progress_json IS NULL OR JSON_VALID(progress_json))",
           "ALTER TABLE analysis_jobs ADD COLUMN reuse_customer_evidence INTEGER NOT NULL DEFAULT 0 CHECK(reuse_customer_evidence IN (0,1))",
+          "ALTER TABLE analysis_jobs ADD COLUMN language VARCHAR(2) NOT NULL DEFAULT 'en' CHECK(language IN ('en','hi','mr'))",
         ]);
     });
   });

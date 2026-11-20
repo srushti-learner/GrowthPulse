@@ -88,7 +88,7 @@ export function GrowthActionWork({ businessId, actionId, onSessionExpired, onSav
           </article>)}</> : <p>Choose the scope manually, or ask the agent to assess the saved recommendation and catalogue. It may find that no product match is appropriate.</p>}
         {data.stale && <p role="alert">Product evidence changed since this decision or confirmation. Review current records and confirm again before generating steps.</p>}
         {data.configured && (!data.decision || data.stale) && <div>
-          <p className="field-note">This sends the recommendation, its evidence and bounded saved catalogue excerpts to Anthropic. AI charges may apply. No new website scan or search is run.</p>
+          <p className="field-note">This sends the recommendation, its evidence and bounded saved catalogue excerpts to Anthropic. Up to four AI calls cover generation, optional text shortening, evidence review and verification of one bounded quality correction; charges may apply. No new website scan or search is run.</p>
           <button className="secondary-button" disabled={busy} onClick={() => void mutate("decision", "POST", { consent: true, revision }, "Scope suggestions saved. Confirm the targets you approve.")}>
             {busy ? "Preparing guidance..." : "Ask agent to suggest scope and products"}
           </button>
@@ -124,7 +124,7 @@ export function GrowthActionWork({ businessId, actionId, onSessionExpired, onSav
         <h4>Supporting steps for this action</h4>
         <p>Confirmed: {workScopeLabels[work.selection.scope]}{work.selection.products.length ? ` — ${work.selection.products.map((selected) => data.products.find((product) => product.id === selected.productId)?.name ?? "Unavailable product").join(", ")}` : ""}.</p>
         {data.configured && !work.steps.some(isActionGeneratedStep) && <div>
-          <p className="field-note">Generate steps for this action and its confirmed targets—not a general product analysis. This sends the saved action and selected catalogue excerpts to Anthropic; AI charges may apply.</p>
+          <p className="field-note">Generate steps for this action and its confirmed targets—not a general product analysis. This sends the saved action and selected catalogue excerpts to Anthropic. Up to four AI calls cover generation, optional text shortening, evidence review and verification of one bounded quality correction; charges may apply.</p>
           <button className="secondary-button" disabled={busy || data.stale} onClick={() => void mutate("proposals", "POST", { consent: true, revision }, "Action-specific draft steps saved under this action.")}>Generate action-specific steps</button>
         </div>}
         {!work.steps.length && <p>No supporting steps saved yet.</p>}
@@ -152,6 +152,10 @@ function WorkStepForm({ step, busy, onSave }: { step: WorkStep; busy: boolean; o
   const [status, setStatus] = useState(step.status), [outcome, setOutcome] = useState(step.outcome);
   return <article className="action-supporting-step">
     <h4>{step.title}</h4><p>{step.detail}</p>
+    {!!step.targetProducts?.length && <div className="field-note"><strong>Confirmed action targets</strong>
+      <ul>{step.targetProducts.map((target) => <li key={target.productId}>{target.name}</li>)}</ul>
+      <p>Owner-confirmed catalogue identities, not a claim of suitability or current availability.</p>
+    </div>}
     {step.productId && <p>Attached product suggestion</p>}
     <SupportingEvidence sources={step.sources} />
     <form onSubmit={(event) => { event.preventDefault(); onSave(status, outcome); }}>

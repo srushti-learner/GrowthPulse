@@ -7,11 +7,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openStore, type Store } from "./database.js";
 import { createApp } from "./app.js";
 import { newSession } from "./auth.js";
-import { createProductAnalyst, productEvidence, productFingerprint } from "./product-intelligence.js";
+import { createProductAnalyst, productEvidence, productPageEvidence, productAnalysisFingerprint, productFingerprint } from "./product-intelligence.js";
 import { productAnalysisSummariesSchema, productDimensions, productIntelligenceResponseSchema, productReadiness, type ProductAnalysisOutput } from "../shared/product-intelligence.js";
 import { emptyProduct, type Product } from "../shared/products.js";
 import type { AgentModel } from "./business-agent.js";
 import { AgentError } from "./business-agent.js";
+vi.mock("./content-quality.js", async (original) => ({ ...await original<typeof import("./content-quality.js")>(), reviewContent: vi.fn(async () => ({ rejected: [] })) }));
 
 const origin = "http://127.0.0.1:5173";
 function output(reference: string): ProductAnalysisOutput {
@@ -59,6 +60,23 @@ describe("product-specific saved intelligence", () => {
   function post(user: Awaited<ReturnType<typeof owner>>, action: string, input: object) {
     return request(app).post(`${user.endpoint}/${action}`).set("Cookie", user.cookie).set("Origin", origin).send(input);
   }
+  it("reuses only the selected listing's exact saved URL and capture date, without a new scan", async () => {
+    const user = await owner(), capturedAt = new Date().toISOString(), url = "https://shop.example.com/tee";
+    const page = { url, capturedAt, title: "Original cotton tee", description: "Cotton tee.", text: "Original cotton tee. Fabric: cotton. Care: wash cold.",
+      headings: [], contacts: [], callsToAction: [], links: [], warnings: [],
+      productJson: [JSON.stringify({ "@type": "Product", name: "Original cotton tee", sku: "TEE-1", description: "Cotton tee." })] };
+    await store.saveScan(user.id, user.businessId, { requestedUrl: url, status: "complete", startedAt: capturedAt, completedAt: capturedAt,
+      pages: [page], failures: [], notes: [] });
+    const product = (await store.listProducts(user.id, user.businessId)).find((item) => item.listings.some((listing) => listing.reference === url))!;
+    expect(productPageEvidence(product, [{ ...page, url: `${url}/other` }, { ...page, capturedAt: "2020-01-01T00:00:00.000Z" }])).toEqual([]);
+    const response = await analyse({ ...user, product, endpoint: `/api/businesses/${user.businessId}/products/${product.id}` }).expect(200);
+    expect(response.body.analysis.evidence).toContainEqual(expect.objectContaining({
+      source: "website", reference: url, capturedAt, quote: page.text,
+    }));
+    expect(response.body.analysis.evidence.every((item: { quote: string }) => item.quote.length <= 500)).toBe(true);
+    expect(scanner).not.toHaveBeenCalled();
+    expect(businessAgent.run).not.toHaveBeenCalled();
+  });
 
   it("uses only selected-product evidence, saves cited results and reopens them without paid work across restart", async () => {
     const user = await owner();
@@ -126,7 +144,7 @@ describe("product-specific saved intelligence", () => {
   });
 
   it("admits async analysis once and persists real stages for a reopening client", async () => {
-    const user = await owner(), fingerprint = productFingerprint(user.product);
+    const user = await owner(), fingerprint = productAnalysisFingerprint(user.product);
     const implementation = complete.getMockImplementation()!;
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
@@ -228,7 +246,7 @@ describe("product-specific saved intelligence", () => {
   });
 
   it("fences late results and failures after a lease expires and a new explicit attempt starts", async () => {
-    const user = await owner(), fingerprint = productFingerprint(user.product);
+    const user = await owner(), fingerprint = productAnalysisFingerprint(user.product);
     const firstLease = await store.beginProductAnalysis(user.id, user.businessId, user.product.id, fingerprint);
     vi.spyOn(Date, "now").mockReturnValue(firstLease + 1);
     expect(await store.productAnalysisState(user.id, user.businessId, user.product.id, fingerprint)).toMatchObject({ running: false, error: expect.stringContaining("interrupted") });

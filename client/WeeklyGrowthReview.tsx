@@ -94,7 +94,7 @@ export function WeeklyGrowthReview({ businessId, plan, onSessionExpired, expande
         {data && <>
           <div className="weekly-review-freshness">
             <p><strong>{data.stale || !complete ? "Sales update needed" : "Reporting weeks covered"}</strong><br />
-              Data covers through {data.coveredThrough ? dateLabel(data.coveredThrough) : "no recorded date"}.
+              {data.coveredThrough ? <>Data covers through {dateLabel(data.coveredThrough)}.</> : "No dated sales records supplied yet."}
               {data.observedAt && <> Last recorded update: {dateLabel(data.observedAt)}.</>}</p>
             <Button asChild variant={data.stale || !complete ? "default" : "outline"}><a href={`#simulator?business=${encodeURIComponent(businessId)}&view=sales`}>Update sales</a></Button>
             <Button variant="ghost" disabled={busy} onClick={() => setReload((value) => value + 1)}>Refresh review</Button>
@@ -131,7 +131,7 @@ export function WeeklyGrowthReview({ businessId, plan, onSessionExpired, expande
           <section className="weekly-review-actions" aria-label="Action outcome reviews">
             <h3>Your current experiments</h3>
             <p>Business-level, seven-day observations against the seven days before your action. Baselines stay fixed; observed changes do not prove causation.</p>
-            {!data.measurements.length && <p>No outcome review started yet. Choose one saved action below.</p>}
+            {!data.measurements.length && <p>No results measured yet. A planned action is not a launched experiment. Choose one saved action, record when it actually starts, and supply seven baseline dates before collecting seven follow-up dates.</p>}
             {data.measurements.map((entry) => {
               const measurement = entry.measurement;
               return <details key={measurement.id} className="weekly-review-experiment" open={expanded && !measurement.decision && entry.status !== "waiting"}>

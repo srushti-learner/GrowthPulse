@@ -49,7 +49,6 @@ export function AnalysisProgress({ job, phase, reusingScan, showDetails, onCance
   const ordered = [...steps].sort((a, b) => Number(b.status === "running") - Number(a.status === "running")
     || Date.parse(b.completedAt ?? b.startedAt) - Date.parse(a.completedAt ?? a.startedAt));
   const running = ordered.filter((step) => step.status === "running");
-  const hasFailedChecks = steps.some((step) => step.status === "failed");
   const queued = job?.status === "queued";
   const headline = queued ? "Waiting to start..." : running.length ? stepLabel(running[0])
     : steps.length ? steps.some((step) => step.key === "growth" && step.status !== "running")
@@ -92,7 +91,6 @@ export function AnalysisProgress({ job, phase, reusingScan, showDetails, onCance
           </li>;
         })}
       </ol>
-      {hasFailedChecks && <p className="analysis-check-failure" role="status">Some information couldn't be checked. Please review the available findings before deciding.</p>}
     </>}
     {!steps.length && !queued && <div className="analysis-starting"><Icon name="shield" /><p>{reusingScan
       ? "Using your saved website information." : "Checking your website's permitted public pages."}</p></div>}

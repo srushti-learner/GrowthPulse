@@ -162,6 +162,8 @@ export async function migrateMysql(pool: Pool, databaseName: string) {
       ] },
       { version: 4, statements: ["ALTER TABLE product_analyses ADD COLUMN progress_json LONGTEXT CHECK(progress_json IS NULL OR JSON_VALID(progress_json))"] },
       { version: 5, statements: ["ALTER TABLE analysis_jobs ADD COLUMN reuse_customer_evidence INTEGER NOT NULL DEFAULT 0 CHECK(reuse_customer_evidence IN (0,1))"] },
+      // Retained for databases upgraded during the withdrawn language preview.
+      { version: 6, statements: ["ALTER TABLE analysis_jobs ADD COLUMN language VARCHAR(2) NOT NULL DEFAULT 'en' CHECK(language IN ('en','hi','mr'))"] },
     ];
     if (applied.some((row) => !migrations.some((migration) => migration.version === row.version))) throw new Error("MySQL schema is newer than this application.");
     if (applied.some((row) => !row.completed)) throw new Error("A MySQL migration was interrupted. Verify the database and repair the incomplete migration before restarting; no tables were deleted.");

@@ -11,6 +11,7 @@ const references = z.array(referenceId).min(1).max(4);
 export const productEvidenceSchema = z.object({
   id: referenceId, source: z.enum(["manual", "csv", "website"]), sourceName: z.string(),
   reference: z.string(), quote: z.string().min(10).max(500), capturedAt: z.iso.datetime(),
+  field: z.string().optional(), truncated: z.boolean().optional(),
 });
 export const productAnalysisOutputSchema = z.object({
   summary: z.object({ text: z.string().trim().min(1).max(600), references }),
