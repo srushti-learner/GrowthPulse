@@ -82,6 +82,7 @@ export function FutureFeatures() {
       <section className="future-start" aria-labelledby="future-start-heading">
         <h2 id="future-start-heading">No website? You can start today.</h2>
         <p>Add your business manually, then build your catalogue with manual entries or CSV. The connectors above are not required.</p>
+        <p>Import authorized order history in Growth Simulator, add permitted customer-review exports in Products, and review saved actions in My progress. These work today without a social connector.</p>
         <a href="#overview?view=manual&new=1" className="primary-link">Add a business without a website <ArrowRight aria-hidden="true" /></a>
         <a href="#contact" className="text-button">Tell us what your business needs <ArrowRight aria-hidden="true" /></a>
       </section>

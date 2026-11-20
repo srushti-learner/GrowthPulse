@@ -37,14 +37,14 @@ export function growthOpportunities(businessId: string, report?: ResearchReport)
         strategy: {
           objective: finding.title,
           actions: [
-            "Check the captured evidence against the current website and confirm the problem with customers or analytics.",
+            `For "${finding.title}", confirm the proposed problem with the cited sources and current customer or sales evidence.`,
             finding.detail,
-            "Draft the smallest change that tests this recommendation; review costs and obtain owner approval before publishing.",
-            "Choose a comparable baseline and test audience, then record the outcome before expanding the change.",
+            "Choose the exact target and change in My actions. Create a small draft, review costs, and obtain owner approval before publishing.",
+            "Choose one primary metric and an owner-defined success threshold. Keep other variables stable and record a comparable baseline before testing.",
           ],
           metric: metrics[step.agent],
           hypothesis: `Test whether this recommendation improves the chosen metric: ${finding.title}`,
-          measurement: "Set a baseline, eligible audience, test duration and success threshold before starting. Compare against a control where feasible; account for seasonality and sample size.",
+          measurement: `Choose one primary measure relevant to "${finding.title}". Use ${metrics[step.agent].toLowerCase()} only where the required data exists. Record the start date, eligible audience, baseline and test duration; account for seasonality and sample size. No uplift is predicted.`,
         },
       });
     }

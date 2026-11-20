@@ -46,15 +46,19 @@ describe("research-first market intelligence", () => {
     await act(async () => button.click());
   }
 
-  it("leads with accepted external evidence, not Store context or Growth recommendations", async () => {
+  it("leads with accepted external evidence and labels AI suggestions without exposing Store context", async () => {
     await render();
-    expect(panel().querySelectorAll('[data-slot="card"]')).toHaveLength(1);
+    expect(panel().querySelectorAll('[data-slot="card"]')).toHaveLength(3);
     expect(panel().querySelectorAll(".market-area-link")).toHaveLength(6);
     expect(panel().textContent).toContain(observation.title);
     expect(panel().textContent).toContain("1 verified brand");
     expect(panel().textContent).toContain("1 hypothesis to validate");
     expect(panel().textContent).not.toContain("Private Store context");
-    expect(panel().textContent).not.toContain(suggestion.title);
+    expect(panel().querySelector(".market-summary")?.textContent).toContain(observation.detail);
+    expect(panel().querySelector(".market-summary")?.textContent).not.toContain(suggestion.title);
+    expect(panel().querySelector(".market-signals")?.textContent).toContain(suggestion.detail);
+    expect(panel().querySelector(".market-signals")?.textContent).toContain("AI suggestion");
+    expect(panel().querySelector(".market-signals")?.textContent).toContain("Hypothesis / needs validation");
     expect(panel().textContent).not.toContain("Do not promote this failed result");
     expect(panel().querySelector(".research-agent-nav")).toBeNull();
     expect(panel().querySelector('a[href="#growth"]')).not.toBeNull();
@@ -141,7 +145,7 @@ describe("research-first market intelligence", () => {
 
   it("does not promote running or failed hypotheses or mistake no evidence for no competition", async () => {
     await render({ ...report, steps: report.steps.map((step) => ({ ...step, status: "failed" })) });
-    expect(panel().textContent).toContain("Not enough external evidence for a market conclusion yet.");
+    expect(panel().textContent).toContain("No market findings saved yet.");
     expect(panel().textContent).toContain("does not mean your business has no competitors");
     expect(panel().textContent).toContain("0 verified brands");
     await click("Market gaps");
@@ -150,6 +154,54 @@ describe("research-first market intelligence", () => {
     await render({ ...report, status: "running", steps: [{ ...base, agent: "opportunity", status: "running", findings: [hypothesis] }] });
     expect(panel().textContent).toContain("Research is still running. Accepted hypotheses will appear when saved.");
     expect(panel().textContent).not.toContain(hypothesis.title);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("shows saved AI suggestions when there is no market observation and preserves their exact evidence", async () => {
+    const value: Report = { ...report, steps: [
+      { ...base, key: "competitor-brand-0", findings: [], profile: brand },
+      { ...base, agent: "opportunity", findings: [suggestion,
+        { ...suggestion, title: "Store-only recommendation", sources: [{ ...source, url: "https://merchant.example/" }] }] },
+      { ...base, status: "running", findings: [{ ...suggestion, title: "Unfinished recommendation" }] },
+    ] };
+    const saved = JSON.stringify(value);
+    await render(value);
+    const summary = panel().querySelector(".market-summary")!;
+    expect(summary.textContent).toContain(suggestion.title);
+    expect(summary.textContent).toContain(suggestion.detail);
+    expect(summary.textContent).toContain("AI suggestion");
+    expect(summary.textContent).not.toContain("Captured observation");
+    expect(panel().textContent).not.toContain("Not enough external evidence");
+    expect(panel().textContent).not.toContain("Store-only recommendation");
+    expect(panel().textContent).not.toContain("Unfinished recommendation");
+    await click("Read evidence");
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(dialog.textContent).toContain("AI suggestion");
+    expect(dialog.textContent).toContain(suggestion.detail);
+    await act(async () => dialog.querySelector("summary")!.click());
+    expect(dialog.querySelector("blockquote p")?.textContent).toContain(source.quote);
+    expect(dialog.querySelector("a")?.getAttribute("href")).toBe(source.url);
+    expect(JSON.stringify(value)).toBe(saved);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("shows the AI's captured brand profiles instead of a negative market-conclusion placeholder", async () => {
+    await render({ ...report, steps: [
+      { ...base, key: "competitor-brand-0", findings: [], profile: brand },
+      { ...base, key: "competitor-brand-1", status: "limited", findings: [],
+        profile: { ...brand, name: "Another Brand", url: "https://another.example/", relevance: "Publishes related shirts and two-packs." } },
+    ] });
+    const summary = panel().querySelector(".market-summary")!;
+    expect(summary.textContent).toContain("Brands to explore.");
+    expect(summary.textContent).toContain(brand.name);
+    expect(summary.textContent).toContain(brand.relevance);
+    expect(summary.textContent).toContain("Another Brand");
+    expect(summary.textContent).toContain("Publishes related shirts and two-packs.");
+    expect(summary.textContent).not.toContain("Not enough external evidence");
+    expect(summary.textContent).not.toContain("no accepted market observation");
+    expect(summary.querySelector("blockquote p")?.textContent).toContain(source.quote);
+    await click("Explore captured brands");
+    expect(panel().querySelectorAll(".market-brand")).toHaveLength(2);
     expect(fetch).not.toHaveBeenCalled();
   });
 

@@ -56,7 +56,7 @@ describe("connected action review and manual onboarding", () => {
         } else if (path.endsWith("/proposals")) {
           expect(input.consent).toBe(true);
           work.steps = [{ id: "b".repeat(64), title: "Validate the seasonal display", detail: "Approve a small test after reviewing the baseline.", sources: [source],
-            status: "draft", outcome: "", origin: "action" }];
+            status: "draft", outcome: "", origin: "action", targetProducts: [{ productId, name: "Cotton tee", fingerprint: "c".repeat(64) }] }];
         } else if (path.endsWith("/steps")) {
           work.steps[0] = { ...work.steps[0], status: input.status, outcome: input.outcome };
         } else throw new Error(`Unexpected mutation ${path}`);
@@ -75,6 +75,7 @@ describe("connected action review and manual onboarding", () => {
     expect(container.textContent).toContain("No product or website was changed");
     await click("Generate action-specific steps");
     expect(container.textContent).toContain("Validate the seasonal display");
+    expect(container.querySelector(".action-supporting-step")?.textContent).toContain("Confirmed action targetsCotton tee");
     expect(saved).toHaveBeenLastCalledWith(expect.objectContaining({ revision: 2 }));
     await change(".action-supporting-step select", "measured");
     expect(container.querySelector<HTMLTextAreaElement>(".action-supporting-step textarea")?.required).toBe(true);
@@ -82,6 +83,7 @@ describe("connected action review and manual onboarding", () => {
     await click("Save step progress");
     expect(saved).toHaveBeenLastCalledWith(expect.objectContaining({ revision: 3 }));
     expect(container.textContent).toContain("owner-reported, not automatically verified");
+    expect(snapshot.opportunity.work?.steps[0].targetProducts?.[0].name).toBe("Cotton tee");
     expect(fetch.mock.calls.filter(([, options]) => options?.method).map(([path]) => path.split("/").pop())).toEqual(["selection", "proposals", "steps"]);
   });
   it.each(["business", "new_product", "unclear"] as const)("does not force product selection or automatically call AI for %s scope", async (scope) => {

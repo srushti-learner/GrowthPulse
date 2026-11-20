@@ -362,6 +362,10 @@ export const migrations = [{
 }, {
   version: 20,
   sql: "ALTER TABLE analysis_jobs ADD COLUMN reuse_customer_evidence INTEGER NOT NULL DEFAULT 0 CHECK(reuse_customer_evidence IN (0,1));",
+}, {
+  // Retained for databases upgraded during the withdrawn language preview.
+  version: 21,
+  sql: "ALTER TABLE analysis_jobs ADD COLUMN language TEXT NOT NULL DEFAULT 'en' CHECK(language IN ('en','hi','mr'));",
 }];
 
 export function migrate(database: Database.Database) {

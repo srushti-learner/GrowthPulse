@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { agentEvidenceLimits } from "../shared/understanding.js";
 import type { ScanResult } from "../shared/website.js";
+import { capturedFacts } from "./evidence-facts.js";
 
 const productFields = new Set([
   "name", "description", "sku", "gtin", "gtin8", "gtin12", "gtin13", "gtin14", "url",
@@ -20,7 +21,7 @@ function productDetails(json: string): string {
   function visit(value: unknown, path: string, depth: number) {
     if (depth > 4 || lines.length >= 100) return;
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-      lines.push(`${path}: ${String(value)}`); return;
+      lines.push(`${path}: ${String(value).replace(/[\r\n]+/g, " ")}`); return;
     }
     if (Array.isArray(value)) { value.slice(0, 20).forEach((item, index) => visit(item, `${path}[${index}]`, depth + 1)); return; }
     if (value && typeof value === "object") {
@@ -40,9 +41,10 @@ export function buildAgentEvidence(scan: ScanResult) {
     status: scan.status, notes: scan.notes, failures: scan.failures, coverage: scan.coverage,
     pages: [] as {
       url: string; capturedAt: string; title: string;
-      excerpts: { id: string; field: string; quote: string }[];
+      excerpts: { id: string; field: string; quote: string; truncated: boolean }[];
     }[],
     limitations: [] as string[],
+    factSheet: capturedFacts([]),
   };
   const productRecordsCaptured = scan.pages.reduce((count, page) => count + (page.productJson?.length ?? 0), 0);
   if (scan.coverage?.limited || scan.status === "partial") limitations.add("Website coverage is partial or sampled; this is not the full website or catalogue.");
@@ -53,7 +55,7 @@ export function buildAgentEvidence(scan: ScanResult) {
   if (pageBudget < 4096) throw new Error("The scan metadata exceeds the agent evidence budget.");
   for (const page of scan.pages) {
     const supplied = { url: page.url, capturedAt: page.capturedAt, title: page.title,
-      excerpts: [] as { id: string; field: string; quote: string }[] };
+      excerpts: [] as { id: string; field: string; quote: string; truncated: boolean }[] };
     let clipped = false;
     function fit(value: string, field: string, ceiling = pageBudget) {
       value = value.trim();
@@ -65,10 +67,11 @@ export function buildAgentEvidence(scan: ScanResult) {
         let end = Math.min(offset + 480, value.length);
         if (value.length - end < 10) end = value.length;
         if (end < value.length && /[\uD800-\uDBFF]/.test(value[end - 1])) end--;
+        const truncated = offset > 0 || end < value.length;
         const quote = value.slice(offset, end).trim();
         offset = end;
         if (quote.length < 10) continue;
-        const excerpt = { id: `e_${(sourceIndex++).toString(16).padStart(16, "0")}`, field, quote };
+        const excerpt = { id: `e_${(sourceIndex++).toString(16).padStart(16, "0")}`, field, quote, truncated };
         supplied.excerpts.push(excerpt);
         if (bytes(supplied) > ceiling) {
           let low = 0, high = quote.length;
@@ -79,6 +82,7 @@ export function buildAgentEvidence(scan: ScanResult) {
           }
           excerpt.quote = quote.slice(0, low).replace(/[\uD800-\uDBFF]$/, "").trim();
           clipped = true;
+          excerpt.truncated = true;
           if (excerpt.quote.length < 10) { supplied.excerpts.pop(); return added; }
           return true;
         }
@@ -118,6 +122,9 @@ export function buildAgentEvidence(scan: ScanResult) {
   for (const page of payload.pages) {
     for (const excerpt of page.excerpts) excerpt.id = `e_${sourceScope}${excerpt.id.slice(-4)}`;
   }
+  payload.factSheet = capturedFacts(payload.pages.flatMap((page) =>
+    page.excerpts.map((excerpt) => ({ ...excerpt, capturedAt: page.capturedAt }))),
+  Math.min(8192, Math.max(0, agentEvidenceLimits.bytes - bytes(payload) - 64)));
   if (bytes(payload) > agentEvidenceLimits.bytes) throw new Error("The agent evidence exceeded its input budget.");
   const coverage = {
     pagesProvided: payload.pages.length, productRecordsCaptured, productRecordsProvided, inputBytes: bytes(payload),

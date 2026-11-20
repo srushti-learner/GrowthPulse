@@ -64,6 +64,7 @@ export function MarketplaceCustomerVoice() {
       {data?.stale ? <p className="dashboard-notice">Your catalogue product changed. Previous sources are available below, but are not presented as current customer feedback. Find fresh feedback before using them.</p> : !loading && <>
         {!saved && !error && !data?.error && !data?.running && <section className="feedback-empty" aria-label="Customer feedback availability">
           <h4>No customer feedback saved yet</h4>
+          <p>Reviews have not been collected for this product here. This does not mean customers have not reviewed it or that buyer confidence is low.</p>
           <p>Find reviews for {product.name}, or add listing links or an authorized review CSV in Research options and details below.</p>
         </section>}
         {saved && <>

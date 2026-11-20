@@ -13,6 +13,8 @@ import type { Business } from "../shared/contracts.js";
 import { agentEvidenceLimits, partialBriefingNotice, understandingStreamEventSchema } from "../shared/understanding.js";
 import { randomUUID } from "node:crypto";
 import { buildAgentEvidence } from "./agent-evidence.js";
+// These fixtures isolate generation/streaming; the real review protocol has integration coverage in content-quality.test.ts.
+vi.mock("./content-quality.js", async (original) => ({ ...await original<typeof import("./content-quality.js")>(), reviewContent: vi.fn(async () => ({ rejected: [] })) }));
 
 const origin = "http://127.0.0.1:5173";
 const url = "https://shop.example.com/";
@@ -73,6 +75,24 @@ const shortenedActions = [
 const actionRewrites = { fields: shortenedActions.map(({ index, action }) => ({ path: `briefing.nextSteps.${index}.action`, text: action })) };
 
 describe("bounded business agent", () => {
+  it.each(["sugar-free date desserts", "nationwide 24-hour shipping", "24-hour delivery"])(
+    "omits an unsupported strengthened profile claim: %s", async (claim) => {
+      const captured = structuredClone(scan);
+      captured.pages[0].text = "Date bites contain no refined sugar. Orders are shipped within 24-48 hours of being placed.";
+      captured.pages[0].description = captured.pages[0].text;
+      const references = [sourceFor("Date bites", captured)[0]];
+      const complete = vi.fn<AgentModel>().mockResolvedValueOnce(tool("scan_website", {})).mockResolvedValueOnce(tool("propose_business", {
+        ...referencedProposal,
+        briefing: { ...referencedBriefing, summary: { ...referencedBriefing.summary, sources: references },
+          insights: referencedBriefing.insights.map((item) => ({ ...item, sources: references })) },
+        suggestions: [{ field: "description", value: `The business offers ${claim}.`, sources: references }],
+      }));
+      const result = await createBusinessAgent({ complete }).run(url, async () => captured, new AbortController().signal);
+      expect(result.suggestions).toEqual([]);
+      expect(result.briefing).not.toBeNull();
+      expect(result.validationIssues).toContainEqual({ path: "suggestions.0.value", code: "unsupported_claim" });
+      expect(complete).toHaveBeenCalledTimes(2);
+    });
   it.each([true, false])("streams live SDK text and accepts only a completed tool response (completed=%s)", async (completed) => {
     const event = (type: string, data: object) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
     const input = JSON.stringify(referencedProposal);

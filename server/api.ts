@@ -20,7 +20,7 @@ import { claimWorkSlot } from "./work-slots.js";
 import { growthOpportunities } from "./growth-store.js";
 import { growthOpportunityId, growthOpportunitySchema, growthPlanInputSchema, growthResponseSchema } from "../shared/growth.js";
 import { productAnalysisConsentSchema, productPlanInputSchema, productRewriteInputSchema } from "../shared/product-intelligence.js";
-import { createProductAnalyst, productAnalysisTimeout, productFingerprint, type ProductAnalyst } from "./product-intelligence.js";
+import { createProductAnalyst, productAnalysisTimeout, productAnalysisFingerprint, productFingerprint, type ProductAnalyst } from "./product-intelligence.js";
 import { readSalesFile, readSalesHeaders, salesFileHash } from "./sales-imports.js";
 import { salesMappingSchema } from "../shared/sales-mapping.js";
 import { analyticsCurrency } from "../shared/analytics.js";
@@ -646,7 +646,7 @@ export function createApi(store: Store, origin: string, production: boolean, sca
   async function productSnapshot(request: Request) {
     const { user, business, product } = await ownedProduct(request);
     return { configured: productAnalyst.configured,
-      ...await store.productAnalysisState(user.id, business.id, product.id, productFingerprint(product)) };
+      ...await store.productAnalysisState(user.id, business.id, product.id, productAnalysisFingerprint(product)) };
   }
   async function marketplaceSnapshot(request: Request) {
     const { user, business, product } = await ownedProduct(request);
@@ -776,7 +776,7 @@ export function createApi(store: Store, origin: string, production: boolean, sca
     const { user, business } = await ownedBusiness(request);
     const products = await store.listProducts(user.id, business.id);
     response.json({ analyses: (await store.productAnalysisSummaries(user.id, business.id))
-      .filter((item) => products.some((product) => product.id === item.productId && productFingerprint(product) === item.fingerprint)) });
+      .filter((item) => products.some((product) => product.id === item.productId && productAnalysisFingerprint(product) === item.fingerprint)) });
   });
   api.get("/businesses/:id/products/:productId/intelligence", async (request, response) => {
     response.json(await productSnapshot(request));
@@ -787,7 +787,7 @@ export function createApi(store: Store, origin: string, production: boolean, sca
     const { product } = await ownedProduct(request);
     const current = await productSnapshot(request);
     if (current.analysis && !current.stale) { response.json(current); return; }
-    const pending = activeProductAnalyses.get(`${product.id}:${productFingerprint(product)}`);
+    const pending = activeProductAnalyses.get(`${product.id}:${productAnalysisFingerprint(product)}`);
     if (pending) {
       if (request.get("Prefer") !== "respond-async") await pending;
       response.status(request.get("Prefer") === "respond-async" ? 202 : 200).json(await productSnapshot(request)); return;
@@ -797,7 +797,7 @@ export function createApi(store: Store, origin: string, production: boolean, sca
     next();
   }, analysisLimit, async (request, response) => {
     const { user, business, product } = await ownedProduct(request);
-    const fingerprint = productFingerprint(product), key = `${product.id}:${fingerprint}`;
+    const fingerprint = productAnalysisFingerprint(product), key = `${product.id}:${fingerprint}`;
     const existing = activeProductAnalyses.get(key), current = await productSnapshot(request);
     if (existing || current.analysis && !current.stale) {
       response.locals.productAnalysisReused = true;
@@ -814,8 +814,10 @@ export function createApi(store: Store, origin: string, production: boolean, sca
       try {
         const signal = AbortSignal.any([marketplaceCancellation.signal, AbortSignal.timeout(productAnalysisTimeout)]);
         signal.throwIfAborted();
+        const latestScan = (await store.listScans(user.id, business.id)).find((scan) => scan.status !== "failed");
+        const captured = latestScan ? await store.getScan(user.id, business.id, latestScan.id) : undefined;
         const analysis = await productAnalyst.run(product, signal, (progress) =>
-          store.updateProductAnalysisProgress(user.id, business.id, product.id, fingerprint, leaseUntil, progress));
+          store.updateProductAnalysisProgress(user.id, business.id, product.id, fingerprint, leaseUntil, progress), captured?.pages);
         signal.throwIfAborted();
         if (analysis.productId !== product.id || analysis.fingerprint !== fingerprint) throw new AgentError(502, "The AI returned an analysis for different product evidence. Nothing was changed.");
         await store.finishProductAnalysis(user.id, business.id, analysis, leaseUntil);

@@ -107,7 +107,7 @@ describe("conclusion-first research dashboard", () => {
     expect(visiblePanel().textContent).toContain("Market research is still running");
     await render({ ...report, status: "partial", steps: [] }, false);
     expect(container.querySelector('[role="tab"][data-state="active"]')?.textContent).toBe("Market intelligence");
-    expect(visiblePanel().textContent).toContain("Not enough external evidence for a market conclusion yet.");
+    expect(visiblePanel().textContent).toContain("No market findings saved yet.");
   });
 
   it("retains the last accepted Store context after a failed refresh without mixing its sources", async () => {

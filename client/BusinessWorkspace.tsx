@@ -192,6 +192,9 @@ export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView
               {profileOnly && selectedBusiness.website && <button className="secondary-button" type="button" aria-expanded={analysisVisible} onClick={() => { setAutoStartId(""); setAnalysisOpen(!analysisVisible); }}>
                 {analysisVisible ? "Hide website analysis" : "Manage website analysis"}
               </button>}
+              {profileOnly && selectedBusiness.website && <button className="text-button" type="button" onClick={() => {
+                setAutoStartId(""); setAnalysisOpen(true);
+              }}>Review profile suggestions</button>}
               {profileOnly && <div className="journey-actions">
                 <a className="text-button" href={`#overview?business=${selectedBusiness.id}`}>Back to my growth journey<Icon name="arrow" /></a>
                 <a className="primary-link" href={`#intelligence?business=${selectedBusiness.id}`}>Next: understand my market<Icon name="arrow" /></a>
@@ -223,7 +226,7 @@ export function BusinessWorkspace({ activityOnly, onSessionExpired, researchView
         </div></section>
       )}
       {activityOnly && !selectedId && <div className="profile-card"><h2>Select a saved business to see its history.</h2><a href="#overview?view=setup&new=1" className="text-button">Create a business profile <Icon name="arrow" /></a></div>}
-      {activityOnly && selectedId && <section className="activity-card" aria-labelledby="history-heading"><div className="card-heading"><p className="section-eyebrow">YOUR BUSINESS UPDATES</p><h2 id="history-heading">Activity history</h2><p>Your latest saved profile, product and website updates.</p></div>
+      {activityOnly && selectedId && <section className="activity-card" aria-labelledby="history-heading"><div className="card-heading"><p className="section-eyebrow">YOUR BUSINESS UPDATES</p><h2 id="history-heading">Activity history</h2><p>Your latest saved profile, product and website updates. Capture dates describe saved evidence, not a current website check. Review catalogue changes in Products and approved work in My actions.</p></div>
         {detailsLoading ? <p className="loading-message">Loading history...</p> : detailsError ? <p role="alert" className="form-error">{detailsError} <button className="text-button" onClick={() => setRevision((value) => value + 1)}>Retry history</button></p> : activities.length === 0 ? <p>No activity recorded yet.</p> : <ol className="activity-list">{activities.map((activity) => {
           const source = evidence.find((item) => item.id === activity.evidenceId);
           const label: Record<Activity["action"], string> = { "business.created": "Business profile created", "business.updated": "Business profile updated", "website.scanned": "Website scan recorded", "product.saved": "Product saved", "products.imported": "Product import recorded" };

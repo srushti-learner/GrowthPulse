@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("./content-quality.js", async (original) => ({ ...await original<typeof import("./content-quality.js")>(), reviewContent: vi.fn(async () => ({ rejected: [] })) }));
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -41,13 +42,13 @@ describe("saved growth intelligence", () => {
     complete.mockReset();
     complete.mockImplementation(async (input) => {
       const data = JSON.parse(String(input.messages[0].content)) as {
-        scope?: string; action: { title: string }; evidence: { id: string }[]; catalogue: { productId: string; evidence: { id: string }[] }[];
+        scope?: string; action: { title: string }; evidence: { id: string }[]; catalogue: { productId: string; name: string; evidence: { id: string }[] }[];
       };
       return { stop_reason: "tool_use", content: [{ type: "tool_use", id: "fixture", name: "submit_action_guidance", input: data.scope
-        ? { steps: [{ title: `Support ${data.action.title}`, detail: "Review the confirmed group, record a baseline and approve a small test.", references: [data.evidence[0].id] }] }
+        ? { steps: [{ title: `Support ${data.action.title}`, detail: `Review ${data.catalogue.map((product) => product.name).join(" and ")}, record a baseline and approve a small test.`, references: [data.evidence[0].id] }] }
         : { scope: data.catalogue.length >= 2 ? "products" : "business", reason: "The saved recommendation supports this owner-reviewed scope.",
           references: [data.evidence[0].id], candidates: data.catalogue.length >= 2 ? data.catalogue.slice(0, 2).map((product) => ({
-            productId: product.productId, reason: "This catalogue evidence supports including the product.", references: [product.evidence[0].id],
+            catalogueReference: product.evidence[0].id, reason: "This catalogue evidence supports including the product.",
           })) : [] } }] };
     });
     store = openStore(path); app = createApp({ store, scanner, agent, growthAdvisor: createGrowthAdvisor({ complete }) }); scanner.mockClear(); agent.run.mockClear();
@@ -109,11 +110,14 @@ describe("saved growth intelligence", () => {
     expect(modelInput.scope).toBe("products"); expect(modelInput.catalogue).toHaveLength(2);
     expect((await get(user)).body.plan).toHaveLength(1);
     const step = proposed.opportunity.work.steps[0];
+    expect(step.targetProducts).toEqual(modelInput.targetProducts);
+    expect(step.targetProducts).toHaveLength(2);
     await work(user, id, "steps", { revision: proposed.item.revision, stepId: step.id, status: "measured", outcome: "" }, "patch").expect(400);
     const measured = (await work(user, id, "steps", {
       revision: proposed.item.revision, stepId: step.id, status: "measured", outcome: "Observed three sizing enquiries in the recorded test window.",
     }, "patch").expect(200)).body;
     expect(measured.opportunity.work.steps[0].status).toBe("measured");
+    expect(measured.opportunity.work.steps[0].targetProducts).toEqual(step.targetProducts);
     await store.close(); store = openStore(path); app = createApp({ store });
     const reopened = (await work(user, id).expect(200)).body;
     expect(reopened.opportunity.work).toEqual(measured.opportunity.work);

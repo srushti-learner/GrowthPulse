@@ -21,10 +21,15 @@ const areas = [
 type Area = typeof areas[number]["id"];
 type Topic = typeof competitorDimensions[number];
 
+function findingLabel(finding: ResearchFinding) {
+  return finding.kind === "hypothesis" ? "Hypothesis / needs validation"
+    : finding.kind === "suggestion" ? "AI suggestion" : "Captured observation";
+}
+
 function Finding({ finding }: { finding: ResearchFinding }) {
   return <Sheet><SheetTrigger asChild><Button variant="outline" className="market-finding-trigger">Read evidence<ArrowRight /></Button></SheetTrigger>
     <SheetContent className="research-drawer">
-      <SheetHeader><p className="section-eyebrow">{finding.kind === "hypothesis" ? "Hypothesis / not established" : "Captured observation"}</p>
+      <SheetHeader><p className="section-eyebrow">{findingLabel(finding)}</p>
         <SheetTitle>{finding.title}</SheetTitle>
         <SheetDescription>Inspect the source, quotation and capture date. Public claims are not independently verified performance.</SheetDescription>
       </SheetHeader>
@@ -60,7 +65,14 @@ export function MarketIntelligence({ report, businessName, renderComparison }: {
   };
   const external = findingsFor(["competitor", "pricing"]);
   const gaps = findingsFor(["competitor", "opportunity"], "hypothesis");
-  const takeaway = external.find((finding) => finding.kind === "observation");
+  const marketFindings = [...new Map(accepted.steps
+    .filter((step) => ["competitor", "pricing", "opportunity"].includes(step.agent))
+    .flatMap((step) => step.findings)
+    .filter((finding) => finding.sources.some((source) => externalHosts.has(new URL(source.url).hostname.replace(/^www\./, ""))))
+    .map((finding) => [`${finding.title}:${finding.detail}`, finding])).values()];
+  const takeaway = external.find((finding) => finding.kind === "observation")
+    ?? marketFindings.find((finding) => finding.kind === "suggestion") ?? marketFindings[0];
+  const additionalFindings = marketFindings.filter((finding) => finding.title !== takeaway?.title || finding.detail !== takeaway?.detail);
   const prices = brands.filter((brand) => brand.facts.some((fact) => fact.dimension === "pricing")).length;
   const products = brands.filter((brand) => brand.facts.some((fact) => fact.dimension === "products")).length;
   const researching = report.enabled && report.status === "running";
@@ -96,16 +108,27 @@ export function MarketIntelligence({ report, businessName, renderComparison }: {
       <p>{selected?.description ?? "Outside evidence here. Decisions and action plans in My growth plan."}</p>
     </div><Badge variant="outline">{area === "customer" ? customerVoiceSummary : !report.enabled ? "No market research saved" : researching ? "Research in progress" : report.status === "partial" ? "Partial research saved" : "Research saved"}</Badge></div>
     {area === "overview" ? <BlurFade duration={0.25} blur="2px">
-      <Card className="market-summary"><CardHeader><CardDescription><Globe2 />WHAT THE SAVED SAMPLE SHOWS</CardDescription>
-        <CardTitle>{takeaway?.title ?? (researching ? "Market research is still running." : !report.enabled ? "Start building your market view." : "Not enough external evidence for a market conclusion yet.")}</CardTitle></CardHeader>
-        <CardContent>{takeaway ? <><p className="dashboard-clamped">{takeaway.detail}</p><Finding finding={takeaway} /></>
-          : <p>{brands.length ? `${brands.length} verified brand profiles are available to explore, but no accepted market observation supports a broader conclusion.`
-            : <>{noBrandsDescription}{!researching && report.enabled && " This does not mean your business has no competitors."}</>}</p>}
+      <Card className="market-summary"><CardHeader><CardDescription><Globe2 />{takeaway ? findingLabel(takeaway) : "YOUR MARKET RESEARCH"}</CardDescription>
+        <CardTitle>{takeaway?.title ?? (brands.length ? "Brands to explore." : researching ? "Market research is still running." : !report.enabled ? "Start building your market view." : "No market findings saved yet.")}</CardTitle></CardHeader>
+        <CardContent>{takeaway ? <><p>{takeaway.detail}</p><Finding finding={takeaway} /></>
+          : brands.length ? brands.map((brand) => <article key={brand.url}>
+            <h4>{brand.name}</h4><p>{brand.relevance}</p><SupportingEvidence sources={brand.sources} />
+          </article>) : <><p>{researching ? "Your findings will appear as research progresses."
+            : !report.enabled ? noBrandsDescription : "New findings will appear here when saved."}</p>
+            {report.enabled && <details className="agent-sources"><summary>Research details</summary>
+              <p>{noBrandsDescription}{!researching && " This does not mean your business has no competitors."}</p>
+            </details>}</>}
           {!takeaway && !researching && (brands.length
             ? <Button variant="outline" onClick={() => navigate("competitors")}>Explore captured brands<ArrowRight /></Button>
             : <Button variant="outline" asChild><a href="#overview?view=business">Manage website analysis<ArrowRight /></a></Button>)}
         </CardContent>
       </Card>
+      {!!additionalFindings.length && <div className="market-signals">{additionalFindings.slice(0, limit).map((finding) =>
+        <Card key={`${finding.title}:${finding.detail}`}><CardHeader>
+          <CardDescription>{findingLabel(finding)}</CardDescription><CardTitle>{finding.title}</CardTitle>
+        </CardHeader><CardContent><p>{finding.detail}</p><Finding finding={finding} /></CardContent></Card>)}
+      </div>}
+      {additionalFindings.length > limit && <Button variant="outline" onClick={() => setLimit((value) => value + 6)}>Show more findings</Button>}
       <nav className="market-area-grid" aria-label="Explore market research">{areas.map((item) => {
         const AreaIcon = item.icon;
         return <Button variant="outline" key={item.id} className="market-area-link" onClick={() => navigate(item.id)}>
@@ -118,7 +141,7 @@ export function MarketIntelligence({ report, businessName, renderComparison }: {
         {renderComparison(marketReport, ["products", "positioning"])}
       </>}
       {area === "pricing" && <>
-        <p className="dashboard-notice">These are dated published claims, not a cheapest-to-most-expensive ranking. Quantities, currency, tax, shipping and promotions may differ.</p>
+        <p className="dashboard-notice">These are dated published claims, not a cheapest-to-most-expensive ranking. Match the exact product, pack weight, ingredients and delivered price before changing yours. Quantities, currency, tax, shipping and promotions may differ.</p>
         {renderComparison(marketReport, ["pricing", "offers"])}
       </>}
       {area === "customer" && <MarketplaceCustomerVoice />}
@@ -126,8 +149,10 @@ export function MarketIntelligence({ report, businessName, renderComparison }: {
         <Badge variant="outline">Trend data not configured</Badge>
         <h4>No trend dataset or continuous monitoring is connected.</h4>
         <p>A website snapshot cannot establish rising demand, seasonal change or a new market trend. Market Radar alerts and price-change tracking are not running.</p>
+        <p>Use dated sales records in My progress to review your own changes. Market-wide trends need comparable observations over time; a single saved sample is not enough.</p>
+        <Button asChild variant="outline"><a href="#progress">Review my recorded progress<ArrowRight /></a></Button>
       </CardContent></Card>}
-      {area === "gaps" && <p className="dashboard-notice">Possible gaps are research hypotheses, not proven unmet demand. Evaluate a supported hypothesis in Growth intelligence before adding work to your plan.</p>}
+      {area === "gaps" && <p className="dashboard-notice">Possible gaps are research hypotheses, not proven unmet demand. Evaluate a supported hypothesis in My growth plan before adding work to your plan.</p>}
       {!!findings.length && <div className="market-signals">{findings.slice(0, limit).map((finding) =>
         <Card key={`${finding.title}:${finding.detail}`}><CardHeader>
           <CardDescription>{finding.kind === "hypothesis" ? "Hypothesis / needs validation" : "Captured observation"}</CardDescription>
@@ -144,7 +169,7 @@ export function MarketIntelligence({ report, businessName, renderComparison }: {
       </details>}
     </>}
     <div className="market-footer">
-      <Button variant="ghost" asChild><a href="#growth">Decide what to do in Growth intelligence<ArrowRight /></a></Button>
+      <Button variant="ghost" asChild><a href="#growth">Choose my next move in My growth plan<ArrowRight /></a></Button>
     </div>
   </section>;
 }

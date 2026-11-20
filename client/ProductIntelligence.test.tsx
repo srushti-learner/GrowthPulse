@@ -122,7 +122,8 @@ describe("focused product intelligence workspace", () => {
     const button = [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === "Analyse this product")!;
     expect(button.disabled).toBe(false);
     expect(container.querySelector('.product-analysis-callout input[type="checkbox"]')).toBeNull();
-    expect(container.querySelector(".product-analysis-callout")?.textContent).toContain("saved catalogue excerpts to Anthropic");
+    expect(container.querySelector(".product-analysis-callout")?.textContent).toContain("saved catalogue excerpts and any exactly matched page text");
+    expect(container.querySelector(".product-analysis-callout")?.textContent).toContain("to Anthropic");
     expect(fetch.mock.calls.every(([, options]) => !options?.method)).toBe(true);
     await click("Analyse this product");
     expect(fetch).toHaveBeenCalledWith(`/api/businesses/${businessId}/products/${id}/intelligence`,

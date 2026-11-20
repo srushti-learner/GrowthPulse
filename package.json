@@ -15,7 +15,8 @@
     "build": "tsc --noEmit -p tsconfig.build.json && vite build && tsc -p server/tsconfig.json",
     "start": "node dist/server/index.js",
     "db:migrate": "tsx server/migrate.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "benchmark:agents": "tsx server/agent-benchmark.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.6.0",
