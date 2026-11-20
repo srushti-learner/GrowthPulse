@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowLeft, ArrowRight, BookOpen, Globe2, MessageSquare, Package, Search, TrendingUp, Wallet } from "lucide-react";
+import { ArrowLeft, ArrowRight, Globe2, MessageSquare, Package, Search, TrendingUp, Wallet } from "lucide-react";
 import type { competitorDimensions, ResearchFinding, ResearchReport } from "../shared/research";
 import { MarketplaceCustomerVoice, useCustomerVoiceSummary } from "./MarketplaceCustomerVoice";
 import { SupportingEvidence } from "./BusinessBriefing";
@@ -63,12 +63,25 @@ export function MarketIntelligence({ report, businessName, renderComparison }: {
   const takeaway = external.find((finding) => finding.kind === "observation");
   const prices = brands.filter((brand) => brand.facts.some((fact) => fact.dimension === "pricing")).length;
   const products = brands.filter((brand) => brand.facts.some((fact) => fact.dimension === "products")).length;
+  const researching = report.enabled && report.status === "running";
+  const competitorSteps = report.steps.filter((step) => step.agent === "competitor");
+  const noBrandsDescription = researching
+    ? "Market research is in progress. Comparisons will appear as their evidence is verified."
+    : !report.enabled
+      ? "Start a website analysis to gather competitor information for your market view."
+      : competitorSteps.some((step) => step.key.startsWith("competitor-brand-"))
+        ? "Potential competitors were found, but their published product information couldn't be verified well enough for a comparison."
+        : competitorSteps.some((step) => step.key.startsWith("competitor-site-") && step.status === "failed")
+          ? "Competitor websites couldn't be read, so a comparison isn't available yet."
+          : competitorSteps.some((step) => step.key.startsWith("discovery") && step.status === "failed")
+            ? "The competitor search couldn't be completed. Your saved business information is unchanged."
+            : "No verified brand profiles are available in this saved sample.";
   const available: Record<Area, string> = {
-    competitors: `${brands.length} verified ${brands.length === 1 ? "brand" : "brands"}`,
+    competitors: researching && !brands.length ? "Checking competitor websites" : `${brands.length} verified ${brands.length === 1 ? "brand" : "brands"}`,
     customer: customerVoiceSummary, trends: "Trend data not configured",
-    pricing: `${prices} ${prices === 1 ? "brand" : "brands"} with published pricing`,
-    products: `${products} ${products === 1 ? "brand" : "brands"} with product claims`,
-    gaps: `${gaps.length} ${gaps.length === 1 ? "hypothesis" : "hypotheses"} to validate`,
+    pricing: researching && !prices ? "Research in progress" : `${prices} ${prices === 1 ? "brand" : "brands"} with published pricing`,
+    products: researching && !products ? "Research in progress" : `${products} ${products === 1 ? "brand" : "brands"} with product claims`,
+    gaps: researching && !gaps.length ? "Research in progress" : `${gaps.length} ${gaps.length === 1 ? "hypothesis" : "hypotheses"} to validate`,
   };
   const selected = areas.find((item) => item.id === area);
   const findings = area === "pricing" ? findingsFor(["pricing"]) : area === "gaps" ? gaps : [];
@@ -81,17 +94,16 @@ export function MarketIntelligence({ report, businessName, renderComparison }: {
       <p className="section-eyebrow">UNDERSTAND THE MARKET</p>
       <h3 ref={heading} tabIndex={-1}>{selected?.label ?? "Your market, without the noise."}</h3>
       <p>{selected?.description ?? "Outside evidence here. Decisions and action plans in My growth plan."}</p>
-    </div><Badge variant="outline">{area === "customer" ? customerVoiceSummary : report.status === "running" ? "Research in progress" : !report.enabled ? "No market research saved" : report.status === "partial" ? "Partial research saved" : "Research saved"}</Badge></div>
+    </div><Badge variant="outline">{area === "customer" ? customerVoiceSummary : !report.enabled ? "No market research saved" : researching ? "Research in progress" : report.status === "partial" ? "Partial research saved" : "Research saved"}</Badge></div>
     {area === "overview" ? <BlurFade duration={0.25} blur="2px">
       <Card className="market-summary"><CardHeader><CardDescription><Globe2 />WHAT THE SAVED SAMPLE SHOWS</CardDescription>
-        <CardTitle>{takeaway?.title ?? (report.status === "running" ? "Market research is still running." : "Not enough external evidence for a market conclusion yet.")}</CardTitle></CardHeader>
+        <CardTitle>{takeaway?.title ?? (researching ? "Market research is still running." : !report.enabled ? "Start building your market view." : "Not enough external evidence for a market conclusion yet.")}</CardTitle></CardHeader>
         <CardContent>{takeaway ? <><p className="dashboard-clamped">{takeaway.detail}</p><Finding finding={takeaway} /></>
           : <p>{brands.length ? `${brands.length} verified brand profiles are available to explore, but no accepted market observation supports a broader conclusion.`
-            : "No verified brand profiles are available in this saved sample. This does not mean your business has no competitors."}</p>}
-          {!takeaway && report.status !== "running" && (brands.length
+            : <>{noBrandsDescription}{!researching && report.enabled && " This does not mean your business has no competitors."}</>}</p>}
+          {!takeaway && !researching && (brands.length
             ? <Button variant="outline" onClick={() => navigate("competitors")}>Explore captured brands<ArrowRight /></Button>
             : <Button variant="outline" asChild><a href="#overview?view=business">Manage website analysis<ArrowRight /></a></Button>)}
-          <p className="field-note">A captured sample, not the whole market or a measure of demand.</p>
         </CardContent>
       </Card>
       <nav className="market-area-grid" aria-label="Explore market research">{areas.map((item) => {
@@ -103,7 +115,6 @@ export function MarketIntelligence({ report, businessName, renderComparison }: {
     </BlurFade> : <>
       {area === "competitors" && renderComparison(marketReport)}
       {area === "products" && <>
-        <p className="field-note">Published product ranges and positioning, not sales rankings, measured demand or proven catalogue gaps.</p>
         {renderComparison(marketReport, ["products", "positioning"])}
       </>}
       {area === "pricing" && <>
@@ -115,7 +126,6 @@ export function MarketIntelligence({ report, businessName, renderComparison }: {
         <Badge variant="outline">Trend data not configured</Badge>
         <h4>No trend dataset or continuous monitoring is connected.</h4>
         <p>A website snapshot cannot establish rising demand, seasonal change or a new market trend. Market Radar alerts and price-change tracking are not running.</p>
-        <p className="field-note">Marketplace review samples are available in Customer voice, but do not establish trends. Trend analysis requires dated external sources or a licensed time series; change alerts also require repeated captures.</p>
       </CardContent></Card>}
       {area === "gaps" && <p className="dashboard-notice">Possible gaps are research hypotheses, not proven unmet demand. Evaluate a supported hypothesis in Growth intelligence before adding work to your plan.</p>}
       {!!findings.length && <div className="market-signals">{findings.slice(0, limit).map((finding) =>
@@ -126,14 +136,14 @@ export function MarketIntelligence({ report, businessName, renderComparison }: {
       </div>}
       {findings.length > limit && <Button variant="outline" onClick={() => setLimit((value) => value + 6)}>Show more findings</Button>}
       {area === "gaps" && !findings.length && <Card><CardContent className="market-data-gap"><h4>No accepted market-gap hypothesis yet.</h4>
-        <p>{report.status === "running" ? "Research is still running. Accepted hypotheses will appear when saved."
+        <p>{researching ? "Research is still running. Accepted hypotheses will appear when saved."
           : "Missing products in a small captured sample do not establish an unmet customer need. No market gap has been invented."}</p>
       </CardContent></Card>}
       {!!limitations.length && <details className="agent-sources"><summary>Evidence gaps and research scope</summary>
         <ul>{limitations.map((text) => <li key={text}>{text}</li>)}</ul>
       </details>}
     </>}
-    <div className="market-footer"><p className="field-note"><BookOpen className="inline size-3.5" /> Browsing saved evidence starts no new research.</p>
+    <div className="market-footer">
       <Button variant="ghost" asChild><a href="#growth">Decide what to do in Growth intelligence<ArrowRight /></a></Button>
     </div>
   </section>;

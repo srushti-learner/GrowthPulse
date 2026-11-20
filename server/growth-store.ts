@@ -2,6 +2,7 @@ import type { SqlDatabase } from "./sql-database.js";
 import { createHash } from "node:crypto";
 import { growthPlanItemSchema, type GrowthOpportunity, type GrowthPlanInput, type GrowthPlanItem } from "../shared/growth.js";
 import { researchAgentLabels, type ResearchReport, type ResearchAgent } from "../shared/research.js";
+import { growthWorkSchema, type GrowthWork } from "../shared/growth-work.js";
 
 export class GrowthError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -100,6 +101,19 @@ export function growthStore(database: SqlDatabase) {
         if (!item) throw new GrowthError(404, "Saved growth action not found.");
         if (!saved.changes) throw new GrowthError(409, "This growth action changed in another view. Reload before updating it.");
         return item;
+      })();
+    },
+    async updateGrowthWork(ownerId: string, businessId: string, id: string, revision: number, work: GrowthWork) {
+      const accepted = growthWorkSchema.parse(work);
+      return database.transaction(async () => {
+        await authorize(ownerId, businessId);
+        const item = (await this.listGrowthPlan(ownerId, businessId)).find((entry) => entry.opportunity.id === id);
+        if (!item) throw new GrowthError(404, "Save this action to your growth plan before connecting work.");
+        const updated = await database.prepare(`UPDATE growth_plan SET opportunity_json = ?, revision = revision + 1,
+          updated_at = ? WHERE business_id = ? AND opportunity_id = ? AND revision = ?`)
+          .run(JSON.stringify({ ...item.opportunity, work: accepted }), new Date().toISOString(), businessId, id, revision);
+        if (!updated.changes) throw new GrowthError(409, "This action changed in another view. Reload before updating its work.");
+        return (await this.listGrowthPlan(ownerId, businessId)).find((entry) => entry.opportunity.id === id)!;
       })();
     },
   };

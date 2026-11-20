@@ -3,7 +3,7 @@ import request from "supertest";
 import { createApp } from "./app.js";
 import { openStore, type Store } from "./database.js";
 import { loadConfig } from "./config.js";
-import { createContactSender, type ContactSender } from "./contact.js";
+import { createContactSender, createGoDaddyContactSender, type ContactSender } from "./contact.js";
 import { contactMailbox, type ContactInput } from "../shared/contact.js";
 
 const smtp = vi.hoisted(() => ({ sendMail: vi.fn(), createTransport: vi.fn() }));
@@ -23,6 +23,94 @@ afterEach(async () => {
   await Promise.all(stores.splice(0).map((store) => store.close()));
   vi.restoreAllMocks();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
+});
+
+describe("GoDaddy contact email gateway", () => {
+  const settings = { CONTACT_FORM_RECIPIENT_EMAIL: "configured-owner@example.test" };
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+
+  it("selects the gateway only when explicitly enabled with a valid recipient, without requiring SMTP credentials", () => {
+    expect(loadConfig({ ...settings }).godaddyEmail).toBeUndefined();
+    const config = loadConfig({ CONTACT_EMAIL_ENABLED: "true", ...settings, SMTP_PORT: "invalid" });
+    expect(config.godaddyEmail).toEqual(settings);
+    expect(config.smtp).toBeUndefined();
+    expect(loadConfig({
+      CONTACT_EMAIL_ENABLED: "true", CONTACT_FORM_RECIPIENT_EMAIL: ` ${settings.CONTACT_FORM_RECIPIENT_EMAIL} `,
+    }).godaddyEmail).toEqual(settings);
+    for (const recipient of ["", " ", "not-an-email", "a@example.test\nBcc: injected@example.test"]) {
+      expect(() => loadConfig({ CONTACT_EMAIL_ENABLED: "true", CONTACT_FORM_RECIPIENT_EMAIL: recipient })).toThrow("CONTACT_FORM_RECIPIENT_EMAIL");
+    }
+  });
+
+  it("uses the configured recipient and visitor reply-to, omits the sender, and waits for gateway acceptance", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(json({ success: true, messageId: "fixture-message-id" }));
+    vi.stubGlobal("fetch", fetch);
+    await createGoDaddyContactSender(settings)(input);
+    expect(fetch).toHaveBeenCalledWith("http://127.0.0.1:2525/api/email/send", expect.objectContaining({
+      method: "POST", redirect: "error", signal: expect.any(AbortSignal),
+      headers: { "content-type": "application/json" },
+    }));
+    expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toEqual({
+      to: [settings.CONTACT_FORM_RECIPIENT_EMAIL], replyTo: input.email,
+      subject: "GrowthPulse contact: Partnership",
+      text: `Enquiry: Partnership\nName: ${input.name}\nEmail: ${input.email}\nCompany: ${input.company}\n\n${input.message}`,
+    });
+    expect(smtp.createTransport).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { body: { success: false, error: "private verified domain list" }, status: 200, name: "ContactGatewayRejected" },
+    { body: { success: true }, status: 200, name: "ContactGatewayInvalidResponse" },
+    { body: { success: true, messageId: " " }, status: 200, name: "ContactGatewayInvalidResponse" },
+    { body: { success: "true", messageId: "fixture-id" }, status: 200, name: "ContactGatewayInvalidResponse" },
+    { body: null, status: 200, name: "ContactGatewayInvalidResponse" },
+    { body: { success: true, messageId: "fixture-id" }, status: 502, name: "ContactGatewayHttp502" },
+  ])("rejects unconfirmed acceptance without revealing gateway details ($name)", async ({ body, status, name }) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(body, status)));
+    await expect(createGoDaddyContactSender(settings)(input)).rejects.toMatchObject({
+      name, message: "The contact email gateway did not confirm acceptance.",
+    });
+  });
+
+  it("reports non-JSON responses and network failures explicitly", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(new Response("not JSON"))
+      .mockRejectedValueOnce(new TypeError("synthetic private connection detail"));
+    vi.stubGlobal("fetch", fetch);
+    const sender = createGoDaddyContactSender(settings);
+    await expect(sender(input)).rejects.toMatchObject({ name: "ContactGatewayInvalidResponse" });
+    await expect(sender(input)).rejects.toMatchObject({ name: "ContactGatewayNetwork" });
+  });
+
+  it("keeps the 30-second abort deadline active while reading a stalled response body", async () => {
+    const deadline = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        deadline.signal.addEventListener("abort", () => controller.error(deadline.signal.reason), { once: true });
+      },
+    });
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(stream));
+    vi.stubGlobal("fetch", fetch);
+    const pending = createGoDaddyContactSender(settings)(input);
+    const rejection = expect(pending).rejects.toMatchObject({ name: "ContactGatewayTimeout" });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+    expect(timeout).toHaveBeenCalledWith(30_000);
+    expect(fetch.mock.calls[0][1]?.signal).toBe(deadline.signal);
+    deadline.abort(new DOMException("synthetic deadline", "TimeoutError"));
+    await rejection;
+  });
+
+  it("preserves the public API's failure response and logs only safe gateway diagnostics", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ success: false, error: "private verified domain list" })));
+    const response = await request(appWith(createGoDaddyContactSender(settings)))
+      .post("/api/contact").set("Origin", origin).send(input).expect(502);
+    expect(response.body).not.toHaveProperty("status");
+    expect(JSON.stringify(response.body)).not.toContain("private verified domain list");
+    expect(log.mock.calls).toEqual([["Contact email failed:", "ContactGatewayRejected"]]);
+  });
 });
 
 describe("public contact API", () => {

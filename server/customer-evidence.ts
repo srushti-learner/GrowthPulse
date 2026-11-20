@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Product } from "../shared/products.js";
 import type { MarketplaceReport } from "../shared/marketplace.js";
+import { marketplaceFeedbackScope } from "../shared/marketplace.js";
 import type { ResearchFinding, ResearchSource } from "../shared/research.js";
 import { productFingerprint } from "./product-intelligence.js";
 
@@ -25,7 +26,7 @@ export function customerEvidence(saved: SavedReport[]): CustomerEvidence {
         const matches = report.listings.flatMap((listing) => listing.reviews.filter((review) => review.id === id).map((review) => ({ listing, review })));
         const match = matches.length === 1 ? matches[0] : undefined;
         if (!match || match.listing.status !== "captured"
-          || (theme.scope === "own_product" ? !["my_listing", "other_seller"].includes(match.listing.relation) : match.listing.relation !== "alternative")) {
+          || marketplaceFeedbackScope(match.listing.relation) !== theme.scope) {
           unsupported++; return [];
         }
         const { listing, review } = match;
@@ -45,7 +46,7 @@ export function customerEvidence(saved: SavedReport[]): CustomerEvidence {
       seen.add(identity);
       return [{
         kind: "hypothesis", title: `${product.name}: ${theme.title}`.slice(0, 150),
-        detail: `Prior AI interpretation of ${theme.scope === "own_product" ? "owner-confirmed same-product" : "confirmed alternative-product"} review excerpts: ${theme.title}. Suggested test: ${theme.experiment} This is a dated sample, not a verified product defect or market-wide conclusion.`.slice(0, 600),
+        detail: `Prior AI interpretation of ${theme.scope === "own_product" ? "matched same-product" : "matched alternative-product"} review excerpts: ${theme.title}. Suggested test: ${theme.experiment} This is a dated sample, not a verified product defect or market-wide conclusion.`.slice(0, 600),
         sources: selected.slice(0, 2),
       }];
     });
@@ -63,7 +64,7 @@ export function customerEvidence(saved: SavedReport[]): CustomerEvidence {
     limitations: [
       findings.length
         ? `Reused ${findings.length} saved AI theme(s) with two original supporting excerpts each. These are hypotheses, not new independent observations. No additional review collection or customer-analysis call was made.`
-        : "No eligible analysed, owner-confirmed individual review themes were available in the saved sample. Aggregate ratings and brand marketing are not customer voice evidence.",
+        : "No eligible analysed, matched individual review themes were available in the saved sample. Aggregate ratings and brand marketing are not customer voice evidence.",
       "Reviews are a dated, selected sample, not representative current sentiment. Owner exports are not independently fetched or verified. Alternative-product reviews do not establish an issue with your product.",
       "Another seller's reviews can concern delivery or service; they do not prove a physical product defect or ownership of that seller's listing.",
       `Checked at most ${customerEvidenceLimits.reports} recent saved product reports. Omitted: ${stale} catalogue-stale, ${unanalysed} unanalysed, ${refreshing} being refreshed, ${unsupported} unsupported theme(s), ${Math.max(0, available - findings.length)} beyond the theme budget.`,

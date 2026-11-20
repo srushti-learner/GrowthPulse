@@ -185,7 +185,6 @@ export function WebsiteWorkspace({ authenticated, onSessionExpired, selectedBusi
         {"businessId" in result && <a className="primary-link" href={`#products?business=${result.businessId}`}>Open your products<Icon name="arrow" /></a>}
         {!!result.catalogue.issues.length && <details className="agent-sources"><summary>Product records needing attention ({result.catalogue.skipped})</summary>
           <ul>{result.catalogue.issues.map((issue, index) => <li key={index}><strong>{issue.name}</strong> · {issue.reference}<br />{issue.message}</li>)}</ul>
-          <p className="field-note">Usable products are already available. Resolve uncertain records with the optional saved-scan tools in Products, or add a missed product manually.</p>
         </details>}
       </div>}
       {"businessId" in result && !result.catalogue && <p className="field-note">No products were added automatically by this run. If no supported product data was captured, add missing products manually in <a href={`#products?business=${result.businessId}`}>Products</a>.</p>}

@@ -79,7 +79,7 @@ function contextFor(groups: ResearchSource[][], products: ResearchProduct[], fin
 }
 
 async function analyse(complete: AgentModel, model: string, instruction: string, context: ReturnType<typeof contextFor>, signal: AbortSignal,
-  requireCompetitorEvidence: boolean): Promise<Accepted> {
+  requireCompetitorEvidence: boolean, correction?: { rejectedFindings: unknown[]; invalidPaths: string[] }): Promise<Accepted> {
   const result = await complete({
     model, max_tokens: researchLimits.outputTokens,
     system: `You are a bounded e-commerce research specialist. ${instruction}
@@ -98,8 +98,9 @@ Accepted findings are prior interpretations, not independent evidence. Store Int
 When Store Intelligence is unavailable or failed, state that gap and use only captured evidence; never invent its conclusions.
 Do not include numeric prices, discount percentages, relative-price claims, margin, retention, customer migration, market-share or bestseller claims in findings.
 Published prices and pack descriptions belong in the extractive brand profiles, not inferred cross-product comparisons.
-Keep each detail under 350 characters and each limitation under 250 characters. Do not output private reasoning.`,
-    messages: [{ role: "user", content: JSON.stringify(context) }],
+Keep each detail under 350 characters and each limitation under 250 characters. Do not output private reasoning.
+${correction ? "Correct the rejected findings using the supplied captured evidence and validation paths. Copy an exact supported quote for observations; use hypotheses for interpretations and suggestions for proposed actions. Omit claims that cannot be supported. This is the only correction attempt." : ""}`,
+    messages: [{ role: "user", content: JSON.stringify({ ...context, ...(correction ? { correction } : {}) }) }],
     tools: [{
       name: "record_findings", strict: true, description: "Propose individually cited findings for validation and independent persistence.",
       input_schema: modelInputSchema(outputSchema, context.sources.map((source) => source.id)),
@@ -146,10 +147,29 @@ Keep each detail under 350 characters and each limitation under 250 characters. 
     const { sourceIds: _, ...finding } = parsed.data;
     findings.push(researchFindingSchema.parse({ ...finding, sources }));
   }
-  return {
+  const accepted: Accepted = {
     findings, limitations: paths.length ? ["Some proposed findings or limitations failed validation and were omitted.", ...limitations].slice(0, 5) : limitations,
     diagnostic: paths.length ? { code: "finding_validation", paths: paths.slice(0, 10) } : null,
   };
+  if (!findings.length && envelope.findings.length && paths.length && !correction) {
+    const repair = { rejectedFindings: envelope.findings, invalidPaths: paths };
+    if (JSON.stringify({ ...context, correction: repair }).length > researchLimits.contextCharacters) {
+      console.warn("Research finding correction stopped: context budget exhausted.");
+      accepted.limitations = [...accepted.limitations.slice(0, 4), "The captured context exceeded the correction budget; no extra AI request was made."];
+      return accepted;
+    }
+    console.warn("Research findings need correction:", { paths });
+    try {
+      return await analyse(complete, model, instruction, context, signal, requireCompetitorEvidence,
+        repair);
+    } catch (error) {
+      signal.throwIfAborted();
+      if (!(error instanceof ResearchLimit)) throw error;
+      console.warn("Research finding correction stopped: AI request budget exhausted.");
+      accepted.limitations = [...accepted.limitations.slice(0, 4), "The AI request budget was exhausted before a correction could run."];
+    }
+  }
+  return accepted;
 }
 
 function steps(journal: ResearchJournal, signal: AbortSignal) {
@@ -249,7 +269,7 @@ export function createResearchAgent(options: {
           return { artifact, ...artifact, status: artifact.diagnostic || !artifact.findings.length
             || (key === "competitor" && (input.verifiedBrands.length < 3 || input.verifiedBrands.some((brand) => !brand.marketVerified)))
             ? "limited" : "completed" };
-        }, { modelPolicy, instruction, input });
+        }, { modelPolicy, findingsPolicyVersion: 2, instruction, input });
       };
       const completedFindings = async (keys: string[]) => {
         const groups = await Promise.all(keys.map(async (key) => (await journal.read(key))?.step.findings ?? []));
@@ -416,7 +436,7 @@ export function createResearchAgent(options: {
               return { artifact, profile: artifact.profile ?? undefined, limitations: artifact.limitations,
                 diagnostic: artifact.diagnostic,
                 status: artifact.profile?.marketVerified ? "completed" : "limited" };
-            }, { modelPolicy, verificationVersion: 2, scan, plan, merchant: own.sources });
+            }, { modelPolicy, verificationVersion: 3, scan, plan, merchant: own.sources });
           };
           const parallelSlot = candidates.length > 1 ? claimWorkSlot() : null;
           try {

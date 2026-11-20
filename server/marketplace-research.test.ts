@@ -24,6 +24,7 @@ ${amazon},Fixture hair oil,The bottle leaks during dispensing.,2,2026-10-01,4006
 ${amazon},Fixture hair oil,Packaging leaks every time I pour.,1,2026-10-02,4006381333931
 ${flipkart},Other hair oil,The bottle is easy to dispense.,5,2026-10-03,
 `;
+const comparativeCsv = `${csv}${flipkart},Other hair oil,The dispenser makes pouring simple.,5,2026-10-04,\n`;
 describe("bounded marketplace research in the existing Market Intelligence agent", () => {
   let directory: string, path: string, store: Store, app: ReturnType<typeof createApp>;
   const searchCall = vi.fn();
@@ -39,16 +40,24 @@ describe("bounded marketplace research in the existing Market Intelligence agent
     complete.mockImplementation(async (input) => {
       const name = input.tool_choice?.type === "tool" ? input.tool_choice.name : "";
       const context = JSON.parse(String(input.messages[0].content));
-      return { stop_reason: "tool_use", content: [{ type: "tool_use", id: "fixture-tool", name, input: name === "plan_marketplace_search"
-        ? { category: "hair oil" } : { themes: [{ title: "Possible dispensing issue", sentiment: "negative", scope: "own_product",
-          reviewIds: context.reviews.filter((value: { relation: string }) => value.relation === "my_listing").map((value: { id: string }) => value.id),
-          experiment: "Check packaging with the owner before testing a dispensing improvement." }] } }] };
+      const payload = name === "plan_marketplace_search" ? { category: "hair oil" }
+        : name === "match_marketplace_products" ? { matches: context.listings.map((item: { id: string; title: string }) => ({
+          listingId: item.id,
+          relation: item.title === context.catalogue.name ? "same_product" : context.catalogue.name.includes("hair oil") ? "alternative" : "unconfirmed",
+          productEvidence: item.title === context.catalogue.name ? context.catalogue.name : "hair oil",
+          listingEvidence: item.title === context.catalogue.name ? item.title : "hair oil",
+          reason: "Captured product identity or shared hair-oil purpose; seller ownership is unknown.",
+        })) } : { themes: [{ title: "Possible dispensing issue", sentiment: "negative", scope: "own_product",
+          reviewIds: context.reviews.filter((value: { relation: string }) => ["my_listing", "other_seller", "same_product"].includes(value.relation)).map((value: { id: string }) => value.id),
+          experiment: "Check packaging with the owner before testing a dispensing improvement." }] };
+      return { stop_reason: "tool_use", content: [{ type: "tool_use", id: "fixture-tool", name, input: payload }] };
     });
     const scan = createWebsiteScanner(async (url) => {
       if (url.pathname === "/robots.txt") return { status: 200, headers: { "content-type": "text/plain" }, body: "User-agent: *\nAllow: /" };
       return { status: 200, headers: { "content-type": "text/html" }, body: `<html><head><script type="application/ld+json">${JSON.stringify({
         "@type": "Product", name: url.hostname.includes("amazon") ? "Fixture hair oil" : "Other hair oil", description: "Published hair oil description.",
         url: url.href, gtin13: url.hostname.includes("amazon") ? "4006381333931" : "", size: "100 ml",
+        brand: { name: url.hostname.includes("amazon") ? "Fixture" : "Other" }, model: "Oil100",
         offers: { price: "399", priceCurrency: "INR", seller: { name: "Published fixture seller" } },
         aggregateRating: { ratingValue: "4.2", reviewCount: 123 },
         review: [{ reviewBody: "The bottle leaks during dispensing.", datePublished: "2026-10-01", author: { name: "Private reviewer" }, reviewRating: { ratingValue: 2 } }],
@@ -78,6 +87,183 @@ describe("bounded marketplace research in the existing Market Intelligence agent
     return request(app).patch(`${user.endpoint}/match`).set("Cookie", user.cookie).set("Origin", origin)
       .send({ reportId: saved.id, listingId: saved.listings[index].id, relation });
   }
+  function comparisonResult(saved: MarketplaceReport) {
+    return { title: "Dispensing experience",
+      ownProduct: { summary: "Sampled reviewers describe leaking bottles.", reviewIds: saved.listings[0].reviews.map((value) => value.id) },
+      alternatives: { summary: "Comparable-product reviewers praise easy dispensing.", reviewIds: saved.listings[1].reviews.map((value) => value.id) },
+      opportunity: "Explore whether a different dispenser addresses the reported pouring problems.",
+      experiment: "Test both dispensers with a small group and record leaks and ease of pouring." };
+  }
+  function analysisWithComparison(saved: MarketplaceReport, comparison = comparisonResult(saved)) {
+    const original = complete.getMockImplementation()!;
+    complete.mockImplementation(async (input, signal) => {
+      if (input.tool_choice?.type !== "tool" || input.tool_choice.name !== "record_marketplace_themes") return original(input, signal);
+      return { stop_reason: "tool_use", content: [{ type: "tool_use", id: "comparison-fixture", name: "record_marketplace_themes",
+        input: { themes: [], comparisons: [comparison] } }] };
+    });
+  }
+  it.each([
+    ["1 kg", "1000 g", "same_product"],
+    ["100 ml", "200 ml", "unconfirmed"],
+    ["100 ml", "100 ml; 200 ml", "unconfirmed"],
+    ["100 ml red", "100 ml blue", "unconfirmed"],
+    ["Pack of 1, 100 ml", "Pack of 2, 100 ml", "unconfirmed"],
+  ])("checks GTIN pack/variant compatibility: %s versus %s", async (variant, captured, relation) => {
+    const user = await owner();
+    const product = await store.saveProduct(user.user.id, user.business.id, {
+      ...emptyProduct, name: "Fixture product", gtin: user.product.gtin, variants: variant,
+    }, user.product.id);
+    const saved = importMarketplaceCsv(product, `product_url,title,review,gtin,variants\n${amazon},Fixture product,The dispenser is easy to use.,${product.gtin},"${captured}"`);
+    expect(saved.listings[0]).toMatchObject({ identifierMatch: true, relation });
+    expect(complete).not.toHaveBeenCalled();
+  });
+  it("automatically matches a specific sourced name without a GTIN and keeps owner corrections authoritative", async () => {
+    const user = await owner();
+    const saved = (await post(user, "/import", { consent: true,
+      csv: `product_url,title,review\n${amazon},Fixture hair oil,The bottle leaks during dispensing.\n${amazon},Fixture hair oil,Packaging leaks every time I pour.\n`,
+    }).expect(201)).body.report as MarketplaceReport;
+    expect(saved.listings[0].relation).toBe("unconfirmed");
+    expect(complete).not.toHaveBeenCalled();
+    await post(user, "/analyse", { reportId: saved.id, consent: true }).expect(202);
+    const analysed = (await finished(user)).report!;
+    expect(analysed.listings[0]).toMatchObject({ relation: "same_product", matching: { method: "ai", productEvidence: user.product.name } });
+    expect(analysed.themes).toHaveLength(1);
+    expect(complete).toHaveBeenCalledTimes(2);
+    const corrected = (await confirm(user, analysed, 0, "excluded").expect(200)).body.report as MarketplaceReport;
+    expect(corrected).toMatchObject({ themes: [], comparisons: [], analysedAt: null, listings: [{ relation: "excluded", matching: { method: "owner" } }] });
+    await post(user, "/analyse", { reportId: corrected.id, consent: true }).expect(400);
+    await get(user).expect(200);
+    expect(complete).toHaveBeenCalledTimes(2);
+  });
+  it.each(["Fixture", "Other"])("uses captured brand identity for a short product name, without accepting a conflicting %s brand", async (brand) => {
+    const user = await owner();
+    await store.saveProduct(user.user.id, user.business.id, { ...emptyProduct, name: "Fixture oil", description: "Hair oil." }, user.product.id);
+    const saved = (await post(user, "/import", { consent: true, csv: `product_url,title,review,brand
+${amazon},Fixture oil,The bottle leaks during dispensing.,${brand}
+${amazon},Fixture oil,Packaging leaks every time I pour.,${brand}
+` }).expect(201)).body.report as MarketplaceReport;
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await post(user, "/analyse", { reportId: saved.id, consent: true }).expect(202);
+    const result = await finished(user);
+    if (brand === "Fixture") {
+      expect(result.error).toBeNull();
+      expect(result.report!.listings[0]).toMatchObject({ relation: "same_product", brand: "Fixture", matching: { method: "ai" } });
+      expect(complete).toHaveBeenCalledTimes(2);
+    } else {
+      expect(result.error).toContain("Automatic matching could not find two relevant");
+      expect(result.report!.listings[0].relation).toBe("unconfirmed");
+      expect(complete).toHaveBeenCalledOnce();
+    }
+  });
+  it("matches a reordered or expanded product title using captured identifying fragments, not an exact whole-title requirement", async () => {
+    const user = await owner();
+    const saved = (await post(user, "/import", { consent: true, csv: `product_url,title,review,brand
+${amazon},Fixture enriched hair oil,The bottle leaks during dispensing.,Fixture
+${amazon},Fixture enriched hair oil,Packaging leaks every time I pour.,Fixture
+` }).expect(201)).body.report as MarketplaceReport;
+    const original = complete.getMockImplementation()!;
+    complete.mockImplementation(async (input, signal) => {
+      if (input.tool_choice?.type !== "tool" || input.tool_choice.name !== "match_marketplace_products") return original(input, signal);
+      return { stop_reason: "tool_use", content: [{ type: "tool_use", id: "expanded-name", name: "match_marketplace_products",
+        input: { matches: [{ listingId: saved.listings[0].id, relation: "same_product",
+          productEvidence: "Fixture hair oil", listingEvidence: "Fixture enriched hair oil", reason: "Matching named product and purpose; seller ownership unknown." }] } }] };
+    });
+    await post(user, "/analyse", { reportId: saved.id, consent: true }).expect(202);
+    expect((await finished(user)).report!.listings[0]).toMatchObject({ relation: "same_product", matching: { method: "ai" } });
+    expect(complete).toHaveBeenCalledTimes(2);
+  });
+  it.each(["unknown-listing", "duplicate-listing", "invented-quote", "category-only-identity"])(
+    "keeps unsupported %s decisions out of automatically matched feedback", async (failure) => {
+      const user = await owner(), saved = (await post(user, "/import", { consent: true, csv }).expect(201)).body.report as MarketplaceReport;
+      const original = complete.getMockImplementation()!;
+      complete.mockImplementation(async (input, signal) => {
+        if (input.tool_choice?.type !== "tool" || input.tool_choice.name !== "match_marketplace_products") return original(input, signal);
+        const proposal = { listingId: failure === "unknown-listing" ? "m_0000000000000000" : saved.listings[1].id,
+          relation: failure === "category-only-identity" ? "same_product" : "alternative",
+          productEvidence: failure === "invented-quote" ? "Invented product purpose" : "hair oil", listingEvidence: "hair oil", reason: "Unverified fixture proposal." };
+        return { stop_reason: "tool_use", content: [{ type: "tool_use", id: "invalid-match", name: "match_marketplace_products",
+          input: { matches: failure === "duplicate-listing" ? [proposal, proposal] : [proposal] } }] };
+      });
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+      await post(user, "/analyse", { reportId: saved.id, consent: true }).expect(202);
+      const result = (await finished(user)).report!;
+      expect(result.listings[1].relation).toBe("unconfirmed");
+      expect(result.limitations.join(" ")).toContain("could not be supported");
+      expect(warning).toHaveBeenCalledWith("Marketplace automatic matches omitted:", expect.any(Object));
+      expect(result.themes[0].reviewIds).toEqual(saved.listings[0].reviews.map((value) => value.id));
+    });
+  it("saves a cross-product comparison with original review references and invalidates it after an owner correction", async () => {
+    const user = await owner(), saved = (await post(user, "/import", { consent: true, csv: comparativeCsv }).expect(201)).body.report as MarketplaceReport;
+    analysisWithComparison(saved);
+    await post(user, "/analyse", { reportId: saved.id, consent: true }).expect(202);
+    const result = (await finished(user)).report!;
+    expect(result.comparisons).toEqual([comparisonResult(saved)]);
+    expect(result).toMatchObject({ analysisVersion: 2, matchingVersion: 1 });
+    expect(result.listings.map((value) => value.relation)).toEqual(["same_product", "alternative"]);
+    await post(user, "/analyse", { reportId: saved.id, consent: true }).expect(200);
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect((await get(user).expect(200)).body.report.comparisons).toEqual(result.comparisons);
+    const corrected = (await confirm(user, result, 1, "unconfirmed").expect(200)).body.report as MarketplaceReport;
+    expect(corrected).toMatchObject({ comparisons: [], themes: [], analysedAt: null });
+    expect(corrected.listings[1].matching?.method).toBe("owner");
+    const original = complete.getMockImplementation()!;
+    complete.mockImplementation(async (input, signal) => {
+      if (input.tool_choice?.type === "tool" && input.tool_choice.name === "record_marketplace_themes") {
+        return { stop_reason: "tool_use", content: [{ type: "tool_use", id: "single-sided", name: "record_marketplace_themes", input: { themes: [], comparisons: [] } }] };
+      }
+      return original(input, signal);
+    });
+    await post(user, "/analyse", { reportId: corrected.id, consent: true }).expect(202);
+    expect((await finished(user)).report!.listings[1].relation).toBe("unconfirmed");
+    expect(complete).toHaveBeenCalledTimes(3);
+  });
+  it.each(["unknown-review", "duplicate-review", "cross-scope", "unsupported-price"])("rejects %s comparison evidence without changing saved sources", async (failure) => {
+    const user = await owner(), saved = (await post(user, "/import", { consent: true, csv: comparativeCsv }).expect(201)).body.report as MarketplaceReport;
+    const comparison = comparisonResult(saved);
+    if (failure === "unknown-review") comparison.ownProduct.reviewIds[0] = "r_0000000000000000";
+    if (failure === "duplicate-review") comparison.ownProduct.reviewIds[1] = comparison.ownProduct.reviewIds[0];
+    if (failure === "cross-scope") comparison.alternatives.reviewIds = [...comparison.ownProduct.reviewIds];
+    if (failure === "unsupported-price") comparison.opportunity = "This product is 50% cheaper and has a price advantage.";
+    analysisWithComparison(saved, comparison);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await post(user, "/analyse", { reportId: saved.id, consent: true }).expect(202);
+    const result = await finished(user);
+    expect(result.error).toContain("customer comparison");
+    expect(result.report).toEqual(saved);
+    expect(complete).toHaveBeenCalledTimes(2);
+  });
+  it.each(["own-product", "alternatives"])("analyses %s-only samples without manufacturing the other side", async (scope) => {
+    const user = await owner();
+    const saved = (await post(user, "/import", { consent: true, csv: comparativeCsv }).expect(201)).body.report as MarketplaceReport;
+    await confirm(user, saved, scope === "own-product" ? 1 : 0, "excluded").expect(200);
+    if (scope === "alternatives") await confirm(user, saved, 1, "alternative").expect(200);
+    complete.mockResolvedValue({ stop_reason: "tool_use", content: [{ type: "tool_use", id: "one-side", name: "record_marketplace_themes",
+      input: { themes: [{ title: "Dispensing feedback", scope: scope === "own-product" ? "own_product" : "alternatives", sentiment: "mixed",
+        reviewIds: saved.listings[scope === "own-product" ? 0 : 1].reviews.map((value) => value.id), experiment: "Ask a small group about dispensing." }], comparisons: [] } }] });
+    await post(user, "/analyse", { reportId: saved.id, consent: true }).expect(202);
+    const result = (await finished(user)).report!;
+    expect(result.comparisons).toEqual([]);
+    expect(result.themes[0].scope).toBe(scope === "own-product" ? "own_product" : "alternatives");
+    expect(complete).toHaveBeenCalledOnce();
+  });
+  it("loads and explicitly upgrades legacy analysis without changing owner-selected matches", async () => {
+    const user = await owner(), saved = importMarketplaceCsv(user.product, comparativeCsv);
+    delete saved.comparisons;
+    for (const item of saved.listings) delete item.matching;
+    saved.listings[0].relation = "my_listing";
+    saved.listings[1].relation = "alternative";
+    saved.analysedAt = new Date().toISOString();
+    const pending = await store.beginMarketplace(user.user.id, user.business.id, user.product.id, saved.fingerprint, randomUUID(), "legacy-fixture");
+    await store.finishMarketplace(user.user.id, user.business.id, user.product.id, pending.id, saved);
+    expect((await get(user).expect(200)).body.report.comparisons).toBeUndefined();
+    expect(complete).not.toHaveBeenCalled();
+    analysisWithComparison(saved);
+    await post(user, "/analyse", { reportId: saved.id, consent: true }).expect(202);
+    const result = (await finished(user)).report!;
+    expect(result.comparisons).toHaveLength(1);
+    expect(result.listings.map((item) => item.relation)).toEqual(["my_listing", "alternative"]);
+    expect(complete).toHaveBeenCalledOnce();
+  });
   it("uses the latest saved customer report, excludes active refreshes and stale products, and keeps failed attempts separate", async () => {
     const user = await owner(), report = importMarketplaceCsv(user.product, csv);
     report.listings[0].relation = "my_listing";
@@ -115,14 +301,16 @@ describe("bounded marketplace research in the existing Market Intelligence agent
     expect(scanner).toHaveBeenCalledTimes(2);
     expect(scanner.mock.calls.every((call) => call[2]?.singlePage)).toBe(true);
     expect(saved.listings).toHaveLength(2);
-    expect(saved.listings[0]).toMatchObject({ title: "Fixture hair oil", identifierMatch: true, relation: "unconfirmed", price: "399", currency: "INR", rating: 4.2, reviewCount: 123 });
+    expect(saved.listings[0]).toMatchObject({ title: "Fixture hair oil", identifierMatch: true, relation: "same_product", matching: { method: "identifier" }, price: "399", currency: "INR", rating: 4.2, reviewCount: 123 });
+    expect(saved.listings[0]).toMatchObject({ brand: "Fixture", model: "Oil100" });
+    expect(saved.listings[1]).toMatchObject({ relation: "alternative", matching: { method: "ai", productEvidence: "hair oil", listingEvidence: "hair oil" } });
     expect(saved.listings.flatMap((item) => item.reviews)).toHaveLength(1);
     expect(JSON.stringify(saved)).not.toMatch(/999999|Private reviewer|Unverified search title/);
     expect(saved.themes).toEqual([]);
     await post(user, "", { consent: true, requestKey }).expect(200);
     for (let index = 0; index < 4; index++) await get(user).expect(200);
     expect(searchCall).toHaveBeenCalledTimes(4);
-    expect(complete).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledTimes(2);
     expect((await store.listProducts(user.user.id, user.business.id))[0]).toEqual(user.product);
   });
   it("retains explicit coverage failures without fabricating review sentiment or silently broadening access", async () => {
@@ -138,7 +326,7 @@ describe("bounded marketplace research in the existing Market Intelligence agent
     await confirm(user, saved).expect(400);
     expect(complete).not.toHaveBeenCalled(); expect(searchCall).not.toHaveBeenCalled();
   });
-  it("collects exact-listing static review blocks without JSON-LD, deduplicates and redacts them, and still requires match confirmation", async () => {
+  it("collects exact-listing static reviews, redacts them and automatically matches specific product names before explicit analysis", async () => {
     const user = await owner();
     const scan = createWebsiteScanner(async (url) => url.pathname === "/robots.txt"
       ? { status: 200, headers: { "content-type": "text/plain" }, body: "User-agent: *\nAllow: /" }
@@ -152,13 +340,11 @@ describe("bounded marketplace research in the existing Market Intelligence agent
     const result = await finished(user);
     expect(result.progress).toBeNull();
     const saved = result.report!;
-    expect(saved.listings[0]).toMatchObject({ status: "captured", title: "Fixture hair oil", relation: "unconfirmed", rating: null, reviewCount: null });
+    expect(saved.listings[0]).toMatchObject({ status: "captured", title: "Fixture hair oil", relation: "same_product", matching: { method: "ai" }, rating: null, reviewCount: null });
     expect(saved.listings[0].reviews).toHaveLength(2);
     expect(saved.listings[0].reviews[0]).toMatchObject({ text: "The dispenser leaks, contact [email removed].", rating: null, date: null });
     expect(JSON.stringify(saved)).not.toMatch(/Private buyer|buyer@example/);
-    await post(user, "/analyse", { reportId: saved.id, consent: true }).expect(400);
-    expect(complete).not.toHaveBeenCalled();
-    await confirm(user, saved).expect(200);
+    expect(complete).toHaveBeenCalledOnce();
     await post(user, "/analyse", { reportId: saved.id, consent: true }).expect(202);
     expect((await finished(user)).report!.themes).toHaveLength(1);
   });
@@ -207,7 +393,7 @@ describe("bounded marketplace research in the existing Market Intelligence agent
     expect(warning).toHaveBeenCalledWith(expect.stringContaining("category queries skipped"));
     expect(scanner).toHaveBeenCalledTimes(2);
     expect(result.report!.listings.every((item) => item.relation === "unconfirmed")).toBe(true);
-    expect(complete).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledTimes(2);
   });
   it("retries a saved failed attempt explicitly while retaining previous evidence until success", async () => {
     const user = await owner();
@@ -227,7 +413,7 @@ describe("bounded marketplace research in the existing Market Intelligence agent
     const recovered = await finished(user);
     expect(recovered.error).toBeNull();
     expect(recovered.report!.id).not.toBe(previous.id);
-    expect(complete).toHaveBeenCalledTimes(2);
+    expect(complete).toHaveBeenCalledTimes(3);
     expect(searchCall).toHaveBeenCalledTimes(4);
   });
   it("does not substitute a single explicitly different recommended product for the requested listing", async () => {
@@ -247,22 +433,21 @@ describe("bounded marketplace research in the existing Market Intelligence agent
     expect(JSON.stringify(saved)).not.toContain("This other item");
     expect(JSON.stringify(saved)).not.toContain("Visible review");
   });
-  it("imports authorized reviews, requires confirmation, preserves own-product scope and saves analysis across restart", async () => {
+  it("imports authorized reviews, automatically matches GTINs, preserves scope and saves analysis across restart", async () => {
     const user = await owner();
     const saved = (await post(user, "/import", { consent: true, csv }).expect(201)).body.report as MarketplaceReport;
     expect(saved.listings[0]).toMatchObject({ method: "owner_export", identifierMatch: true, rating: null, reviewCount: null });
-    await post(user, "/analyse", { reportId: saved.id, consent: true }).expect(400);
-    await confirm(user, saved).expect(200);
     await post(user, "/analyse", { reportId: saved.id, consent: true }).expect(202);
     const result = await finished(user);
     expect(result.report!.themes[0]).toMatchObject({ scope: "own_product", sentiment: "negative" });
-    expect(complete).toHaveBeenCalledOnce();
-    const context = JSON.parse(String(complete.mock.calls[0][0].messages[0].content));
+    expect(complete).toHaveBeenCalledTimes(2);
+    const context = JSON.parse(String(complete.mock.calls[1][0].messages[0].content));
     expect(context.reviewedCatalogue.description).toBe(user.product.description);
-    expect(context.reviews).toHaveLength(2);
-    expect(context.reviews.every((value: { relation: string }) => value.relation === "my_listing")).toBe(true);
+    expect(context.reviews).toHaveLength(3);
+    expect(context.reviews.filter((value: { relation: string }) => value.relation === "same_product")).toHaveLength(2);
+    expect(result.report).toMatchObject({ analysisVersion: 2, matchingVersion: 1, comparisons: [] });
     await post(user, "/analyse", { reportId: saved.id, consent: true }).expect(200);
-    expect(complete).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledTimes(2);
     await store.close(); store = openStore(path); app = createApp({ store });
     const reopened = marketplaceResponseSchema.parse((await get(user).expect(200)).body);
     expect(reopened).toMatchObject({ configured: false, report: result.report });
@@ -273,6 +458,7 @@ describe("bounded marketplace research in the existing Market Intelligence agent
     const user = await owner();
     const saved = (await post(user, "/import", { consent: true, csv }).expect(201)).body.report as MarketplaceReport;
     await confirm(user, saved).expect(200);
+    await confirm(user, saved, 1, "excluded").expect(200);
     complete.mockResolvedValue({ stop_reason: "tool_use", content: [{ type: "tool_use", id: "bad-fixture", name: "record_marketplace_themes",
       input: { themes: [{ title: "Unsupported", sentiment: "negative", scope: "alternatives", reviewIds: saved.listings[0].reviews.map((value) => value.id), experiment: "Do not accept this cross-scope claim." }] } }] });
     await post(user, "/analyse", { reportId: saved.id, consent: true }).expect(202);
@@ -310,7 +496,7 @@ describe("bounded marketplace research in the existing Market Intelligence agent
     expect(complete).toHaveBeenCalledOnce();
     resolve({ stop_reason: "tool_use", content: [{ type: "tool_use", id: "plan-fixture", name: "plan_marketplace_search", input: { category: "hair oil" } }] });
     expect((await finished(user)).report).not.toBeNull();
-    expect(complete).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledTimes(2);
   });
   it("starts paid work only once when equivalent requests overlap during async admission", async () => {
     const user = await owner(), requestKey = randomUUID();
@@ -331,7 +517,7 @@ describe("bounded marketplace research in the existing Market Intelligence agent
     expect(complete).toHaveBeenCalledOnce();
     finish({ stop_reason: "tool_use", content: [{ type: "tool_use", id: "plan-fixture", name: "plan_marketplace_search", input: { category: "hair oil" } }] });
     expect((await finished(user)).report).not.toBeNull();
-    expect(complete).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledTimes(2);
   });
   it("keeps CSV normalization bounded, explicit, deduplicated and free of reviewer contact fields", async () => {
     const user = await owner();

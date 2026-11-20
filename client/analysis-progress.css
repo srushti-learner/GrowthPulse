@@ -21,14 +21,6 @@
 .analysis-stages li > div > span { display: block; color: #bdb8c9; font-size: 11px; line-height: 1.8; }
 .analysis-stages [data-status="limited"] > div > span, .analysis-stages [data-status="failed"] > div > span { color: #ecd2bc; }
 .analysis-activity .analysis-check-failure { color: #ecd2bc; font-size: 13px; line-height: 1.8; }
-.analysis-recent ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; }
-.analysis-recent li { border-left: 2px solid #494154; padding-left: 14px; }
-.analysis-recent li[data-status="running"] { border-color: #c9b8ff; }
-.analysis-step-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
-.analysis-step-heading strong { font-size: 13px; font-weight: 500; }
-.analysis-step-heading > span { color: #c8c3d0; font-size: 11px; }
-.analysis-recent li p { margin: 6px 0 0; color: #c8c3d0; font-size: 12px; line-height: 1.8; }
-.analysis-recent li .analysis-step-limit { color: #ecd2bc; }
 .analysis-background, .analysis-starting { display: flex; align-items: flex-start; gap: 10px; }
 .analysis-activity .analysis-background { margin: 24px 0 0; color: #c8c3d0; font-size: 12px; line-height: 1.8; }
 .analysis-background svg, .analysis-starting svg { flex-shrink: 0; margin-top: 2px; width: 17px; height: 17px; color: #bfb0ec; }

@@ -25,6 +25,11 @@ const smtpSchema = z.object({
 });
 export type SmtpSettings = z.infer<typeof smtpSchema>;
 
+const godaddyEmailSchema = z.object({
+  CONTACT_FORM_RECIPIENT_EMAIL: z.string().trim().pipe(z.email().max(254)),
+});
+export type GoDaddyEmailSettings = z.infer<typeof godaddyEmailSchema>;
+
 const mysqlSchema = z.object({
   DB_HOST: z.string().trim().min(1),
   DB_PORT: z.coerce.number().int().min(1).max(65535).default(3306),
@@ -60,9 +65,19 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
   if (mysql && !mysql.success) {
     throw new Error(`Invalid MySQL configuration: ${mysql.error.issues.map((issue) => issue.path.join(".")).join(", ")}. GoDaddy injects DB_* settings when its hosted database is attached.`);
   }
-  const smtp = config.CONTACT_EMAIL_ENABLED === "true" ? smtpSchema.safeParse(environment) : undefined;
+  const emailEnabled = config.CONTACT_EMAIL_ENABLED === "true";
+  const godaddyEmail = emailEnabled && environment.CONTACT_FORM_RECIPIENT_EMAIL !== undefined
+    ? godaddyEmailSchema.safeParse(environment) : undefined;
+  if (godaddyEmail && !godaddyEmail.success) {
+    throw new Error("Invalid contact email configuration: CONTACT_FORM_RECIPIENT_EMAIL. Set a valid server-side recipient for the GoDaddy email gateway.");
+  }
+  const smtp = emailEnabled && !godaddyEmail ? smtpSchema.safeParse(environment) : undefined;
   if (smtp && !smtp.success) {
     throw new Error(`Invalid contact email configuration: ${smtp.error.issues.map((issue) => issue.path.join(".")).join(", ")}. Set server-side SMTP settings; never use VITE_* for credentials.`);
   }
-  return { ...config, mysql: mysql?.success ? mysql.data : undefined, smtp: smtp?.success ? smtp.data : undefined };
+  return {
+    ...config, mysql: mysql?.success ? mysql.data : undefined,
+    smtp: smtp?.success ? smtp.data : undefined,
+    godaddyEmail: godaddyEmail?.success ? godaddyEmail.data : undefined,
+  };
 }

@@ -2,10 +2,11 @@ import { z } from "zod";
 import { researchSourceSchema } from "./research.js";
 
 export const marketplaceLimits = { milliseconds: 180_000, listings: 6, reviews: 50, searches: 4 } as const;
-export const marketplaceRelations = ["unconfirmed", "my_listing", "other_seller", "alternative", "excluded"] as const;
+export const marketplaceRelations = ["unconfirmed", "my_listing", "other_seller", "same_product", "alternative", "excluded"] as const;
 export const marketplaceRelationLabels: Record<typeof marketplaceRelations[number], string> = {
   unconfirmed: "Needs confirmation", my_listing: "My listing", other_seller: "My product, another seller",
   alternative: "Comparable product", excluded: "Not relevant",
+  same_product: "Same product (seller unverified)",
 };
 export const marketplaceReviewSchema = z.object({
   id: z.string().regex(/^r_[a-f0-9]{16}$/), text: z.string().min(10).max(500),
@@ -14,11 +15,18 @@ export const marketplaceReviewSchema = z.object({
 export const marketplaceListingSchema = z.object({
   id: z.string().regex(/^m_[a-f0-9]{16}$/), url: z.url(), marketplace: z.enum(["Amazon India", "Flipkart"]),
   title: z.string().max(300), description: z.string().max(2000), capturedAt: z.iso.datetime(), method: z.enum(["public_page", "owner_export"]),
+  brand: z.string().max(200).optional(), model: z.string().max(200).optional(),
   status: z.enum(["captured", "unavailable"]), limitation: z.string().max(500),
   gtin: z.string().max(14), variants: z.string().max(1000), seller: z.string().max(200),
   price: z.string().max(16), currency: z.string().max(3),
   rating: z.number().min(0).max(5).nullable(), reviewCount: z.number().int().nonnegative().nullable(),
   relation: z.enum(marketplaceRelations), identifierMatch: z.boolean(),
+  matching: z.object({
+    method: z.enum(["identifier", "ai", "owner"]),
+    reason: z.string().min(1).max(350),
+    productEvidence: z.string().max(300).optional(),
+    listingEvidence: z.string().max(300).optional(),
+  }).strict().optional(),
   reviews: z.array(marketplaceReviewSchema).max(marketplaceLimits.reviews),
   sources: z.array(researchSourceSchema).max(10),
 }).strict();
@@ -30,14 +38,31 @@ const themeSchema = z.object({
   experiment: z.string().trim().min(1).max(350),
 }).strict();
 export const marketplaceThemesSchema = z.object({ themes: z.array(themeSchema).max(4) }).strict();
+const comparisonSide = z.object({
+  summary: z.string().trim().min(1).max(250),
+  reviewIds: z.array(marketplaceReviewSchema.shape.id).min(2).max(10),
+}).strict();
+export const marketplaceComparisonSchema = z.object({
+  title: z.string().trim().min(1).max(100),
+  ownProduct: comparisonSide,
+  alternatives: comparisonSide,
+  opportunity: z.string().trim().min(1).max(300),
+  experiment: z.string().trim().min(1).max(350),
+}).strict();
+export const marketplaceAnalysisSchema = marketplaceThemesSchema.extend({
+  comparisons: z.array(marketplaceComparisonSchema).max(3).default([]),
+});
 export const marketplaceReportSchema = z.object({
   id: z.uuid(), productId: z.uuid(), productName: z.string(), fingerprint: z.string().length(64), createdAt: z.iso.datetime(),
   listings: z.array(marketplaceListingSchema).max(marketplaceLimits.listings),
   themes: marketplaceThemesSchema.shape.themes, analysedAt: z.iso.datetime().nullable(),
+  comparisons: z.array(marketplaceComparisonSchema).max(3).optional(),
+  matchingVersion: z.literal(1).optional(),
+  analysisVersion: z.literal(2).optional(),
   limitations: z.array(z.string().max(500)).max(12),
 }).strict();
 export const marketplaceProgressSchema = z.object({
-  stage: z.enum(["discovering", "collecting", "analysing"]),
+  stage: z.enum(["discovering", "collecting", "matching", "analysing"]),
   completed: z.number().int().min(0).max(marketplaceLimits.listings),
   total: z.number().int().min(0).max(marketplaceLimits.listings),
   startedAt: z.iso.datetime().optional(), updatedAt: z.iso.datetime().optional(),
@@ -64,3 +89,11 @@ export const marketplaceImportInput = z.object({
 export type MarketplaceListing = z.infer<typeof marketplaceListingSchema>;
 export type MarketplaceReport = z.infer<typeof marketplaceReportSchema>;
 export type MarketplaceResponse = z.infer<typeof marketplaceResponseSchema>;
+export function marketplaceFeedbackScope(relation: MarketplaceListing["relation"]) {
+  if (relation === "alternative") return "alternatives" as const;
+  if (["my_listing", "other_seller", "same_product"].includes(relation)) return "own_product" as const;
+  return null;
+}
+export function matchedMarketplaceListings(report: MarketplaceReport | null | undefined) {
+  return report?.listings.filter((item) => item.status === "captured" && marketplaceFeedbackScope(item.relation)) ?? [];
+}

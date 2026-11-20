@@ -59,21 +59,101 @@ describe("product-focused Marketplace Insights", () => {
     </MarketplaceResearchProvider>));
   }
   function button(text: string) { return Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((item) => item.textContent === text)!; }
+  function comparativeSample() {
+    const saved = state.report!, own = saved.listings[0];
+    own.relation = "same_product";
+    saved.analysedAt = createdAt; saved.analysisVersion = 2; saved.matchingVersion = 1;
+    saved.listings.push({ ...own, id: "m_2222222222222222", title: "Comparable oil", relation: "alternative", method: "public_page",
+      url: "https://www.flipkart.com/comparable/p/itmcomparison",
+      reviews: [{ id: "r_3333333333333333", text: "The dispenser is easy to use.", rating: 5, date: "2026-10-03" },
+        { id: "r_4444444444444444", text: "Pouring is simple with this bottle.", rating: 4, date: null }] });
+    saved.comparisons = [{ title: "Improve dispensing",
+      ownProduct: { summary: "Reviewers describe leaks when pouring.", reviewIds: own.reviews.map((value) => value.id) },
+      alternatives: { summary: "Comparable-product reviewers praise easy pouring.", reviewIds: saved.listings[1].reviews.map((value) => value.id) },
+      opportunity: "Explore a leak-resistant dispenser.",
+      experiment: "Test the two dispensers with a small group and record leaks." }];
+  }
+  it("uses automatic product matches without a confirmation mutation and starts analysis only on an explicit click", async () => {
+    state.report!.matchingVersion = 1;
+    state.report!.listings[0].relation = "same_product";
+    state.report!.listings[0].matching = { method: "identifier", reason: "Matching GTIN; seller ownership remains unverified." };
+    await render(businessId, false);
+    await act(async () => button("Customer voice2 sampled review excerpts").click());
+    expect(container.textContent).toContain("The bottle leaks during dispensing.");
+    expect(container.textContent).toContain("Automatically checked");
+    expect(container.textContent).toContain("seller ownership remains unverified");
+    expect(button("My listing").getAttribute("aria-pressed")).toBe("false");
+    expect(button("Same product (seller unverified)").getAttribute("aria-pressed")).toBe("true");
+    expect(button("Analyse customer feedback").disabled).toBe(false);
+    expect(fetcher.mock.calls.every(([, options]) => !options?.method)).toBe(true);
+    await act(async () => button("Analyse customer feedback").click());
+    expect(fetcher.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(1);
+    expect(fetcher.mock.calls.some(([, options]) => options?.method === "PATCH")).toBe(false);
+  });
+  it("shows the saved comparison with independently attributed original reviews on both sides", async () => {
+    comparativeSample();
+    await render(businessId, false);
+    await act(async () => button("Customer voice4 sampled review excerpts").click());
+    const comparison = container.querySelector('[aria-label="Customer feedback comparison"]')!;
+    expect(comparison.textContent).toContain("Improve dispensing");
+    expect(comparison.textContent).toContain("Potential improvement: Explore a leak-resistant dispenser.");
+    expect(comparison.textContent).toContain("Suggested test: Test the two dispensers");
+    const own = comparison.querySelector('[aria-label="Your product comparison evidence"]')!;
+    const alternatives = comparison.querySelector('[aria-label="Comparable products comparison evidence"]')!;
+    expect(own.textContent).toContain("The bottle leaks during dispensing.");
+    expect(own.textContent).not.toContain("The dispenser is easy to use.");
+    expect(own.querySelector("a")?.href).toBe(state.report!.listings[0].url);
+    expect(own.textContent).toContain("Owner-supplied export");
+    expect(alternatives.textContent).toContain("The dispenser is easy to use.");
+    expect(alternatives.textContent).toContain("Captured public page");
+    expect(alternatives.textContent).not.toContain("The bottle leaks during dispensing.");
+    expect(fetcher.mock.calls.every(([, options]) => !options?.method)).toBe(true);
+  });
+  it.each(["cross-scope", "stale"])("does not display a %s comparison as customer evidence", async (reason) => {
+    comparativeSample();
+    if (reason === "stale") state.stale = true;
+    else state.report!.comparisons![0].alternatives.reviewIds = [...state.report!.comparisons![0].ownProduct.reviewIds];
+    await render(businessId, false);
+    await act(async () => button(reason === "stale" ? "Customer voicePrevious product evidence" : "Customer voice4 sampled review excerpts").click());
+    expect(container.querySelector('[aria-label="Customer feedback comparison"] .feedback-takeaway')).toBeNull();
+    expect(container.textContent).not.toContain("Explore a leak-resistant dispenser.");
+    expect(fetcher.mock.calls.every(([, options]) => !options?.method)).toBe(true);
+  });
+  it.each(["own_product", "alternatives"] as const)("explains the missing comparison side for %s-only feedback", async (scope) => {
+    state.report!.listings[0].relation = scope === "own_product" ? "same_product" : "alternative";
+    state.report!.analysedAt = createdAt; state.report!.analysisVersion = 2;
+    await render(businessId, false);
+    await act(async () => button("Customer voice2 sampled review excerpts").click());
+    const comparison = container.querySelector('[aria-label="Customer feedback comparison"]')!;
+    expect(comparison.textContent).toContain(scope === "own_product" ? "Not enough comparable-product reviews" : "does not establish what your own buyers want");
+    expect(comparison.querySelector(".feedback-takeaway")).toBeNull();
+    expect(container.textContent).toContain("The bottle leaks during dispensing.");
+    expect(fetcher.mock.calls.every(([, options]) => !options?.method)).toBe(true);
+  });
+  it("keeps legacy takeaways readable and offers an explicit comparison upgrade without running it on load", async () => {
+    state.report!.listings[0].relation = "my_listing";
+    state.report!.analysedAt = createdAt;
+    await render(businessId, false);
+    await act(async () => button("Customer voice2 sampled review excerpts").click());
+    expect(container.textContent).toContain("The bottle leaks during dispensing.");
+    expect(button("Analyse customer feedback").disabled).toBe(false);
+    expect(fetcher.mock.calls.every(([, options]) => !options?.method)).toBe(true);
+  });
   it("opens saved evidence without paid calls and keeps unknown metrics and ownership explicit", async () => {
     await render();
     expect(container.textContent).toContain("Your product in the marketplace");
     expect(container.textContent).toContain("Owner-supplied export");
     expect(container.textContent).toContain("Needs confirmation");
-    expect(container.textContent).toContain("Review counts are not orders");
+    expect(container.textContent).not.toContain("Review counts are not orders");
     expect(container.textContent).toContain("Not captured");
-    expect(button("Analyse confirmed reviews").disabled).toBe(true);
+    expect(button("Analyse customer feedback").disabled).toBe(false);
     expect(button("Research again").disabled).toBe(false);
     expect(container.querySelector('.marketplace-insights input[type="checkbox"]')).toBeNull();
     const options = container.querySelector<HTMLDetailsElement>(".marketplace-research-controls > details")!;
     expect(options.open).toBe(false);
     expect(options.querySelector("summary")?.textContent).toBe("Research options and details");
     expect(options.textContent).toContain("product details to Anthropic and Tavily");
-    expect(options.textContent).toContain("Reopening saved results starts no paid research");
+    expect(options.textContent).not.toContain("Reopening saved results starts no paid research");
     expect(container.querySelector(".marketplace-research-controls > .field-note")).toBeNull();
     expect(container.querySelector(".marketplace-product > .field-note")).toBeNull();
     expect(fetcher.mock.calls.every(([, options]) => !options?.method)).toBe(true);
@@ -99,8 +179,8 @@ describe("product-focused Marketplace Insights", () => {
     expect(request[1]?.method).toBe("PATCH");
     expect(JSON.parse(String(request[1]?.body))).toEqual({ reportId: initial.report!.id, listingId: initial.report!.listings[0].id, relation: "other_seller" });
     expect(button("My product, another seller").getAttribute("aria-pressed")).toBe("true");
-    expect(button("Analyse confirmed reviews").disabled).toBe(false);
-    await act(async () => button("Analyse confirmed reviews").click());
+    expect(button("Analyse customer feedback").disabled).toBe(false);
+    await act(async () => button("Analyse customer feedback").click());
     expect(fetcher.mock.calls.find(([path]) => String(path).endsWith("/analyse"))?.[1]?.body)
       .toBe(JSON.stringify({ reportId: initial.report!.id, consent: true }));
     expect(container.textContent).toContain("Loading your marketplace research progress");
@@ -136,7 +216,7 @@ describe("product-focused Marketplace Insights", () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("interrupted");
     expect(container.textContent).toContain("Your catalogue product changed");
     expect(button("My listing").closest("fieldset")?.disabled).toBe(true);
-    expect(button("Analyse confirmed reviews").disabled).toBe(true);
+    expect(button("Analyse customer feedback").disabled).toBe(true);
     expect(fetcher.mock.calls.every(([, options]) => !options?.method)).toBe(true);
   });
   it("distinguishes saved-status reloads from explicit retries and retains saved feedback", async () => {
@@ -196,7 +276,7 @@ describe("product-focused Marketplace Insights", () => {
     expect(own.textContent).toContain("Packaging complaints");
     expect(own.textContent).toContain("My product, another seller");
     expect(own.textContent).toContain("Owner-supplied export, not independently fetched");
-    expect(own.textContent).toContain("1 undated excerpt");
+    expect(own.textContent).toContain("Review date unknown");
     expect(own.textContent).not.toContain("Mild fragrance praise");
     expect(alternatives.textContent).toContain("Mild fragrance praise");
     expect(alternatives.textContent).toContain("Captured public page");
@@ -216,13 +296,13 @@ describe("product-focused Marketplace Insights", () => {
 
   it("updates Customer voice after match confirmation and explicit analysis without a second data loader", async () => {
     await render(businessId, false);
-    await act(async () => button("Customer voiceConfirm listing matches").click());
+    await act(async () => button("Customer voiceReview uncertain matches").click());
     const feedback = () => container.querySelector('[aria-label="Saved marketplace customer feedback"]')!;
-    expect(feedback().textContent).toContain("waiting for listing confirmation");
+    expect(feedback().textContent).toContain("have uncertain product matches");
     expect(feedback().textContent).not.toContain("The bottle leaks during dispensing.");
     const sources = feedback().querySelector<HTMLDetailsElement>(".marketplace-source-review")!;
     expect(sources.open).toBe(false);
-    expect(button("Analyse confirmed reviews")).toBeUndefined();
+    expect(button("Analyse customer feedback").disabled).toBe(false);
     await act(async () => button("Review product matches").click());
     expect(sources.open).toBe(true);
     expect(document.activeElement).toBe(sources.querySelector("summary"));
@@ -242,7 +322,7 @@ describe("product-focused Marketplace Insights", () => {
       }
       return original(path, options);
     });
-    await act(async () => button("Analyse confirmed reviews").click());
+    await act(async () => button("Analyse customer feedback").click());
     expect(feedback().textContent).toContain("Packaging complaints");
     expect(fetcher.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(1);
     await act(async () => button("Not relevant").click());
@@ -260,7 +340,7 @@ describe("product-focused Marketplace Insights", () => {
     expect(feedback.textContent).not.toContain("The bottle leaks during dispensing.");
     await act(async () => button("Market overview").click());
     await act(async () => button("Market trendsTrend data not configured").click());
-    expect(container.querySelector(".market-data-gap")?.textContent).toContain("do not establish trends");
+    expect(container.querySelector(".market-data-gap")?.textContent).toContain("No trend dataset or continuous monitoring is connected.");
     expect(fetcher.mock.calls.every(([, options]) => !options?.method)).toBe(true);
   });
 
@@ -301,6 +381,30 @@ describe("product-focused Marketplace Insights", () => {
     expect(fetcher.mock.calls.every(([, options]) => !options?.method)).toBe(true);
   });
 
+  it.each(["positive", "negative", "mixed"] as const)("shows %s customer takeaways with an actionable next step and original supporting reviews, without sample footnotes", async (sentiment) => {
+    state.report!.listings[0].relation = "my_listing";
+    state.report!.analysedAt = createdAt;
+    state.report!.themes = [{
+      title: "Dispensing feedback", scope: "own_product", sentiment,
+      reviewIds: state.report!.listings[0].reviews.map((review) => review.id),
+      experiment: "Check the bottle seal before testing a packaging change.",
+    }];
+    await render(businessId, false);
+    await act(async () => button("Customer voice2 sampled review excerpts").click());
+    const card = container.querySelector(".feedback-takeaway")!;
+    expect(card.querySelector("[data-slot=badge]")?.textContent).toBe(sentiment === "negative" ? "Customer concern" : sentiment === "positive" ? "Customer praise" : "Mixed feedback");
+    expect(card.querySelector("h5")?.textContent).toBe("Dispensing feedback");
+    expect(card.textContent).toContain("Suggested next step: Check the bottle seal before testing a packaging change.");
+    expect(card.querySelector("summary")?.textContent).toBe("Read supporting feedback (2)");
+    expect(card.querySelectorAll("blockquote")).toHaveLength(2);
+    expect(card.textContent).toContain("The bottle leaks during dispensing.");
+    expect(card.textContent).toContain("Owner-supplied export");
+    expect(card.querySelector("a")?.href).toBe(state.report!.listings[0].url);
+    expect(container.textContent).not.toContain("A limited sample, not representative sentiment");
+    expect(container.textContent).not.toContain("Possible recurring feedback, not proven customer needs.");
+    expect(fetcher.mock.calls.every(([, options]) => !options?.method)).toBe(true);
+  });
+
   it("runs collection, source confirmation and analysis entirely inside Customer voice with independent real progress", async () => {
     vi.useFakeTimers();
     state.report = null;
@@ -329,17 +433,22 @@ describe("product-focused Marketplace Insights", () => {
     state = { ...state, progress: { stage: "collecting", completed: 1, total: 2 } };
     await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
     expect(feedback().textContent).toContain("1 of 2 listings checked");
+    state = { ...state, progress: { stage: "matching", completed: 0, total: 2 } };
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    expect(feedback().querySelector('[aria-current="step"]')?.textContent).toContain("Match products");
+    expect(feedback().textContent).toContain("Matching captured products");
+    expect(feedback().textContent).not.toContain("Owner review required");
     state = structuredClone(initial);
     await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
-    expect(feedback().textContent).toContain("waiting for listing confirmation");
+    expect(feedback().textContent).toContain("have uncertain product matches");
     expect(feedback().textContent).not.toContain("The bottle leaks during dispensing.");
     await act(async () => button("Review product matches").click());
     await act(async () => button("My product, another seller").click());
     expect(feedback().textContent).toContain("The bottle leaks during dispensing.");
-    expect(button("Analyse confirmed reviews").disabled).toBe(false);
-    await act(async () => button("Analyse confirmed reviews").click());
+    expect(button("Analyse customer feedback").disabled).toBe(false);
+    await act(async () => button("Analyse customer feedback").click());
     expect(container.querySelector(".dashboard-intro [data-slot=badge]")?.textContent).toBe("Analysing customer feedback");
-    expect(feedback().textContent).toContain("Analysing confirmed review excerpts.");
+    expect(feedback().textContent).toContain("Analysing customer feedback and comparable products.");
     expect(fetcher.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(2);
   });
 
@@ -370,7 +479,7 @@ describe("product-focused Marketplace Insights", () => {
     const options = container.querySelector<HTMLDetailsElement>(".marketplace-research-controls > details")!;
     expect(options.querySelector("textarea")).not.toBeNull();
     expect(options.querySelector('input[type="file"]')).not.toBeNull();
-    expect(button("Analyse confirmed reviews")).toBeUndefined();
+    expect(button("Analyse customer feedback")).toBeUndefined();
     expect(container.querySelector(".feedback-progress")).toBeNull();
     expect(fetcher.mock.calls.every(([, options]) => options?.method !== "POST")).toBe(true);
   });
@@ -378,6 +487,7 @@ describe("product-focused Marketplace Insights", () => {
   it("keeps a confirmed sample readable when analysis accepts no recurring takeaway", async () => {
     state.report!.listings[0].relation = "my_listing";
     state.report!.analysedAt = createdAt;
+    state.report!.analysisVersion = 2;
     await render(businessId, false);
     await act(async () => button("Customer voice2 sampled review excerpts").click());
     const feedback = container.querySelector(".marketplace-customer-voice")!;
@@ -387,7 +497,7 @@ describe("product-focused Marketplace Insights", () => {
     expect(quotes).toHaveLength(2);
     expect(quotes[0].textContent).toContain("The bottle leaks during dispensing.");
     expect(quotes[0].closest("details")).toBeNull();
-    expect(button("Analyse confirmed reviews")).toBeUndefined();
+    expect(button("Analyse customer feedback")).toBeUndefined();
     expect(fetcher.mock.calls).toHaveLength(2);
   });
 
@@ -399,8 +509,8 @@ describe("product-focused Marketplace Insights", () => {
     const feedback = container.querySelector(".marketplace-customer-voice")!;
     expect(feedback.querySelectorAll('[aria-label="Your product feedback"] > .feedback-quote')).toHaveLength(1);
     expect(feedback.querySelector(".feedback-takeaway")).toBeNull();
-    expect(button("Analyse confirmed reviews").disabled).toBe(true);
-    expect(feedback.textContent).toContain("at least two distinct review excerpts");
+    expect(button("Analyse customer feedback").disabled).toBe(true);
+    expect(feedback.textContent).toContain("At least two relevant review excerpts");
     expect(fetcher.mock.calls.every(([, options]) => !options?.method)).toBe(true);
   });
 });

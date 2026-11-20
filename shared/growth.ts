@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { researchAgents, researchSourceSchema } from "./research.js";
+import { growthWorkSchema, workDecisionSchema } from "./growth-work.js";
+import { productSchema } from "./products.js";
 
 export const growthOpportunityId = z.string().regex(/^[a-f0-9]{64}$/);
 export const growthAssessment = ["unknown", "low", "medium", "high"] as const;
@@ -12,6 +14,8 @@ export const growthOpportunitySchema = z.object({
   agents: z.array(z.enum(researchAgents)).min(1).max(6),
   sources: z.array(researchSourceSchema).min(1).max(18),
   reviewReason: z.string(),
+  originProductId: z.uuid().optional(),
+  work: growthWorkSchema.optional(),
   strategy: z.object({
     objective: z.string(), actions: z.array(z.string()).min(1).max(5), metric: z.string(),
     hypothesis: z.string(), measurement: z.string(),
@@ -34,6 +38,12 @@ export const growthResponseSchema = z.object({
   evidenceSavedAt: z.iso.datetime().nullable(),
 });
 export const growthPlanResponseSchema = z.object({ item: growthPlanItemSchema });
+export const growthWorkResponseSchema = z.object({
+  configured: z.boolean(), opportunity: growthOpportunitySchema, item: growthPlanItemSchema.nullable(),
+  products: z.array(productSchema), decision: workDecisionSchema.nullable(), stale: z.boolean(),
+  catalogueFingerprint: z.string(),
+});
+export type GrowthWorkResponse = z.infer<typeof growthWorkResponseSchema>;
 export type GrowthOpportunity = z.infer<typeof growthOpportunitySchema>;
 export type GrowthPlanItem = z.infer<typeof growthPlanItemSchema>;
 export type GrowthPlanInput = z.infer<typeof growthPlanInputSchema>;

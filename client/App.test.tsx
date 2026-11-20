@@ -112,6 +112,23 @@ describe("workspace foundation", () => {
     });
   }
 
+  it("shows planned social-first features without fetching business data or starting connector activity", async () => {
+    window.history.replaceState(null, "", "/#future");
+    const fetch = signedInFetch();
+    vi.stubGlobal("fetch", fetch);
+    await renderApp();
+    expect(container.querySelector("h1")?.textContent).toBe("Future features");
+    expect(container.querySelector('nav[aria-label="Main navigation"] a[aria-current="page"]')?.getAttribute("href")).toBe("#future");
+    const roadmap = container.querySelector('[aria-label="Future features roadmap"]')!;
+    expect(roadmap.textContent).toContain("Planned · Not available yet");
+    expect(roadmap.querySelector('[aria-label="Instagram business connector"]')).not.toBeNull();
+    expect(roadmap.querySelector('[aria-label="WhatsApp Business connector"]')).not.toBeNull();
+    expect(roadmap.textContent).toContain("not live integrations or promised release dates");
+    expect(roadmap.querySelector('a[href="#overview?view=manual&new=1"]')).not.toBeNull();
+    expect(roadmap.querySelector("button")).toBeNull();
+    expect(fetch.mock.calls.map(([path]) => path).sort()).toEqual(["/api/auth/me", "/api/health"]);
+  });
+
   it.each(["sqlite", "mysql"])("accepts a healthy %s connection without exposing technical status controls", async (engine) => {
     const fetch = publicFetch(async () => json({ ...health, database: { engine, status: "ok" } }));
     vi.stubGlobal("fetch", fetch);
@@ -149,13 +166,18 @@ describe("workspace foundation", () => {
       const select = container.querySelector<HTMLSelectElement>('select[aria-label="Active business"]')!;
       select.value = businesses[1].id; select.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    for (const section of ["opportunities", "intelligence", "growth", "actions", "products", "simulator", "website", "progress", "business", "overview"]) {
+    for (const section of ["opportunities", "intelligence", "growth", "actions", "products", "simulator", "website", "progress", "future", "business", "overview"]) {
       await act(async () => {
         window.history.replaceState(null, "", `/#${section}`); window.dispatchEvent(new HashChangeEvent("hashchange"));
         await vi.dynamicImportSettled();
       });
-      expect(container.querySelector<HTMLSelectElement>('select[aria-label="Active business"]')?.value).toBe(businesses[1].id);
-      expect(container.querySelectorAll('select[aria-label="Active business"]')).toHaveLength(1);
+      if (section === "future") {
+        expect(container.querySelectorAll('select[aria-label="Active business"]')).toHaveLength(0);
+        expect(container.querySelector('[aria-label="Future features roadmap"]')).not.toBeNull();
+      } else {
+        expect(container.querySelector<HTMLSelectElement>('select[aria-label="Active business"]')?.value).toBe(businesses[1].id);
+        expect(container.querySelectorAll('select[aria-label="Active business"]')).toHaveLength(1);
+      }
       if (section === "business") expect(container.querySelector(".saved-profile-details")?.textContent).toContain("Second shop");
       else if (section === "overview") {
         expect(container.querySelector(".journey-next")?.textContent).toContain("Give what you sell a place");
@@ -170,7 +192,7 @@ describe("workspace foundation", () => {
     }
     expect(fetch).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ method: "POST" }));
   });
-  it.each(["website", "simulator", "products", "actions", "business"])("requires authentication on a direct %s link without exposing the workspace", async (section) => {
+  it.each(["website", "simulator", "products", "actions", "business", "future"])("requires authentication on a direct %s link without exposing the workspace", async (section) => {
     window.history.replaceState(null, "", `/#${section}`);
     const fetch = publicFetch(); vi.stubGlobal("fetch", fetch); await renderApp();
     expect(container.querySelector(".auth-form")).not.toBeNull();

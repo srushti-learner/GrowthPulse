@@ -26,16 +26,18 @@ import { salesMappingSchema } from "../shared/sales-mapping.js";
 import { analyticsCurrency } from "../shared/analytics.js";
 import { trafficSourceSchema } from "../shared/traffic.js";
 import { readTrafficFile } from "./traffic-imports.js";
-import { marketplaceAnalyseInput, marketplaceImportInput, marketplaceLimits, marketplaceMatchInput, marketplaceResearchInput, type MarketplaceProgress, type MarketplaceReport } from "../shared/marketplace.js";
+import { marketplaceAnalyseInput, marketplaceImportInput, marketplaceLimits, marketplaceMatchInput, marketplaceResearchInput, matchedMarketplaceListings, type MarketplaceProgress, type MarketplaceReport } from "../shared/marketplace.js";
 import { importMarketplaceCsv, marketplaceUrl } from "./marketplace-research.js";
 import { contactInputSchema, contactMailbox } from "../shared/contact.js";
 import type { ContactSender } from "./contact.js";
+import { catalogueFingerprint, createGrowthAdvisor, knownProductDecision, selectionIsStale, type GrowthAdvisor } from "./growth-advisor.js";
+import { emptyGrowthWork, isActionGeneratedStep, manualWorkStepInputSchema, workConsentSchema, workSelectionInputSchema, workStepInputSchema, type GrowthWork } from "../shared/growth-work.js";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 
-export function createApi(store: Store, origin: string, production: boolean, scan: WebsiteScanner = createWebsiteScanner(), agent: BusinessAgent = createBusinessAgent(), productAnalyst: ProductAnalyst = createProductAnalyst(), contactSender?: ContactSender) {
+export function createApi(store: Store, origin: string, production: boolean, scan: WebsiteScanner = createWebsiteScanner(), agent: BusinessAgent = createBusinessAgent(), productAnalyst: ProductAnalyst = createProductAnalyst(), contactSender?: ContactSender, growthAdvisor: GrowthAdvisor = createGrowthAdvisor()) {
   const api = Router();
   const cookie = { httpOnly: true, secure: production, sameSite: "lax", path: "/" } as const;
   const previewCookie = "gp_preview";
@@ -371,6 +373,115 @@ export function createApi(store: Store, origin: string, production: boolean, sca
     const { user, business } = await ownedBusiness(request);
     response.json({ item: await store.updateGrowthPlan(user.id, business.id, growthOpportunityId.parse(request.params.opportunityId), growthPlanInputSchema.parse(request.body)) });
   });
+  async function actionSnapshot(request: Request) {
+    const { user, business, snapshot } = await growthSnapshot(request);
+    const id = growthOpportunityId.parse(request.params.opportunityId);
+    const item = snapshot.plan.find((entry) => entry.opportunity.id === id) ?? null;
+    const opportunity = item?.opportunity ?? snapshot.opportunities.find((entry) => entry.id === id);
+    if (!opportunity) throw new ApiError(404, "This recommendation is no longer available for this business.");
+    const products = await store.listProducts(user.id, business.id);
+    const fingerprint = catalogueFingerprint(products);
+    const decision = opportunity.work?.decision ?? knownProductDecision(opportunity, business.id, products, origin);
+    const stale = opportunity.work?.selection ? selectionIsStale(opportunity.work.selection, products)
+      : !!decision && decision.catalogueFingerprint !== fingerprint;
+    return { user, business, products, item, opportunity,
+      response: { configured: growthAdvisor.configured, opportunity, item, products, decision, stale, catalogueFingerprint: fingerprint } };
+  }
+  async function saveActionWork(request: Request, revision: number, work: GrowthWork) {
+    const { user, business, item } = await actionSnapshot(request);
+    if (!item) throw new ApiError(409, "Add this recommendation to your growth plan before connecting work.");
+    await store.updateGrowthWork(user.id, business.id, item.opportunity.id, revision, work);
+    return (await actionSnapshot(request)).response;
+  }
+  api.get("/businesses/:id/growth/:opportunityId/work", async (request, response) => {
+    response.json((await actionSnapshot(request)).response);
+  });
+  api.patch("/businesses/:id/growth/:opportunityId/work/selection", async (request, response) => {
+    const input = workSelectionInputSchema.parse(request.body);
+    const current = await actionSnapshot(request);
+    if (current.response.catalogueFingerprint !== input.catalogueFingerprint) throw new ApiError(409, "The catalogue changed. Reload and review the current products before confirming.");
+    const selected = input.productIds.map((id) => {
+      const product = current.products.find((entry) => entry.id === id);
+      if (!product) throw new ApiError(404, "A selected product is not available in this business.");
+      return { productId: product.id, fingerprint: productFingerprint(product) };
+    }).sort((left, right) => left.productId.localeCompare(right.productId));
+    const work = current.opportunity.work ?? emptyGrowthWork();
+    const changed = !!work.selection && (work.selection.scope !== input.scope
+      || JSON.stringify([...work.selection.products].sort((left, right) => left.productId.localeCompare(right.productId))) !== JSON.stringify(selected));
+    if (changed && work.steps.some((step) => step.status !== "draft")) {
+      throw new ApiError(409, "This action has reviewed work. Return those steps to draft before changing its targets, or keep this work as a separate action.");
+    }
+    response.json(await saveActionWork(request, input.revision, {
+      ...work, decision: work.decision ?? current.response.decision,
+      selection: { scope: input.scope, products: selected, confirmedAt: new Date().toISOString() },
+      steps: changed ? work.steps.filter((step) => !isActionGeneratedStep(step)) : work.steps,
+    }));
+  });
+  const activeActionGuidance = new Set<string>();
+  async function generateActionGuidance(request: Request, response: Response, kind: "decision" | "steps") {
+    const input = workConsentSchema.parse(request.body);
+    const current = await actionSnapshot(request);
+    if (!current.item || current.item.revision !== input.revision) throw new ApiError(409, "Save or reload this growth action before requesting guidance.");
+    const work = current.opportunity.work ?? emptyGrowthWork();
+    if (kind === "decision" && current.response.decision?.catalogueFingerprint === current.response.catalogueFingerprint) {
+      response.locals.productAnalysisReused = true;
+      response.json(current.response); return;
+    }
+    if (kind === "steps" && (!work.selection || current.response.stale)) throw new ApiError(409, "Confirm current targets before requesting action-specific steps.");
+    if (kind === "steps" && work.steps.some(isActionGeneratedStep)) {
+      response.locals.productAnalysisReused = true;
+      response.json(current.response); return;
+    }
+    if (!growthAdvisor.configured) throw new ApiError(503, "Action AI guidance is not configured. Choose targets and record work manually.");
+    const key = `${current.business.id}:${current.opportunity.id}`;
+    if (activeActionGuidance.has(key)) throw new ApiError(409, "Guidance for this action is already running. Reload saved work before trying again.");
+    const release = claimWorkSlot();
+    if (!release) throw new ApiError(429, "Analysis capacity is busy. Saved work is still available.");
+    activeActionGuidance.add(key); response.locals.productAnalysisAdmitted = true;
+    const disconnected = new AbortController();
+    const abort = () => { if (!response.writableEnded) disconnected.abort(); };
+    response.once("close", abort);
+    const signal = AbortSignal.any([disconnected.signal, marketplaceCancellation.signal, AbortSignal.timeout(productAnalysisTimeout)]);
+    try {
+      const updated = kind === "decision"
+        ? { ...work, decision: await growthAdvisor.decide(current.opportunity, current.business.id, current.products, origin, signal) }
+        : { ...work, steps: [...work.steps, ...await growthAdvisor.propose(current.opportunity, work.selection!, current.business.id, current.products, origin, signal)] };
+      signal.throwIfAborted();
+      const fresh = await actionSnapshot(request);
+      if (fresh.response.catalogueFingerprint !== current.response.catalogueFingerprint) throw new ApiError(409, "The catalogue changed during guidance. Nothing was saved; review current records before trying again.");
+      signal.throwIfAborted();
+      response.json(await saveActionWork(request, input.revision, updated));
+    } catch (error) {
+      if (signal.aborted) throw new AgentError(504, "Action guidance timed out or was interrupted. Reload saved work before trying again.");
+      throw error;
+    } finally {
+      response.off("close", abort); activeActionGuidance.delete(key); release();
+    }
+  }
+  api.post("/businesses/:id/growth/:opportunityId/work/decision", analysisLimit, async (request, response) => {
+    await generateActionGuidance(request, response, "decision");
+  });
+  api.post("/businesses/:id/growth/:opportunityId/work/proposals", analysisLimit, async (request, response) => {
+    await generateActionGuidance(request, response, "steps");
+  });
+  api.post("/businesses/:id/growth/:opportunityId/work/steps", async (request, response) => {
+    const input = manualWorkStepInputSchema.parse(request.body);
+    const current = await actionSnapshot(request);
+    const work = current.opportunity.work ?? emptyGrowthWork();
+    response.json(await saveActionWork(request, input.revision, { ...work, steps: [...work.steps, {
+      id: createHash("sha256").update(randomUUID()).digest("hex"), title: input.title, detail: input.detail,
+      sources: current.opportunity.sources.slice(0, 6), status: "draft", outcome: "", origin: "owner",
+    }] }));
+  });
+  api.patch("/businesses/:id/growth/:opportunityId/work/steps", async (request, response) => {
+    const input = workStepInputSchema.parse(request.body);
+    const current = await actionSnapshot(request);
+    const work = current.opportunity.work ?? emptyGrowthWork();
+    if (!work.steps.some((step) => step.id === input.stepId)) throw new ApiError(404, "This supporting step is no longer available.");
+    response.json(await saveActionWork(request, input.revision, {
+      ...work, steps: work.steps.map((step) => step.id === input.stepId ? { ...step, status: input.status, outcome: input.outcome } : step),
+    }));
+  });
   api.get("/businesses/:id/understanding", async (request, response) => {
     const { user, business } = await ownedBusiness(request);
     response.json({
@@ -633,8 +744,9 @@ export function createApi(store: Store, origin: string, production: boolean, sca
     const found = saved.listings.find((item) => item.id === input.listingId);
     if (!found) throw new ApiError(404, "Marketplace listing not found.");
     if (found.status !== "captured" && input.relation !== "excluded") throw new ApiError(400, "This listing has no captured product evidence to confirm.");
-    await store.updateMarketplace(user.id, business.id, product.id, saved, { ...saved, themes: [], analysedAt: null,
-      listings: saved.listings.map((item) => item.id === input.listingId ? { ...item, relation: input.relation } : item) });
+    await store.updateMarketplace(user.id, business.id, product.id, saved, { ...saved, themes: [], comparisons: [], analysisVersion: undefined, analysedAt: null,
+      listings: saved.listings.map((item) => item.id === input.listingId ? { ...item, relation: input.relation,
+        matching: { method: "owner", reason: "Relationship selected by the owner." } } : item) });
     response.json(await marketplaceSnapshot(request));
   });
   api.post("/businesses/:id/products/:productId/marketplace/analyse", async (request, response, next) => {
@@ -643,10 +755,13 @@ export function createApi(store: Store, origin: string, production: boolean, sca
     const state = await marketplaceSnapshot(request);
     if (state.running) { response.json(state); return; }
     const saved = await currentMarketplace(request, input.reportId);
-    if (saved.analysedAt) { response.json(state); return; }
+    if (saved.analysedAt && saved.analysisVersion === 2) { response.json(state); return; }
     if (!agent.marketplace?.configured) throw new ApiError(503, "Marketplace AI analysis is not configured. Saved evidence remains available.");
-    if (saved.listings.filter((item) => !["excluded", "unconfirmed"].includes(item.relation)).flatMap((item) => item.reviews).length < 2) {
-      throw new ApiError(400, "Confirm relevant listings with at least two distinct review excerpts before analysing customer themes.");
+    const available = saved.matchingVersion === 1 ? matchedMarketplaceListings(saved)
+      : saved.listings.filter((item) => item.status === "captured" && item.relation !== "excluded"
+        && !(item.relation === "unconfirmed" && item.matching?.method === "owner"));
+    if (available.flatMap((item) => item.reviews).length < 2) {
+      throw new ApiError(400, "At least two relevant review excerpts are needed. Find more feedback or review uncertain product matches.");
     }
     response.locals.marketplaceAnalysis = { saved, product };
     next();
@@ -741,6 +856,7 @@ export function createApi(store: Store, origin: string, production: boolean, sca
     const opportunity = growthOpportunitySchema.parse({
       id: createHash("sha256").update(`product:${business.id}:${product.id}:${state.analysis.fingerprint}:${input.index}`).digest("hex"),
       title: recommendation.title, detail: recommendation.detail, agents: ["store"],
+      originProductId: product.id,
       sources: recommendation.references.map((id) => {
         const evidence = analysis.evidence.find((item) => item.id === id);
         if (!evidence) throw new ApiError(409, "This saved recommendation has incomplete evidence. Review a new product analysis before planning it.");
@@ -756,6 +872,18 @@ export function createApi(store: Store, origin: string, production: boolean, sca
         measurement: "Connect authorized analytics and set a baseline, eligible audience, duration and success threshold. No performance is inferred from public product data.",
       },
     });
+    if (input.attachTo) {
+      const parent = (await store.listGrowthPlan(user.id, business.id)).find((item) => item.opportunity.id === input.attachTo!.actionId);
+      if (!parent) throw new ApiError(404, "The selected growth action is not in this business's plan.");
+      const work = parent.opportunity.work ?? emptyGrowthWork();
+      const stepId = createHash("sha256").update(`attached:${opportunity.id}`).digest("hex");
+      if (work.steps.some((step) => step.id === stepId)) { response.json({ item: parent }); return; }
+      const updated = await store.updateGrowthWork(user.id, business.id, parent.opportunity.id, input.attachTo.revision, {
+        ...work, steps: [...work.steps, { id: stepId, title: recommendation.title, detail: recommendation.detail,
+          sources: opportunity.sources.slice(0, 6), status: "draft", outcome: "", productId: product.id, origin: "product" }],
+      });
+      response.json({ item: updated }); return;
+    }
     const existing = (await store.listGrowthPlan(user.id, business.id)).find((item) => item.opportunity.id === opportunity.id);
     response.status(existing ? 200 : 201).json({ item: existing ?? await store.addGrowthPlan(user.id, business.id, opportunity) });
   });

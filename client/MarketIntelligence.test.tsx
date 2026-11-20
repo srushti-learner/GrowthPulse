@@ -70,7 +70,7 @@ describe("research-first market intelligence", () => {
     expect(fullComparison.querySelector("table")?.textContent).toContain(brand.facts[0].text);
     expect(panel().textContent).not.toContain(brand.relevance);
     for (const limitation of brand.limitations) expect(panel().textContent).not.toContain(limitation);
-    expect(panel().textContent).toContain("Not captured means unknown, not absent.");
+    expect(panel().textContent).not.toContain("Not captured means unknown, not absent.");
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -87,11 +87,11 @@ describe("research-first market intelligence", () => {
     await click("Market overview"); await click("Product landscape");
     expect(panel().querySelector(".market-topics [aria-pressed=true]")?.textContent).toBe("Products and customer need");
     expect(panel().querySelector(".market-product-fact")?.textContent).toBe("Cotton shirts in five sizes.");
-    expect(panel().textContent).toContain("not sales rankings");
+    expect(panel().textContent).not.toContain("not sales rankings");
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("removes technical pricing paragraphs from saved market and specialist views without changing evidence", async () => {
+  it("removes technical pricing paragraphs from saved market research without changing evidence", async () => {
     const technicalNotes = [
       "Pricing coverage is unavailable: captured structured products include 5 merchant and 0 verified-competitor record(s).",
       "Cross-store SKUs and similar names do not establish an exact match; only matching valid GTINs are identified here.",
@@ -104,8 +104,6 @@ describe("research-first market intelligence", () => {
     await render(value); await click("Pricing");
     expect(panel().querySelector(".agent-sources > ul")?.textContent).toBe("We couldn't find enough matching product prices to compare.");
     for (const text of technicalNotes) expect(container.textContent).not.toContain(text);
-    await act(async () => container.querySelector<HTMLButtonElement>('.research-agent-nav button:nth-child(4)')!.click());
-    expect(container.querySelector(".research-limitations ul")?.textContent).toBe("We couldn't find enough matching product prices to compare.");
     const finding = { ...observation, title: "Matching published offers", detail: "The captured offers share a product identifier." };
     await render({ ...value, steps: value.steps.map((step) => step.agent === "pricing" ? { ...step, findings: [finding] } : step) });
     expect(panel().querySelector(".agent-sources > ul")?.textContent).toBe("Published prices are available, but we can't yet make a like-for-like comparison.");
@@ -152,6 +150,55 @@ describe("research-first market intelligence", () => {
     await render({ ...report, status: "running", steps: [{ ...base, agent: "opportunity", status: "running", findings: [hypothesis] }] });
     expect(panel().textContent).toContain("Research is still running. Accepted hypotheses will appear when saved.");
     expect(panel().textContent).not.toContain(hypothesis.title);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("shows research in progress instead of empty market counts while competitor evidence is being checked", async () => {
+    await render({ ...report, status: "running", steps: [
+      { ...base, key: "discovery-search-0", findings: [] },
+      { ...base, key: "competitor-site-0", status: "running", findings: [] },
+    ] });
+    expect(panel().textContent).toContain("Market research is still running.");
+    expect(panel().textContent).toContain("Comparisons will appear as their evidence is verified.");
+    expect(panel().textContent).toContain("Checking competitor websites");
+    expect(panel().textContent).not.toContain("0 verified brands");
+    expect(panel().textContent).not.toContain("0 brands with published pricing");
+    expect(panel().textContent).not.toContain("0 brands with product claims");
+    expect(panel().textContent).not.toContain("0 hypotheses to validate");
+    expect(panel().textContent).not.toContain(observation.title);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("explains rejected candidate evidence and unreadable sites without exposing diagnostics or accepting leads", async () => {
+    const checked: Report = { ...report, steps: [
+      { ...base, key: "competitor-site-0", findings: [] },
+      { ...base, key: "competitor-brand-0", status: "limited", findings: [],
+        diagnostic: { code: "brand_validation", paths: ["categorySourceId"] },
+        limitations: ["The selected category quote did not contain all meaningful words of a merchant product category."] },
+    ] };
+    await render(checked);
+    expect(panel().textContent).toContain("Potential competitors were found, but their published product information couldn't be verified");
+    expect(panel().textContent).toContain("0 verified brands");
+    expect(panel().textContent).not.toContain("categorySourceId");
+    expect(panel().textContent).not.toContain("brand_validation");
+    expect(panel().textContent).not.toContain(observation.title);
+    await render({ ...checked, steps: [{ ...base, key: "competitor-site-0", status: "failed", findings: [] }] });
+    expect(panel().textContent).toContain("Competitor websites couldn't be read");
+    expect(panel().querySelector('a[href="#overview?view=business"]')?.textContent).toContain("Manage website analysis");
+    await render({ ...checked, steps: [{ ...base, key: "discovery-search-0", status: "failed", findings: [] }] });
+    expect(panel().textContent).toContain("The competitor search couldn't be completed.");
+    await render({ ...checked, steps: [{ ...base, key: "competitor", status: "failed", findings: [] }] });
+    expect(panel().textContent).not.toContain("The competitor search couldn't be completed.");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("does not claim market research is running when only the store analysis was enabled", async () => {
+    await render({ ...report, enabled: false, status: "running", steps: [{ ...base, agent: "store", status: "running", findings: [] }] });
+    expect(panel().textContent).toContain("Start building your market view.");
+    expect(panel().textContent).toContain("Start a website analysis to gather competitor information");
+    expect(panel().textContent).toContain("No market research saved");
+    expect(panel().textContent).not.toContain("Market research is still running.");
+    expect(panel().textContent).not.toContain("Checking competitor websites");
     expect(fetch).not.toHaveBeenCalled();
   });
 });

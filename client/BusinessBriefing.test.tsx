@@ -87,11 +87,11 @@ describe("guided business briefing cards", () => {
     expect(container.querySelector(".agent-sources a")?.getAttribute("href")).toBe(sources[0].url);
     await section("Unknowns");
     expect(container.querySelector("article")?.textContent).toContain(briefing.unknowns[0].question);
-    expect(container.querySelector("article")?.textContent).toContain("Missing evidence is not proof");
+    expect(container.querySelector("article")?.textContent).not.toContain("Missing evidence is not proof");
     expect(container.querySelector(".agent-sources")).toBeNull();
     await section("Next moves");
     expect(container.querySelector("article")?.textContent).toContain(briefing.nextSteps[0].action);
-    expect(container.querySelector("article")?.textContent).toContain("not a change already made");
+    expect(container.querySelector("article")?.textContent).not.toContain("not a change already made");
     expect(container.querySelector<HTMLDetailsElement>(".briefing-card-detail")?.open).toBe(false);
     expect(container.querySelector(".briefing-sections [aria-pressed=true]")?.textContent).toContain("Next moves");
   });

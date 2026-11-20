@@ -42,8 +42,15 @@ describe("agent-led profile onboarding", () => {
     await act(async () => root.render(<StrictMode><BusinessAgentReview business={business} autoStart={autoStart} {...evidence}
       initialView="overview"
       onSaved={vi.fn()} onRecorded={vi.fn()} onSessionExpired={expired} /></StrictMode>));
-    const archive = container.querySelector<HTMLDetailsElement>(".specialist-archive");
-    if (archive) await act(async () => { archive.open = true; });
+  }
+  async function openCompetitors() {
+    const tab = container.querySelector<HTMLButtonElement>('[role="tab"][data-state="inactive"]');
+    if (tab?.textContent === "Market intelligence") {
+      await act(async () => tab.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    }
+    const button = Array.from(container.querySelectorAll<HTMLButtonElement>(".market-area-link"))
+      .find((item) => item.textContent?.startsWith("Competitors"))!;
+    await act(async () => button.click());
   }
   async function set(name: string, value: string) {
     await act(async () => {
@@ -164,7 +171,7 @@ describe("agent-led profile onboarding", () => {
       consoleError.mockRestore();
     }
     const panel = container.querySelector('[role="tabpanel"]:not([hidden])')!;
-    expect(panel.textContent).toContain("Not enough external evidence for a market conclusion yet.");
+    expect(panel.textContent).toContain("Start building your market view.");
     expect(panel.textContent).toContain("No market research saved");
     expect(panel.querySelector('a[href="#overview?view=business"]')?.textContent).toBe("Manage website analysis");
     expect(panel.querySelector(".agent-briefing")).toBeNull();
@@ -175,7 +182,8 @@ describe("agent-led profile onboarding", () => {
   it("opens profile management without the research dashboard and still starts the agent after an approved save", async () => {
     const fetch = fetcher({ existing: true });
     await act(async () => root.render(<StrictMode><BusinessWorkspace activityOnly={false} profileOnly onSessionExpired={expired} /></StrictMode>));
-    expect(container.querySelector<HTMLDetailsElement>(".business-profile-settings")?.open).toBe(true);
+    expect(container.querySelector(".business-profile-settings")?.tagName).toBe("SECTION");
+    expect(container.querySelector(".business-profile-settings > summary")).toBeNull();
     expect(container.querySelector(".agent-review")).toBeNull();
     expect(fetch.mock.calls.some(([path]) => path.endsWith("/understanding"))).toBe(false);
     await act(async () => container.querySelector<HTMLButtonElement>(".saved-profile button")!.click());
@@ -322,10 +330,7 @@ describe("agent-led profile onboarding", () => {
     const fetch = vi.fn(async (_: string, options?: RequestInit) => options?.method === "POST"
       ? streamed({ ...draft, research }) : json({ understanding: null, job: stopped }));
     vi.stubGlobal("fetch", fetch); await renderAgent();
-    expect(container.textContent).toContain("The store response was incomplete.");
-    expect(container.querySelectorAll(".research-agent-nav button")).toHaveLength(6);
-    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>(".research-agent-nav button"))
-      .find((button) => button.textContent?.startsWith("Growth strategy"))!.click());
+    expect(container.querySelectorAll(".research-agent-nav button")).toHaveLength(0);
     expect(container.textContent).toContain("Keep this independently saved suggestion");
     expect(fetch.mock.calls.every(([, options]) => !options?.method)).toBe(true);
     expect(container.querySelectorAll(".agent-controls input[type=checkbox]")).toHaveLength(0);
@@ -333,7 +338,7 @@ describe("agent-led profile onboarding", () => {
       .find((button) => button.textContent === "Retry failed research steps")!.click());
     const post = fetch.mock.calls.find(([, options]) => options?.method === "POST")!;
     expect(JSON.parse(String(post[1]!.body))).toEqual({ permission: true, scanId: draft.scanId, research: true, researchVersion: 2, reuseCustomerEvidence: true, resumeJobId: stopped.id });
-    expect(container.querySelector('.research-agent-nav button[aria-pressed="true"]')?.textContent).toContain("Growth strategy");
+    expect(container.querySelector(".specialist-archive")).toBeNull();
     expect(container.textContent).toContain("Keep this independently saved suggestion");
   });
 
@@ -411,7 +416,7 @@ describe("agent-led profile onboarding", () => {
     expect(fetch.mock.calls.filter(([path]) => path.endsWith("/understanding"))).toHaveLength(2);
   });
 
-  it("lets readers continue through all specialists without a product-review gate or interruption on completion", async () => {
+  it("keeps market navigation available without the specialist archive or a product-review gate on completion", async () => {
     const research: NonNullable<Understanding["research"]> = {
       version: 1, status: "running", enabled: true, usage: { searches: 1, competitorScans: 1, modelCalls: 4 },
       steps: researchAgents.map((agent) => ({
@@ -429,47 +434,31 @@ describe("agent-led profile onboarding", () => {
       throw new Error(`Unexpected request: ${path}`);
     });
     vi.stubGlobal("fetch", fetch); await renderAgent();
-    expect(container.querySelector(".research-agent-heading h4")?.textContent).toBe("Store intelligence");
+    expect(container.querySelector(".research-agent-nav")).toBeNull();
+    expect(container.querySelector(".specialist-archive")).toBeNull();
     expect(container.querySelector(".research-report > .card-heading p")).toBeNull();
     expect(container.querySelector(".research-run-details")).toBeNull();
     expect(container.querySelector(".research-finding")).toBeNull();
-    expect(container.querySelectorAll(".agent-briefing")).toHaveLength(1);
-    const sourceDetails = container.querySelector<HTMLDetailsElement>(".research-agent-card .agent-briefing .agent-sources")!;
-    expect(sourceDetails.open).toBe(false);
-    expect(sourceDetails.querySelector("time")?.dateTime).toBe(business.createdAt);
-    expect(container.querySelector(".research-finding > .field-note")).toBeNull();
-    await act(async () => sourceDetails.querySelector("summary")!.click());
-    expect(sourceDetails.open).toBe(true);
-    expect(sourceDetails.querySelector("a")?.href).toBe(business.website);
-    expect(container.querySelector<HTMLButtonElement>(".research-navigation .secondary-button")?.disabled).toBe(true);
-    for (const agent of researchAgents.slice(1)) {
-      const next = container.querySelector<HTMLButtonElement>(".research-navigation .primary-link")!;
-      expect(next.textContent).toBe(`Next: ${researchAgentLabels[agent]}`);
-      await act(async () => next.click());
-      expect(container.querySelector(".research-agent-heading h4")?.textContent).toBe(researchAgentLabels[agent]);
-      expect(container.querySelector(agent === "competitor" ? ".market-takeaway h5" : ".research-finding h5")?.textContent).toBe(`${researchAgentLabels[agent]} finding`);
-      expect(document.activeElement).toBe(container.querySelector(".research-agent-heading h4"));
-      if (agent === "competitor") expect(container.querySelector(".market-upgrade button")).toBeNull();
-    }
-    const heading = container.querySelector(".research-agent-heading h4");
-    expect(container.querySelector<HTMLButtonElement>(".research-navigation .primary-link")?.disabled).toBe(true);
+    expect(container.querySelectorAll(".agent-briefing")).toHaveLength(0);
+    await openCompetitors();
+    const heading = container.querySelector(".market-intelligence h3");
+    expect(heading?.textContent).toBe("Competitors");
+    expect(document.activeElement).toBe(heading);
     const saved = { ...draft, research: { ...research, status: "complete" as const } };
     await act(async () => {
       stream.enqueue(new TextEncoder().encode(`${JSON.stringify({ type: "job", job: { ...queuedJob, research: saved.research, status: "completed", preview: null, understanding: saved, revision: 3 } })}\n`));
       stream.close();
     });
-    expect(container.querySelector(".research-agent-heading h4")).toBe(heading);
-    expect(container.querySelector(".research-agent-nav [aria-pressed=true]")?.textContent).toContain("Growth strategy");
+    expect(container.querySelector(".market-intelligence h3")).toBe(heading);
+    expect(heading?.textContent).toBe("Competitors");
     expect(container.querySelector<HTMLDetailsElement>(".agent-product-review")?.open).toBe(false);
     expect(container.querySelector(".agent-product-review summary")?.textContent).toBe("Your website products");
     expect(container.querySelector(".agent-product-review")?.textContent).toContain("Usable website products are saved automatically");
-    await act(async () => container.querySelector<HTMLButtonElement>(".research-navigation .secondary-button")!.click());
-    expect(container.querySelector(".research-agent-heading h4")?.textContent).toBe("Product opportunities");
     expect(window.location.hash).toBe(hash);
     expect(fetch.mock.calls.every(([path]) => path.endsWith("/understanding") || path.endsWith("/events"))).toBe(true);
   });
 
-  it("shows Store intelligence once as full guided cards and preserves reading position across specialists", async () => {
+  it("keeps accepted Store context in the overview without a duplicate briefing deck", async () => {
     const fullSummary = `${"Cotton clothing for everyday wear. ".repeat(18)}This final sentence must not be clipped.`;
     const research: NonNullable<Understanding["research"]> = {
       version: 1, status: "complete", enabled: true, usage: { searches: 1, competitorScans: 1, modelCalls: 2 },
@@ -485,32 +474,13 @@ describe("agent-led profile onboarding", () => {
       ...draft.briefing!, summary: { ...draft.briefing!.summary, text: fullSummary },
     } } });
     await renderAgent();
-    expect(container.querySelectorAll(".agent-briefing")).toHaveLength(1);
-    expect(container.querySelector(".briefing-card-text")?.textContent).toBe(fullSummary);
+    expect(container.querySelectorAll(".agent-briefing")).toHaveLength(0);
+    expect(container.querySelector(".research-overview")?.textContent).toContain(draft.briefing!.insights[0].text);
+    expect(container.querySelector(".specialist-archive")).toBeNull();
     expect(container.querySelector(".research-finding")).toBeNull();
-    expect(container.querySelector(".agent-briefing .agent-sources a")?.getAttribute("href")).toBe(business.website);
-    await briefingSection("Findings");
-    const selectedCard = container.querySelector(".briefing-card");
-    expect(selectedCard?.textContent).toContain(draft.briefing!.insights[0].text);
-    await act(async () => container.querySelector<HTMLButtonElement>(".research-navigation .primary-link")!.click());
-    expect(container.querySelector(".agent-briefing")?.closest("[hidden]")).not.toBeNull();
-    expect(container.querySelector(".research-finding")?.textContent).toContain("This competitor finding remains separate.");
-    expect(container.textContent).toContain("predates verified-brand research");
-    expect(container.querySelector<HTMLDetailsElement>(".research-finding")?.closest("details")?.open).toBe(false);
-    expect(container.querySelector(".market-evidence-map")).toBeNull();
-    const options = container.querySelector<HTMLDetailsElement>(".market-upgrade .agent-rerun")!;
-    expect(options.open).toBe(false);
-    expect(container.querySelectorAll(".agent-rerun")).toHaveLength(1);
-    await act(async () => options.querySelector<HTMLElement>("summary")!.click());
-    expect(options.open).toBe(true);
-    expect(options.querySelectorAll("input[type=checkbox]")).toHaveLength(0);
-    expect(options.querySelector<HTMLButtonElement>("button.primary-link")?.disabled).toBe(false);
-    expect(container.querySelector(".research-agent-heading h4")?.textContent).toBe("Competitor intelligence");
-    await act(async () => container.querySelector<HTMLButtonElement>(".research-navigation .secondary-button")!.click());
-    expect(container.querySelector(".agent-briefing")?.closest("[hidden]")).toBeNull();
-    expect(container.querySelector(".briefing-card")).toBe(selectedCard);
-    await briefingSection("Unknowns");
-    expect(container.querySelector(".briefing-card")?.textContent).toContain(draft.briefing!.unknowns[0].question);
+    await openCompetitors();
+    expect(container.querySelector(".market-research")?.textContent).toContain("No qualifying independent brand was verified.");
+    expect(container.querySelector(".research-agent-nav")).toBeNull();
     expect(fetch.mock.calls.some(([, options]) => options?.method === "POST")).toBe(false);
   });
 
@@ -520,9 +490,8 @@ describe("agent-led profile onboarding", () => {
     };
     const fetch = fetcher({ existing: true, review: { ...draft, research } });
     await renderAgent();
-    await act(async () => container.querySelector<HTMLButtonElement>(".research-navigation .primary-link")!.click());
-    if (!enabled) expect(container.querySelector(".market-upgrade")?.textContent).toContain("New analyses include competitor research automatically.");
-    const options = container.querySelector<HTMLDetailsElement>(".market-upgrade .agent-rerun")!;
+    await openCompetitors();
+    const options = container.querySelector<HTMLDetailsElement>(".agent-rerun")!;
     await act(async () => options.querySelector<HTMLElement>("summary")!.click());
     const start = options.querySelector<HTMLButtonElement>("button.primary-link")!;
     const posts = () => fetch.mock.calls.filter(([, options]) => options?.method === "POST");
@@ -574,18 +543,17 @@ describe("agent-led profile onboarding", () => {
       ],
     };
     await act(async () => root.render(<ResearchReport report={report} businessName={business.name} briefingKey="comparison-test" />));
-    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>(".research-agent-nav button"))
-      .find((button) => button.textContent?.startsWith("Competitor intelligence"))!.click());
+    await openCompetitors();
     const brief = container.querySelector('[aria-label="Competitive takeaway"]')!;
     const comparison = container.querySelector('[aria-label="Focused brand comparison"]')!;
     expect(brief.textContent).toContain(business.name);
     expect(brief.querySelector(".market-takeaway h5")?.textContent).toBe("Both brands lead with protein snack bars");
-    expect(brief.querySelector(".market-next-move h5")?.textContent).toBe("Clarify your product promise");
+    expect(brief.querySelector(".market-next-move")).toBeNull();
     expect(brief.compareDocumentPosition(comparison) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(container.querySelector<HTMLDetailsElement>(".market-more-findings")?.open).toBe(false);
     expect(container.querySelector(".market-more-findings")?.textContent).toContain("Convenience may be a useful angle");
-    expect(container.querySelector(".market-more-findings")?.textContent).toContain("Check comparable pack sizes");
-    expect(Array.from(container.querySelectorAll("h5")).filter((heading) => heading.textContent === "Clarify your product promise")).toHaveLength(1);
+    expect(container.querySelector(".market-more-findings")?.textContent).not.toContain("Check comparable pack sizes");
+    expect(Array.from(container.querySelectorAll("h5")).filter((heading) => heading.textContent === "Clarify your product promise")).toHaveLength(0);
     expect(comparison.querySelectorAll(".market-brand")).toHaveLength(2);
     expect(comparison.querySelector(".market-market-tag.is-confirmed")?.textContent).toBe("Market overlap confirmed");
     expect(comparison.querySelectorAll(".market-market-tag:not(.is-confirmed)")).toHaveLength(1);
@@ -594,7 +562,7 @@ describe("agent-led profile onboarding", () => {
     expect(container.querySelector(".market-selected-fact")).toBeNull();
     expect(Array.from(comparison.querySelectorAll(".market-product-fact")).map((fact) => fact.textContent))
       .toEqual(["Rival publishes protein snack bars.", "Second publishes protein snack bars."]);
-    expect(container.textContent).toContain("unknown, not absent");
+    expect(container.textContent).not.toContain("unknown, not absent");
     expect(container.textContent).toContain("not brand scores");
     const pricing = topics.find((button) => button.textContent === "Published prices and packs")!;
     await act(async () => pricing.click());
@@ -667,7 +635,7 @@ describe("agent-led profile onboarding", () => {
       }],
     };
     await act(async () => root.render(<ResearchReport report={report} businessName={business.name} briefingKey="limited-summary" />));
-    await act(async () => container.querySelector<HTMLButtonElement>(".research-navigation .primary-link")!.click());
+    await openCompetitors();
     const brief = container.querySelector(".market-brief")!;
     expect(brief.textContent).not.toContain("What stands out");
     expect(brief.textContent).toContain(kind === "hypothesis" ? "A direction to validate" : "does not yet support a stronger strategic conclusion");
@@ -697,8 +665,7 @@ describe("agent-led profile onboarding", () => {
       ],
     };
     await act(async () => root.render(<ResearchReport report={report} businessName={business.name} briefingKey="scan-outcomes" />));
-    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>(".research-agent-nav button"))
-      .find((button) => button.textContent?.startsWith("Competitor intelligence"))!.click());
+    await openCompetitors();
     const coverage = container.querySelector<HTMLDetailsElement>(".market-research-notes")!;
     expect(coverage.open).toBe(false);
     expect(coverage.textContent).toContain("Sites attempted: 2. Sites captured: 1. Brands verified: 0.");
@@ -740,7 +707,7 @@ describe("agent-led profile onboarding", () => {
       version: 1, status, enabled, usage: { searches: 0, competitorScans: 0, modelCalls: 0 }, steps: [],
     };
     await act(async () => root.render(<ResearchReport report={report} businessName={business.name} briefingKey="empty-comparison" />));
-    await act(async () => container.querySelector<HTMLButtonElement>(".research-navigation .primary-link")!.click());
+    await openCompetitors();
     expect(container.querySelector(".market-empty, .market-upgrade")?.textContent).toContain(message);
     expect(container.querySelector(".market-landscape")).toBeNull();
     expect(container.querySelector(".market-heatmap")).toBeNull();
@@ -757,7 +724,7 @@ describe("agent-led profile onboarding", () => {
       }],
     };
     await act(async () => root.render(<ResearchReport report={report} businessName={business.name} briefingKey="failed-plan" />));
-    await act(async () => container.querySelector<HTMLButtonElement>(".research-navigation .primary-link")!.click());
+    await openCompetitors();
     expect(container.querySelector(".market-empty")?.textContent).toContain("Competitor search could not start");
     expect(container.textContent).not.toContain("No qualifying independent brand was verified");
     expect(fetch).not.toHaveBeenCalled();
@@ -777,14 +744,14 @@ describe("agent-led profile onboarding", () => {
       }],
     };
     await act(async () => root.render(<ResearchReport report={report} businessName={business.name} briefingKey="failed-selection" />));
-    await act(async () => container.querySelector<HTMLButtonElement>(".research-navigation .primary-link")!.click());
+    await openCompetitors();
     expect(container.querySelector(".market-empty")?.textContent).toContain("candidate selection could not finish");
     expect(container.querySelector(".market-empty")?.textContent).toContain("not evidence that your business has no competitors");
     expect(container.textContent).not.toContain("No qualifying independent brand was verified");
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("removes a rejected Store preview while other specialists continue without promising more cards", async () => {
+  it("keeps an unverified or rejected Store preview out of the overview while research continues", async () => {
     const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
     const report: NonNullable<Understanding["research"]> = {
       version: 1, status: "running", enabled: true, usage: { searches: 0, competitorScans: 0, modelCalls: 2 },
@@ -798,11 +765,11 @@ describe("agent-led profile onboarding", () => {
       <ResearchReport report={value} businessName={business.name} briefing={preview} briefingKey="failed-store" />,
     ));
     await render(report);
-    expect(container.textContent).toContain(preview.summary.text);
-    expect(container.textContent).toContain("More cards may arrive");
+    expect(container.textContent).not.toContain(preview.summary.text);
+    expect(container.textContent).toContain("Your first supported finding will appear here.");
     await render({ ...report, steps: [{ ...report.steps[0], status: "failed", completedAt: business.updatedAt,
       diagnostic: { code: "model_incomplete", paths: [] }, limitations: ["The Store briefing could not be validated."] }] });
-    expect(container.textContent).toContain("The Store briefing could not be validated");
+    expect(container.textContent).toContain("Your first supported finding will appear here.");
     expect(container.textContent).not.toContain(preview.summary.text);
     expect(container.textContent).not.toContain("being written");
     expect(container.textContent).not.toContain("More cards");
@@ -824,8 +791,9 @@ describe("agent-led profile onboarding", () => {
       ...queuedJob, status: "cancelled", preview: null, research, error: "This newer attempt was cancelled.",
     } }));
     vi.stubGlobal("fetch", fetch); await renderAgent();
-    expect(container.querySelector(".research-agent-card .briefing-card-text")?.textContent).toBe("Newly accepted Store findings from this attempt.");
-    expect(container.querySelector(".research-agent-card .agent-sources a")?.getAttribute("href")).toBe(business.website);
+    expect(container.querySelector(".dashboard-takeaway")?.textContent).toContain("Newly accepted Store findings from this attempt.");
+    await act(async () => container.querySelector<HTMLButtonElement>(".dashboard-takeaway .dashboard-detail-trigger")!.click());
+    expect(document.querySelector('[role="dialog"] .agent-sources a')?.getAttribute("href")).toBe(business.website);
     const previous = Array.from(container.querySelectorAll<HTMLDetailsElement>("details"))
       .find((details) => details.querySelector("summary")?.textContent === "Previous saved briefing")!;
     expect(previous.open).toBe(false);
@@ -835,7 +803,7 @@ describe("agent-led profile onboarding", () => {
   });
 
   it("reopens the last accepted briefing prominently after a failed Store refresh without mixing sources or enabling historical approvals", async () => {
-    const previous = { ...draft, briefing: { ...draft.briefing, summary: {
+    const previous = { ...draft, briefing: { ...draft.briefing, insights: [], summary: {
       text: "The previously accepted business summary.",
       sources: [{ url: `${business.website}old-collection`, quote: "Previously captured cotton clothing." }],
     } } };
@@ -853,17 +821,14 @@ describe("agent-led profile onboarding", () => {
     }));
     vi.stubGlobal("fetch", fetch);
     await renderAgent();
-    expect(container.querySelector('[aria-label="Last successful Store briefing"]')?.textContent).toContain("previous accepted result");
+    expect(container.querySelector(".dashboard-notice")?.textContent).toContain("Showing the last successful Store briefing");
     expect(container.querySelector('time')?.dateTime).toBe(previous.createdAt);
-    expect(container.querySelector(".research-agent-card .briefing-card-text")?.textContent).toBe(previous.briefing.summary.text);
-    expect(container.querySelector(".research-agent-card .agent-sources a")?.getAttribute("href")).toBe(previous.briefing.summary.sources[0].url);
-    expect(container.querySelector(".research-agent-nav button")?.textContent).toContain("Needs attention - 0 findings");
-    expect(container.querySelector(".research-agent-card")?.textContent).toContain("The cards below are your last successful briefing, not the output of this failed attempt.");
-    expect(container.querySelector(".research-limitations summary")?.textContent).toBe("Analysis issues and evidence gaps");
-    expect(container.querySelector(".research-limitations")?.textContent).toContain("specific cause was not recorded");
+    expect(container.querySelector(".dashboard-takeaway")?.textContent).toContain(previous.briefing.summary.text);
+    await act(async () => container.querySelector<HTMLButtonElement>(".dashboard-takeaway .dashboard-detail-trigger")!.click());
+    expect(document.querySelector('[role="dialog"] .agent-sources a')?.getAttribute("href")).toBe(previous.briefing.summary.sources[0].url);
     expect(container.textContent).not.toContain("Check the server's Anthropic key");
     expect(container.querySelector(".agent-profile-form")).toBeNull();
-    expect(container.querySelector(".research-agent-card .agent-briefing")?.closest("details")?.className).toBe("specialist-archive");
+    expect(container.querySelector(".specialist-archive")).toBeNull();
     expect(fetch.mock.calls.every(([, options]) => !options?.method)).toBe(true);
   });
 
@@ -894,7 +859,7 @@ describe("agent-led profile onboarding", () => {
     expect(container.querySelector(".agent-profile-form")).toBeNull();
   });
 
-  it("keeps live Store cards unverified and preserves the selected card when checked evidence arrives", async () => {
+  it("keeps live Store drafts out of the overview and reveals checked evidence when the run completes", async () => {
     const research: NonNullable<Understanding["research"]> = {
       version: 1, status: "running", enabled: true, usage: { searches: 0, competitorScans: 0, modelCalls: 1 },
       steps: [{
@@ -915,25 +880,19 @@ describe("agent-led profile onboarding", () => {
       throw new Error(`Unexpected request: ${path}`);
     });
     vi.stubGlobal("fetch", fetch); await renderAgent();
-    expect(container.querySelectorAll(".agent-briefing")).toHaveLength(1);
-    expect(container.querySelector(".briefing-card-text")?.textContent).toBe(preview.summary.text);
-    expect(container.querySelector(".research-agent-card")?.textContent).toContain("sources have not been checked");
-    expect(container.querySelector(".research-agent-card")?.textContent).not.toContain("being written");
-    expect(container.querySelector(".research-agent-card")?.textContent).not.toContain("More cards may arrive");
-    expect(container.querySelector(".research-agent-card a")).toBeNull();
-    await briefingSection("Findings");
-    const selectedCard = container.querySelector(".briefing-card");
-    expect(selectedCard?.textContent).toContain(preview.insights[0].text);
+    expect(container.querySelectorAll(".agent-briefing")).toHaveLength(0);
+    expect(container.textContent).not.toContain(preview.summary.text);
+    expect(container.textContent).not.toContain(preview.insights[0].text);
+    expect(container.querySelector(".dashboard-takeaway")?.textContent).toContain("Your public storefront");
     const saved = { ...draft, research: { ...research, status: "complete" as const } };
     await act(async () => {
       stream.enqueue(new TextEncoder().encode(`${JSON.stringify({ type: "job", job: { ...queuedJob, research: saved.research, status: "completed", preview: null, understanding: saved, revision: 3 } })}\n`));
       stream.close();
     });
-    expect(container.querySelector(".briefing-card")).toBe(selectedCard);
-    expect(selectedCard?.textContent).toContain(draft.briefing!.insights[0].text);
-    expect(selectedCard?.querySelector("a")?.getAttribute("href")).toBe(business.website);
-    expect(container.querySelector(".research-agent-card")?.textContent).not.toContain("sources have not been checked");
-    expect(container.querySelectorAll(".agent-briefing")).toHaveLength(1);
+    expect(container.querySelector(".dashboard-takeaway")?.textContent).toContain(draft.briefing!.insights[0].text);
+    await act(async () => container.querySelector<HTMLButtonElement>(".dashboard-takeaway .dashboard-detail-trigger")!.click());
+    expect(document.querySelector('[role="dialog"] .agent-sources a')?.getAttribute("href")).toBe(business.website);
+    expect(container.querySelectorAll(".agent-briefing")).toHaveLength(0);
     expect(fetch.mock.calls.every(([path]) => path.endsWith("/understanding") || path.endsWith("/events"))).toBe(true);
   });
 

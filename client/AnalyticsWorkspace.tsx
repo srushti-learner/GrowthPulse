@@ -38,6 +38,7 @@ export function AnalyticsWorkspace({ onSessionExpired, studio = false, selectedB
   const [data, setData] = useState<AnalyticsData>(emptyAnalytics);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [savingImport, setSavingImport] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [reload, setReload] = useState(0);
@@ -62,6 +63,8 @@ export function AnalyticsWorkspace({ onSessionExpired, studio = false, selectedB
   const [costOpen, setCostOpen] = useState(false);
   const scenarioInputs = useRef<Partial<Record<ScenarioControl, HTMLInputElement | null>>>({});
   const fileInput = useRef<HTMLInputElement>(null);
+  const errorHeading = useRef<HTMLDivElement>(null);
+  const savedNotice = useRef<HTMLParagraphElement>(null);
   const requests = useRef<AbortController | null>(null);
   const salesRequest = useRef<AbortController | null>(null);
   const requestedSelection = useRef({ id: selectedBusinessId, onSelected: onBusinessSelected });
@@ -72,6 +75,11 @@ export function AnalyticsWorkspace({ onSessionExpired, studio = false, selectedB
     if (error instanceof ApiFailure && error.status === 401) onSessionExpired();
     else setError(errorMessage(error));
   }
+  useEffect(() => {
+    if (busy) return;
+    if (error) errorHeading.current?.focus();
+    else if (notice) savedNotice.current?.focus();
+  }, [error, notice, busy]);
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true); setError("");
@@ -181,7 +189,7 @@ export function AnalyticsWorkspace({ onSessionExpired, studio = false, selectedB
     if (salesRequest.current) setBusy(false);
     salesRequest.current?.abort(); salesRequest.current = null;
     setSalesFile(null); setSalesHeaders([]); setMapping([]); setDraft(null); setConfirmed(false);
-    setMappingIssues([]); setReviewColumns([]); setMappingOpen(false); setSalesStage(null);
+    setMappingIssues([]); setReviewColumns([]); setMappingOpen(false); setSalesStage(null); setSavingImport(false);
   }
   async function readUpload(file: File, approved?: SalesMapping) {
     salesRequest.current?.abort();
@@ -233,12 +241,15 @@ export function AnalyticsWorkspace({ onSessionExpired, studio = false, selectedB
   const missingMappings = requiredSalesFields.filter((field) => !mapping.includes(field));
   const duplicateMappings = mapping.some((field, index) => field !== null && mapping.indexOf(field) !== index);
   async function commit() {
-    if (!draft) return;
+    if (!draft || busy) return;
     await run(async (signal) => {
-      const { analytics } = await api(`/api/businesses/${businessId}/sales-imports/${draft.id}/commit`, analyticsResponseSchema, { method: "POST", signal, body: JSON.stringify({ expectedVersion: data.version, confirmRejected: confirmed }) });
-      if (signal.aborted) return;
-      setData(analytics); setPanel(null); clearSalesImport();
-      setNotice("Sales baseline saved. Previous imports and scenarios are preserved.");
+      setSavingImport(true);
+      try {
+        const { analytics } = await api(`/api/businesses/${businessId}/sales-imports/${draft.id}/commit`, analyticsResponseSchema, { method: "POST", signal, body: JSON.stringify({ expectedVersion: data.version, confirmRejected: confirmed }) });
+        if (signal.aborted) return;
+        setData(analytics); setPanel(null); clearSalesImport(); setTab("overview");
+        setNotice("Sales baseline saved. Previous imports and scenarios are preserved.");
+      } finally { if (!signal.aborted) setSavingImport(false); }
     });
   }
   async function saveManual(event: FormEvent<HTMLFormElement>) {
@@ -297,8 +308,8 @@ export function AnalyticsWorkspace({ onSessionExpired, studio = false, selectedB
       <div><p className="analytics-eyebrow"><span /> YOUR SALES WORKSPACE</p><h2>Explore a change. Keep the facts.</h2><p>Website, Instagram, WhatsApp or offline sales. No website required.</p></div>
       <div className="analytics-heading-actions"><span className="analytics-private"><Icon name="shield" /> Private workspace</span><button className="a-button a-primary" disabled={busy || loading || !businessId} onClick={() => { setPanel("import"); clearSalesImport(); }}><Icon name="plus" /> Import sales</button></div>
     </div>
-    {error && <div role="alert" className="analytics-alert error">{error} <button type="button" onClick={() => { setError(""); setReload((value) => value + 1); }}>Reload workspace</button></div>}
-    {notice && <p role="status" className="analytics-alert">{notice}</p>}
+    {error && <div role="alert" className="analytics-alert error" ref={errorHeading} tabIndex={-1}>{error} <button type="button" onClick={() => { setError(""); setReload((value) => value + 1); }}>Reload workspace</button></div>}
+    {notice && <p role="status" className="analytics-alert" ref={savedNotice} tabIndex={-1}>{notice}</p>}
     {growthError && <p role="alert" className="analytics-alert">{growthError}</p>}
     {growthAction && <div className="analytics-alert"><strong>Exploring: {growthAction.title}</strong><p>This recommendation is context, not a predicted uplift. Choose your own assumptions below; no action is executed.{!growthAction.planned && " Add it to your growth plan first if you want to save an action-linked scenario."}</p><a href={`#${growthAction.planned ? "actions" : "growth"}?business=${encodeURIComponent(businessId)}&action=${growthAction.id}`}>Back to this growth action</a></div>}
     <div className="analytics-toolbar">
@@ -340,7 +351,9 @@ export function AnalyticsWorkspace({ onSessionExpired, studio = false, selectedB
             {!!draft.snapshot.warnings.length && <details className="a-form-extras a-import-notes"><summary>Import notes ({draft.snapshot.warnings.length})</summary><ul>{draft.snapshot.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></details>}
             {!!draft.snapshot.rejected && <><ul className="a-row-errors">{draft.snapshot.errors.map((message) => <li key={message}>{message}</li>)}</ul><label className="a-checkbox"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />Import valid rows only; I acknowledge the rejected rows above.</label></>}
             <p><strong>Confirming replaces your imported sales history; it does not add to it.</strong> Previous imports and scenario snapshots stay saved. Owner entries, traffic and costs are not changed.</p>
-            <button className="a-button a-primary" disabled={busy || draft.committed || (!!draft.snapshot.rejected && !confirmed)} onClick={() => void commit()}>Confirm sales import <Icon name="check" /></button>
+            {savingImport && <p role="status">Saving your reviewed sales history. Please wait for confirmation.</p>}
+            {error && <p className="form-error">Sales import was not confirmed: {error}</p>}
+            <button className="a-button a-primary" disabled={busy || draft.committed || (!!draft.snapshot.rejected && !confirmed)} onClick={() => void commit()}>{savingImport ? "Saving sales..." : "Confirm sales import"} <Icon name="check" /></button>
           </div>}
         </> : <form onSubmit={(event) => void saveManual(event)}><fieldset className="a-manual-grid" disabled={busy}><legend className="sr-only">Daily owner-reported metrics</legend>
           <label className="a-field">Recorded date<input required name="date" type="date" max={new Date().toISOString().slice(0, 10)} /></label>

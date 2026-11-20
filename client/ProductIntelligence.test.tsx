@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProductIntelligence } from "./ProductIntelligence";
 import { emptyProduct, type Product } from "../shared/products";
 import { productDimensions, type ProductIntelligenceResponse, type SavedProductAnalysis } from "../shared/product-intelligence";
+import type { GrowthPlanItem } from "../shared/growth";
 
 const businessId = "02a221ee-41f1-46c9-bc96-12401d8dcf73", id = "4c54b43b-8191-4f3d-af8f-607937219267";
 const timestamp = "2026-11-17T12:00:00.000Z";
@@ -61,6 +62,38 @@ describe("focused product intelligence workspace", () => {
     expect(fetch).toHaveBeenCalledOnce();
     expect(fetch.mock.calls[0]).toHaveLength(2);
     await click("All products"); expect(back).toHaveBeenCalledOnce();
+  });
+  it("requires an explicit goal choice and approval to attach an independent recommendation under an existing action", async () => {
+    const actionId = "b".repeat(64);
+    const parent: GrowthPlanItem = {
+      opportunity: { id: actionId, title: "Improve useful product-page guidance", detail: "Coordinate accurate owner-approved listing information.", agents: ["store"],
+        sources: [{ id: reference, url: "https://shop.example.com/", quote: "Cotton tee.", capturedAt: timestamp }],
+        reviewReason: "Owner validation.", strategy: { objective: "Useful listing information", actions: ["Review guidance."], metric: "Enquiries", hypothesis: "Information may help.", measurement: "Choose a baseline." } },
+      status: "planned", impact: "unknown", effort: "unknown", timeToValue: "unknown", revision: 4, createdAt: timestamp, updatedAt: timestamp,
+    };
+    const fetch = vi.fn(async (path: string, options?: RequestInit) => path.endsWith("/growth")
+      ? json({ opportunities: [], plan: [parent], researchStatus: "partial", evidenceSavedAt: timestamp })
+      : path.endsWith("/growth-plan") && options?.method ? json({ item: { ...parent, revision: 5 } }) : json(snapshot));
+    vi.stubGlobal("fetch", fetch); await render(); await click("Product opportunities");
+    expect(fetch).toHaveBeenCalledOnce();
+    await click("Attach to an existing growth action");
+    const form = container.querySelector(".attach-product-improvement form")!;
+    const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    expect(submit.disabled).toBe(true);
+    await act(async () => {
+      const select = form.querySelector("select")!; select.value = actionId;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(form.textContent).toContain(parent.opportunity.detail);
+    expect(submit.disabled).toBe(true);
+    await act(async () => form.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+    await click("Save as a supporting step");
+    expect(fetch.mock.calls.find(([, options]) => options?.method === "POST")![1]?.body).toBe(JSON.stringify({
+      analysisId: analysis.id, index: 0, attachTo: { actionId, revision: 4 },
+    }));
+    expect(container.textContent).toContain("No duplicate growth action was created");
+    expect(saved).not.toHaveBeenCalled(); expect(analysed).toHaveBeenCalledOnce();
+    expect(analysed).toHaveBeenCalledWith(analysis);
   });
   it("uses readable sources across product areas without exposing internal catalogue references", async () => {
     const savedSnapshot = structuredClone(snapshot);

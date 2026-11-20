@@ -373,6 +373,35 @@ https://www.amazon.in/dp/B000000001,Feedback product,Packaging leaks every time 
     expect(complete).toHaveBeenCalledTimes(1);
   });
 
+  it("corrects an existing wrong category citation using only a matching captured quote and saves the corrected source", async () => {
+    const respond = complete.getMockImplementation()!;
+    let wrongSourceId = "";
+    complete.mockImplementation(async (...args) => {
+      const response = await respond(...args), block = response.content[0];
+      if (block.type !== "tool_use") throw new Error("Missing test brand proposal.");
+      const { candidate } = JSON.parse(String(args[0].messages[0].content)) as { candidate: { sources: { id: string; quote: string }[] } };
+      wrongSourceId = candidate.sources.find((source) => source.quote.includes("Cotton everyday tee"))!.id;
+      return tool("verify_brand", { ...block.input as object, categorySourceId: wrongSourceId });
+    });
+    const merchant = scanAt(), candidate = scanAt("https://rival.example.org/");
+    const result = await assessBrand(complete, "test-model", merchant, candidate, {
+      categories: [{ term: "cotton clothing", sourceId: researchEvidence(merchant).sources[0].id }], market: null,
+    }, new AbortController().signal);
+    expect(result.profile).not.toBeNull();
+    expect(result.profile!.sources.some((source) => categoryEvidenceMatches(source.quote, "cotton clothing"))).toBe(true);
+    expect(result.profile!.sources.some((source) => source.id === wrongSourceId)).toBe(false);
+    expect(complete).toHaveBeenCalledOnce();
+  });
+
+  it("does not recover a category citation when no captured quote supports the merchant category", async () => {
+    const merchant = scanAt(), candidate = scanAt("https://rival.example.org/");
+    const result = await assessBrand(complete, "test-model", merchant, candidate, {
+      categories: [{ term: "silk clothing", sourceId: researchEvidence(merchant).sources[0].id }], market: null,
+    }, new AbortController().signal);
+    expect(result).toMatchObject({ profile: null, diagnostic: { code: "brand_validation", paths: ["categorySourceId"] } });
+    expect(complete).toHaveBeenCalledOnce();
+  });
+
   it("preserves visible scan coverage and specific rejection reasons when no brand is verified", async () => {
     const respond = complete.getMockImplementation()!;
     complete.mockImplementation(async (...args) => {
@@ -822,6 +851,109 @@ https://www.amazon.in/dp/B000000001,Feedback product,Packaging leaks every time 
       expect(context.verifiedBrands).toEqual([]);
       expect(context.sources.every((source: { url: string }) => source.url === url)).toBe(true);
     }
+  });
+
+  it.each([true, false])("makes one metered correction for wholly rejected specialist findings, retaining only supported output (%s)", async (corrected) => {
+    const respond = complete.getMockImplementation()!;
+    complete.mockImplementation(async (...args) => {
+      const input = args[0];
+      if (typeof input.system !== "string" || !input.system.includes("Study captured")) return respond(...args);
+      const context = JSON.parse(String(input.messages[0].content)) as {
+        sources: { id: string; url: string; quote: string }[];
+        correction?: { rejectedFindings: unknown[]; invalidPaths: string[] };
+      };
+      const source = context.sources.find((source) => source.url !== url && source.quote === quote)!;
+      return tool("record_findings", {
+        findings: [{ kind: "observation", title: "Published cotton range",
+          detail: corrected && context.correction ? source.quote : "An uncited paraphrase of the range.",
+          sourceIds: [source.id] }],
+        limitations: ["Customer demand is not established."],
+      });
+    });
+    const user = await owner(), first = await enqueue(user);
+    await worker.tick();
+    const report = (await job(user, first.id)).research!;
+    const calls = complete.mock.calls.filter(([input]) => typeof input.system === "string" && input.system.includes("Study captured"));
+    expect(calls).toHaveLength(2);
+    const repair = JSON.parse(String(calls[1][0].messages[0].content));
+    expect(repair.correction).toMatchObject({ invalidPaths: ["findings.0.detail"], rejectedFindings: [expect.objectContaining({ detail: "An uncited paraphrase of the range." })] });
+    expect(JSON.stringify(repair).length).toBeLessThanOrEqual(researchLimits.contextCharacters);
+    expect(report.usage.modelCalls).toBe(10);
+    expect(report.steps.find((step) => step.key === "competitor")).toMatchObject(corrected
+      ? { status: "limited", findings: [{ kind: "observation", detail: quote }], diagnostic: null }
+      : { status: "limited", findings: [], diagnostic: { code: "finding_validation", paths: ["findings.0.detail"] } });
+  });
+
+  it("does not force an intentionally empty specialist response to produce findings", async () => {
+    const respond = complete.getMockImplementation()!;
+    complete.mockImplementation(async (...args) => typeof args[0].system === "string" && args[0].system.includes("Study captured")
+      ? tool("record_findings", { findings: [], limitations: ["No supported conclusion could be established."] })
+      : respond(...args));
+    const user = await owner(), first = await enqueue(user);
+    await worker.tick();
+    expect(complete.mock.calls.filter(([input]) => typeof input.system === "string" && input.system.includes("Study captured"))).toHaveLength(1);
+    expect((await job(user, first.id)).research!.steps.find((step) => step.key === "competitor")).toMatchObject({
+      status: "limited", findings: [], diagnostic: null,
+      limitations: expect.arrayContaining(["No supported conclusion could be established."]),
+    });
+  });
+
+  it("preserves rejected-finding diagnostics when a correction would exceed the context budget", async () => {
+    const respond = complete.getMockImplementation()!;
+    complete.mockImplementation(async (...args) => {
+      const input = args[0];
+      if (typeof input.system !== "string" || !input.system.includes("Study captured")) return respond(...args);
+      const context = JSON.parse(String(input.messages[0].content)) as { sources: { id: string }[] };
+      return tool("record_findings", { findings: [{ kind: "suggestion", title: "Oversized proposal",
+        detail: "x".repeat(researchLimits.contextCharacters), sourceIds: [context.sources[0].id] }], limitations: [] });
+    });
+    const user = await owner(), first = await enqueue(user);
+    await worker.tick();
+    expect(complete.mock.calls.filter(([input]) => typeof input.system === "string" && input.system.includes("Study captured"))).toHaveLength(1);
+    expect((await job(user, first.id)).research!.steps.find((step) => step.key === "competitor")).toMatchObject({
+      status: "limited", findings: [], diagnostic: { code: "finding_validation", paths: ["findings.0.detail"] },
+      limitations: expect.arrayContaining(["The captured context exceeded the correction budget; no extra AI request was made."]),
+    });
+    expect(console.warn).toHaveBeenCalledWith("Research finding correction stopped: context budget exhausted.");
+  });
+
+  it("preserves validation diagnostics instead of bypassing the durable budget for a specialist correction", async () => {
+    const respond = complete.getMockImplementation()!;
+    complete.mockImplementation(async (...args) => {
+      const input = args[0];
+      if (typeof input.system !== "string" || !input.system.includes("Study captured")) return respond(...args);
+      const context = JSON.parse(String(input.messages[0].content)) as { sources: { id: string; url: string }[] };
+      return tool("record_findings", { findings: [{ kind: "observation", title: "Published range",
+        detail: "An uncited paraphrase.", sourceIds: [context.sources.find((source) => source.url !== url)!.id] }], limitations: [] });
+    });
+    const user = await owner(), first = await enqueue(user);
+    const database = new Database(path);
+    try {
+      database.prepare("INSERT INTO research_usage (job_id, model_calls) VALUES (?, ?)").run(first.id, researchLimits.modelCalls - 7);
+    } finally { database.close(); }
+    await worker.tick();
+    const report = (await job(user, first.id)).research!;
+    expect(report.usage.modelCalls).toBe(researchLimits.modelCalls);
+    expect(complete).toHaveBeenCalledTimes(7);
+    expect(report.steps.find((step) => step.key === "competitor")).toMatchObject({
+      status: "limited", findings: [], diagnostic: { code: "finding_validation", paths: ["findings.0.detail"] },
+      limitations: expect.arrayContaining(["The AI request budget was exhausted before a correction could run."]),
+    });
+  });
+
+  it("does not make a specialist correction after the owner cancels the job", async () => {
+    const user = await owner(), first = await enqueue(user);
+    const respond = complete.getMockImplementation()!;
+    complete.mockImplementation(async (...args) => {
+      const input = args[0];
+      if (typeof input.system !== "string" || !input.system.includes("Study captured")) return respond(...args);
+      await store.cancelAnalysis(user.id, user.business.id, first.id);
+      return tool("record_findings", { findings: [{ kind: "suggestion", title: "A suggestion",
+        detail: "Check the range.", sourceIds: ["e_0000000000000000"] }], limitations: [] });
+    });
+    await worker.tick();
+    expect(complete.mock.calls.filter(([input]) => typeof input.system === "string" && input.system.includes("Study captured"))).toHaveLength(1);
+    expect((await job(user, first.id)).status).toBe("cancelled");
   });
 
   it("preserves independently validated specialist findings when store output and other individual citations fail", async () => {

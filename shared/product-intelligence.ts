@@ -46,7 +46,10 @@ export const productAnalysisConsentSchema = z.object({ consent: z.literal(true) 
 export const productAnalysisSummariesSchema = z.object({
   analyses: z.array(z.object({ productId: z.uuid(), fingerprint: z.string(), createdAt: z.iso.datetime() })),
 });
-export const productPlanInputSchema = z.object({ analysisId: z.uuid(), index: z.number().int().min(0).max(3) }).strict();
+export const productPlanInputSchema = z.object({
+  analysisId: z.uuid(), index: z.number().int().min(0).max(3),
+  attachTo: z.object({ actionId: z.string().regex(/^[a-f0-9]{64}$/), revision: z.number().int().nonnegative() }).strict().optional(),
+}).strict();
 export const productRewriteInputSchema = z.object({
   analysisId: z.uuid(), title: z.string().trim().min(1).max(300), description: z.string().trim().max(2000),
 }).strict();

@@ -195,7 +195,10 @@ Do not paraphrase quote fragments or infer customer demographics. Omit unsupport
     });
   if (omitted.length) console.warn("Competitor brand sections omitted:", { paths: omitted });
   const sourceFor = (id: string) => supplied.find((source) => source.id === id);
-  const brandSource = sourceFor(proposal.brandSourceId), categorySource = sourceFor(proposal.categorySourceId);
+  const brandSource = sourceFor(proposal.brandSourceId);
+  const selectedCategorySource = sourceFor(proposal.categorySourceId);
+  const categorySource = selectedCategorySource && (plan.categories.some(({ term }) => categoryEvidenceMatches(selectedCategorySource.quote, term))
+    ? selectedCategorySource : supplied.find((source) => plan.categories.some(({ term }) => categoryEvidenceMatches(source.quote, term))));
   const category = plan.categories.find(({ term }) => categorySource && categoryEvidenceMatches(categorySource.quote, term));
   const sameBrand = merchantNames(merchant).some((name) =>
     evidenceContains(name, proposal.name) || evidenceContains(proposal.name, name));
@@ -205,9 +208,12 @@ Do not paraphrase quote fragments or infer customer demographics. Omit unsupport
     ...(!brandSource || !evidenceContains(brandSource.quote, proposal.name) ? [{ path: "brandSourceId", message: "The proposed brand name was not found in its cited captured quote." }] : []),
     ...(!category ? [{ path: "categorySourceId", message: "The selected category quote did not contain all meaningful words of a merchant product category." }] : []),
   ];
-  if (!category || rejections.length) {
+  if (!categorySource || !category || rejections.length) {
     return { profile: null, limitations: rejections.map(({ message }) => message),
       diagnostic: { code: "brand_validation", paths: rejections.map(({ path }) => path) } };
+  }
+  if (categorySource && categorySource.id !== proposal.categorySourceId) {
+    console.warn("Competitor category citation corrected from captured evidence:", { url: scan.requestedUrl });
   }
   const seen = new Set<string>();
   const facts = proposal.facts.filter((fact) => {
@@ -221,7 +227,7 @@ Do not paraphrase quote fragments or infer customer demographics. Omit unsupport
   }
   const marketSource = proposal.marketSourceId ? sourceFor(proposal.marketSourceId) : undefined;
   const marketVerified = !!(plan.market && marketSource && evidenceContains(marketSource.quote, plan.market.term));
-  const ids = new Set([proposal.brandSourceId, proposal.categorySourceId, ...facts.map((fact) => fact.sourceId),
+  const ids = new Set([proposal.brandSourceId, categorySource.id, ...facts.map((fact) => fact.sourceId),
     ...(marketVerified ? [proposal.marketSourceId!] : [])]);
   const limitations = [
     ...proposal.limitations,
